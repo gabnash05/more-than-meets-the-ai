@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import stat
@@ -11,6 +12,7 @@ import urllib.request
 import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
+from http.client import HTTPResponse
 from pathlib import Path
 
 from .common import (
@@ -192,6 +194,23 @@ def read_member(source_root: Path, source_archive: str, member_path: str) -> byt
         return read(source_archive, member_path)
 
 
+@contextmanager
+def _source_response(
+    request: str | urllib.request.Request, operation: str
+) -> Iterator[HTTPResponse]:
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            yield response
+    except OSError as exc:
+        keylog = os.environ.get("SSLKEYLOGFILE")
+        if isinstance(exc, FileNotFoundError) and keylog and exc.filename == keylog:
+            raise DataError(
+                f"{operation}: TLS key log path is missing. Clear SSLKEYLOGFILE "
+                "or set it to a file in an existing directory."
+            ) from exc
+        raise DataError(f"{operation}: {exc}") from exc
+
+
 class RangeFile(io.RawIOBase):
     def __init__(self, url: str, size: int, cap: int):
         self.url, self.size, self.cap = url, size, cap
@@ -232,7 +251,9 @@ class RangeFile(io.RawIOBase):
                 "User-Agent": "CSC173-referee-data/1.0",
             },
         )
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with _source_response(
+            request, f"Read ATYPICT archive bytes {start}-{end}"
+        ) as response:
             if (
                 response.status != 206
                 or response.headers.get("Content-Range")
@@ -303,7 +324,7 @@ def download(settings: Settings) -> dict:
     """Explicitly retrieve the pinned source, constrained to its multiclass subset."""
     is_sample = settings.profile == "sample"
     source_kind = "atypict_range_sample" if is_sample else "atypict_range_multiclass"
-    with urllib.request.urlopen(SOURCE_API, timeout=60) as response:
+    with _source_response(SOURCE_API, f"Fetch Zenodo record {RECORD_ID}") as response:
         metadata = json.load(response)
     files = [
         item for item in metadata.get("files", []) if item.get("key") == ARCHIVE_NAME
