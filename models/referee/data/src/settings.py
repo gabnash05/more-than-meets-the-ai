@@ -19,7 +19,6 @@ ARCHIVE_SIZE = 397_584_204
 ARCHIVE_MD5 = "c199d21b6121819c81cfcda68cd440bd"
 TRAIN_ARCHIVE = "multiclass/train.zip"
 TEST_ARCHIVE = "multiclass/test.zip"
-TRAIN_FOLDERS = ("circle", "number", "real", "symbol", "text")
 SAMPLE_PER_FOLDER = 2
 SAMPLE_BYTE_CAP = 24 * 1024 * 1024
 DISCLOSED_TEST_PATHS = frozenset(

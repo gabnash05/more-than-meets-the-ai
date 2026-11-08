@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 
 from .common import (
     DataError,
@@ -17,6 +17,7 @@ from .common import (
     load_step,
     preparation_input_hashes,
     read_json,
+    relative_parts,
     resolve_relative,
     write_jsonl,
 )
@@ -26,6 +27,8 @@ from .settings import (
     POLICY_VERSION,
     RECORD_ID,
     SCHEMA_VERSION,
+    TEST_ARCHIVE,
+    TRAIN_ARCHIVE,
     Settings,
 )
 
@@ -56,12 +59,11 @@ def _review(path: Path, ids: set[str]) -> dict[str, dict]:
     return reviews
 
 
-def _decode(payload: bytes) -> tuple[bytes, str, bool]:
+def _decode(payload: bytes) -> tuple[bytes, list[int]]:
     with Image.open(io.BytesIO(payload)) as image:
         if image.format != "PNG" or image.mode != "L" or image.size != (512, 512):
             raise ValueError("expected 512x512 grayscale PNG")
-        pixels = image.tobytes()
-    return pixels, hashlib.sha256(pixels).hexdigest(), len(set(pixels)) == 1
+        return image.tobytes(), image.histogram()
 
 
 def _bits(payload: bytes) -> list[int]:
@@ -74,12 +76,24 @@ def _bits(payload: bytes) -> list[int]:
         raise ValueError("expected float32 label array [76454,9]")
     classes = array[:, 4:9]
     if (
-        not np.isfinite(array).all()
+        not np.isfinite(array[:, :4]).all()
         or not np.isin(classes, (0, 1)).all()
         or not np.all(classes.sum(axis=1) == 1)
     ):
         raise ValueError("invalid one-hot labels or non-finite values")
-    return [int(np.any(classes[:, index])) for index in range(1, 5)]
+    return [int(present) for present in classes[:, 1:].any(axis=0)]
+
+
+def _label_counts(rows: list[dict]) -> dict[str, dict[str, int]]:
+    counts = {}
+    for head in LABEL_ORDER:
+        values = Counter(row[f"{head}_present"] for row in rows)
+        counts[head] = {
+            "positive": values[1],
+            "negative": values[0],
+            "unknown": values[None],
+        }
+    return counts
 
 
 def prepare(settings: Settings) -> dict:
@@ -99,7 +113,7 @@ def prepare(settings: Settings) -> dict:
             "Source receipt is incomplete or mismatched. Run download again.",
             "invalid_source",
         )
-    required = {
+    required = (
         "sample_id",
         "variant",
         "source_archive",
@@ -108,11 +122,10 @@ def prepare(settings: Settings) -> dict:
         "png_member",
         "sample_npy_member",
         "label_npy_member",
-    }
+    )
     if any(
         not isinstance(row, dict)
-        or not required.issubset(row)
-        or any(not isinstance(row[k], str) or not row[k] for k in required)
+        or not all(isinstance(row.get(key), str) and row[key] for key in required)
         for row in pairs
     ):
         raise DataError("Invalid source pair index", "invalid_source")
@@ -123,10 +136,10 @@ def prepare(settings: Settings) -> dict:
         if row["variant"] != "multiclass" or (
             row["source_partition"],
             row["source_archive"],
-        ) not in (("train", "multiclass/train.zip"), ("test", "multiclass/test.zip")):
+        ) not in (("train", TRAIN_ARCHIVE), ("test", TEST_ARCHIVE)):
             raise DataError("Unexpected source partition or archive", "invalid_source")
         for key in ("png_member", "sample_npy_member", "label_npy_member"):
-            resolve_relative(settings.source, row[key])
+            relative_parts(row[key])
     reviews = _review(settings.base / "corrections.jsonl", ids)
     reader = load_step("01-download").open_member_reader(settings.source)
     with reader as read_member:
@@ -138,19 +151,19 @@ def prepare(settings: Settings) -> dict:
             review = reviews.get(sid, {})
             try:
                 png = read_member(pair["source_archive"], pair["png_member"])
-                pixels, pixel_hash, blank = _decode(png)
-            except (ValueError, OSError, EOFError, UnidentifiedImageError) as exc:
+                pixels, histogram = _decode(png)
+            except (ValueError, OSError, EOFError) as exc:
                 excluded["invalid_input"] += 1
                 diagnostics[f"invalid:{type(exc).__name__}"] += 1
                 continue
-            diagnostics["blank"] += int(blank)
+            diagnostics["blank"] += int(max(histogram) == len(pixels))
             diagnostics["suspect_inverted_polarity"] += int(
-                sum(value > 127 for value in pixels) > len(pixels) // 2
+                sum(histogram[128:]) > len(pixels) // 2
             )
             record = {
                 "pair": pair,
                 "png": png,
-                "pixel": pixel_hash,
+                "pixel": hashlib.sha256(pixels).hexdigest(),
                 "bits": [],
                 "targets": [None, None],
                 "origins": [],
@@ -183,7 +196,7 @@ def prepare(settings: Settings) -> dict:
                     ):
                         diagnostics["sample_array_mismatch"] += 1
                     diagnostics["sample_arrays_checked"] += 1
-            except (ValueError, OSError, EOFError, UnidentifiedImageError) as exc:
+            except (ValueError, OSError, EOFError) as exc:
                 excluded["invalid_input"] += 1
                 diagnostics[f"invalid:{type(exc).__name__}"] += 1
                 continue
@@ -307,16 +320,16 @@ def prepare(settings: Settings) -> dict:
                 )
                 excluded["compatible_exact_duplicates"] += len(same) - 1
 
-        train_groups = defaultdict(list)
+        train_representatives = {}
         for item in selected:
             if not item["test"]:
-                train_groups[item["group_id"]].append(item)
+                train_representatives.setdefault(item["group_id"], item)
         # Allocate groups within provenance/label strata for approximate support balance.
         strata = defaultdict(list)
-        for gid, group in train_groups.items():
-            key = (group[0]["pair"]["provenance_folder"], tuple(group[0]["targets"]))
+        for gid, item in train_representatives.items():
+            key = (item["pair"]["provenance_folder"], tuple(item["targets"]))
             strata[key].append(gid)
-        total = len(train_groups)
+        total = len(train_representatives)
         quota = min(total - 1, max(1, round(total * 0.2))) if total >= 2 else 0
         allocations = {
             key: int(len(group_ids) * quota / total)
@@ -380,37 +393,16 @@ def prepare(settings: Settings) -> dict:
             path = settings.prepared / "manifests" / f"{split}.jsonl"
             relative = path.relative_to(settings.prepared).as_posix()
             hashes[relative] = write_jsonl(path, rows)
-            counts[split] = {"rows": len(rows)}
-            provenance[split] = {}
-            for head in LABEL_ORDER:
-                values = Counter(row[f"{head}_present"] for row in rows)
-                counts[split][head] = {
-                    "positive": values[1],
-                    "negative": values[0],
-                    "unknown": values[None],
-                }
-            for folder in sorted({row["provenance_folder"] for row in rows}):
-                folder_rows = [
-                    row for row in rows if row["provenance_folder"] == folder
-                ]
-                provenance[split][folder] = {
-                    head: {
-                        "positive": sum(
-                            row[f"{head}_present"] == 1 for row in folder_rows
-                        ),
-                        "negative": sum(
-                            row[f"{head}_present"] == 0 for row in folder_rows
-                        ),
-                        "unknown": sum(
-                            row[f"{head}_present"] is None for row in folder_rows
-                        ),
-                    }
-                    for head in LABEL_ORDER
-                }
+            counts[split] = {"rows": len(rows), **_label_counts(rows)}
+            folders = defaultdict(list)
             for row in rows:
+                folders[row["provenance_folder"]].append(row)
                 hashes[row["image_path"]] = file_hash(
                     settings.prepared / row["image_path"]
                 )
+            provenance[split] = {
+                folder: _label_counts(folders[folder]) for folder in sorted(folders)
+            }
         labels = {
             "label_order": list(LABEL_ORDER),
             "policy_version": POLICY_VERSION,

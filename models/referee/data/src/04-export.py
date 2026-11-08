@@ -36,10 +36,8 @@ def _fail(message: str) -> None:
 def _package_files(root: Path, referee: bool) -> list[Path]:
     names = ("README.md", "RUNBOOK.md", "pyproject.toml", ".python-version")
     if referee:
-        names += ("uv.lock",)
+        names += ("uv.lock", "referee-data.ps1")
     files = [root / name for name in names]
-    if referee:
-        files.append(root / "referee-data.ps1")
     files.extend(sorted((root / "src").glob("*.py")))
     if not referee:
         files.extend(sorted((root / "src" / "resources").glob("*.txt")))
@@ -62,9 +60,7 @@ def audit(settings: Settings) -> dict:
         labels != expected_labels
         or summary.get("profile") != settings.profile
         or summary.get("seed") != settings.seed
-        or summary.get("label_order") != list(LABEL_ORDER)
-        or summary.get("policy_version") != POLICY_VERSION
-        or summary.get("schema_version") != SCHEMA_VERSION
+        or any(summary.get(key) != value for key, value in expected_labels.items())
     ):
         _fail("Summary or labels do not match the configured dataset")
     splits = summary.get("available_splits")
@@ -305,6 +301,11 @@ def export_dataset(settings: Settings) -> dict:
         output = settings.exports / f"{role}-{settings.profile}.zip"
         temporary = output.with_suffix(".zip.part")
         source = result["source"]
+        paths = [f"manifests/{split}.jsonl" for split in splits]
+        paths.extend(
+            row["image_path"] for split in splits for row in result["rows"][split]
+        )
+        paths.sort()
         role_summary = {
             "dataset_id": result["dataset_id"],
             "role": role,
@@ -331,7 +332,7 @@ def export_dataset(settings: Settings) -> dict:
             "counts": {s: result["summary"]["counts"][s] for s in splits},
             "usable_support": {s: result["support"][s] for s in splits},
             "statuses": {s: result["statuses"][s] for s in splits},
-            "hashes": {},
+            "hashes": {path: result["summary"]["hashes"][path] for path in paths},
             "limitations": [
                 "No trustworthy source session map; residual session leakage is possible.",
                 "ATYPICT drawings do not contain game replay history.",
@@ -342,13 +343,6 @@ def export_dataset(settings: Settings) -> dict:
                 "license": "CC BY 4.0",
                 "changes": "Selected PNGs, derived writing presence labels and grouped splits.",
             },
-        }
-        paths = set()
-        for split in splits:
-            paths.add(f"manifests/{split}.jsonl")
-            paths.update(row["image_path"] for row in result["rows"][split])
-        role_summary["hashes"] = {
-            p: result["summary"]["hashes"][p] for p in sorted(paths)
         }
         try:
             with zipfile.ZipFile(
@@ -372,7 +366,7 @@ def export_dataset(settings: Settings) -> dict:
                     "dataset-summary.json",
                     json.dumps(role_summary, indent=2, sort_keys=True) + "\n",
                 )
-                for rel in sorted(paths):
+                for rel in paths:
                     archive.write(
                         resolve_relative(settings.prepared, rel), f"prepared/{rel}"
                     )

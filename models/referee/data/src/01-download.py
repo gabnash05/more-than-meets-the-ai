@@ -19,6 +19,7 @@ from .common import (
     atomic_output,
     file_hash,
     read_json,
+    relative_parts,
     resolve_relative,
     write_jsonl,
 )
@@ -38,7 +39,7 @@ from .settings import (
 
 def _safe(info: zipfile.ZipInfo) -> None:
     name = info.filename.rstrip("/")
-    resolve_relative(Path("."), name)
+    relative_parts(name)
     mode = info.external_attr >> 16
     if mode and stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR):
         raise DataError(f"Unsupported ZIP member type: {name}")
@@ -158,7 +159,7 @@ def open_member_reader(source_root: Path) -> Iterator[Callable[[str, str], bytes
             def read(source_archive: str, member_path: str) -> bytes:
                 if source_archive not in (TRAIN_ARCHIVE, TEST_ARCHIVE):
                     raise DataError("Unknown source archive")
-                resolve_relative(Path("."), member_path)
+                relative_parts(member_path)
                 try:
                     if source_archive in archives:
                         info = archives[source_archive].getinfo(member_path)

@@ -99,13 +99,19 @@ def write_jsonl(path: Path, values: Iterable[object]) -> str:
     return digest.hexdigest()
 
 
-def resolve_relative(root: Path, relative: str) -> Path:
-    """Resolve a POSIX-style relative data path inside its intended directory."""
+def relative_parts(relative: str) -> list[str]:
+    """Validate a portable path for a data file or ZIP member."""
     parts = relative.split("/")
     if any(part in ("", ".", "..") for part in parts) or any(
         char in relative for char in ("\\", ":", "\0")
     ):
         raise DataError(f"Unsafe relative path: {relative!r}", "invalid_path")
+    return parts
+
+
+def resolve_relative(root: Path, relative: str) -> Path:
+    """Resolve a path and enforce containment in its data directory."""
+    parts = relative_parts(relative)
     root = root.resolve()
     path = root.joinpath(*parts).resolve()
     if not path.is_relative_to(root):
