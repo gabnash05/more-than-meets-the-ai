@@ -1,0 +1,33 @@
+[project]
+name = "referee"
+version = "0.1.0"
+description = "Training adapters and pipelines for Referee ViT-Tiny"
+requires-python = ">=3.12"
+dependencies = [
+    "referee-data",
+    "lightning>=2.6.6",
+    "safetensors>=0.8.0",
+    "timm>=1.0.31",
+    "torch",
+    "torchvision",
+    "torchmetrics>=1.9.0",
+]
+
+[tool.uv.workspace]
+members = [
+    "data",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+referee-data = { workspace = true, editable = true }
+torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'win32'" }]
+torchvision = [{ index = "pytorch-cu126", marker = "sys_platform == 'win32'" }]
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
