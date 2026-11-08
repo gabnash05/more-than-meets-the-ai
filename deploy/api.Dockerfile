@@ -1,6 +1,8 @@
-FROM node:24.11.1-bookworm-slim AS node-runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:24.22.2-trixie-slim AS node-runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl zlib1g \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global --no-audit --no-fund --cache /tmp/npm-cache npm@11.21.2 \
+    && rm -rf /tmp/npm-cache
 
 FROM node-runtime AS build
 WORKDIR /repo

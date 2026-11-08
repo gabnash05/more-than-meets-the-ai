@@ -4,9 +4,16 @@ import zipfile
 from unittest.mock import patch
 
 import pytest
-
 from guesser_data.cli import parser
-from guesser_data.common import DataError, atomic_json, json_bytes, load_step, object_hash
+from guesser_data.common import (
+    DataError,
+    atomic_json,
+    candidate_path,
+    json_bytes,
+    load_step,
+    object_hash,
+    receipt_path,
+)
 from guesser_data.settings import PACKAGE_ROOT, Settings
 
 _download = load_step("01-download")
@@ -47,7 +54,14 @@ def test_prepare_and_export_small_dataset(tmp_path):
     rows[1]["record"]["drawing"] = rows[2]["record"]["drawing"]
     rows[1]["trajectory_hash"] = trajectory_hash(rows[1]["record"])
     rows[1]["content_sha256"] = object_hash(rows[1]["record"])
-    save_candidates(settings, meta, rows, stats, source_kind="synthetic_validation")
+    receipt = save_candidates(
+        settings, meta, rows, stats, source_kind="synthetic_validation"
+    )
+    candidates = candidate_path(settings, 0)
+    candidate_bytes = candidates.read_bytes().replace(b"\n", b"\r\n\n", 1)
+    candidates.write_bytes(candidate_bytes)
+    receipt["candidate_sha256"] = hashlib.sha256(candidate_bytes).hexdigest()
+    atomic_json(receipt_path(settings, 0), receipt)
     summary = prepare(settings)
     assert summary["counts"]["0"] == {"train": 16, "validation": 2, "test": 2}
     quarantine = (settings.base / "quarantine.jsonl").read_text(encoding="utf-8")
@@ -79,6 +93,11 @@ def test_prepare_and_export_small_dataset(tmp_path):
         )
     with zipfile.ZipFile(archives["held-out-test"]["path"]) as archive:
         assert "prepared/manifests/test.parquet" in archive.namelist()
+    train_records = settings.base / "prepared/records/train/c000.jsonl"
+    with train_records.open("r+b") as records:
+        records.truncate(train_records.stat().st_size - 1)
+    with pytest.raises(DataError, match="Invalid record boundary"):
+        export_module.audit(settings)
 
 
 def test_trainable_profile_helpers(tmp_path, monkeypatch):
@@ -98,9 +117,11 @@ def test_trainable_profile_helpers(tmp_path, monkeypatch):
     with pytest.raises(DataError):
         parser().parse_args(["status", "--profile", "unknown"])
 
-    names = (PACKAGE_ROOT / "src" / "resources" / "categories.txt").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    names = (
+        (PACKAGE_ROOT / "src" / "resources" / "categories.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
     registry = [{"class_id": i, "source_name": name} for i, name in enumerate(names)]
     production = Settings(tmp_path, profile="production")
     medium = Settings(tmp_path, profile="medium")

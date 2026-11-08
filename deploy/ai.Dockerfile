@@ -1,7 +1,8 @@
-FROM ghcr.io/astral-sh/uv:0.12.18 AS uv
-FROM python:3.13.9-slim-bookworm
-RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+FROM ghcr.io/astral-sh/uv:0.13.7 AS uv
+FROM python:3.13.18-slim-trixie
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 libgomp1 zlib1g \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir --disable-pip-version-check pip==26.3
 ARG AI_RUNTIME=litert
 ENV PYTHONPATH=/repo UV_PROJECT_ENVIRONMENT=/opt/venv UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never \
     PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

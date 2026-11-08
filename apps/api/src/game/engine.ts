@@ -1857,9 +1857,14 @@ export class RoomEngine {
               "invalid-drawing",
               "Drawing stream has a missing or repeated operation.",
             );
-            if (this.options.store instanceof MemoryGameStore) {
-              const bytes = Buffer.byteLength(JSON.stringify(batch.operations), "utf8");
-              const canvasKey = `${room.code}:${group.canvasId}:${room.game!.generation}`;
+            const memoryDrawing = this.options.store instanceof MemoryGameStore
+              ? {
+                  bytes: Buffer.byteLength(JSON.stringify(batch.operations), "utf8"),
+                  canvasKey: `${room.code}:${group.canvasId}:${room.game!.generation}`,
+                }
+              : null;
+            if (memoryDrawing) {
+              const { bytes, canvasKey } = memoryDrawing;
               requireThat((this.canvasBytes.get(canvasKey) ?? 0) + bytes + 1024 <= 1024 * 1024 && (this.roomBytes.get(room.code) ?? 0) + bytes + 1024 <= 8 * 1024 * 1024, "drawing-limit", "Drawing storage limit reached for this session.");
             }
             const candidate = {
@@ -1875,9 +1880,8 @@ export class RoomEngine {
             group.seenOps = candidate.seenOps;
             group.streams ??= {};
             group.streams[batch.streamId] = batch.clientSeq[1];
-            if (this.options.store instanceof MemoryGameStore) {
-              const bytes = Buffer.byteLength(JSON.stringify(batch.operations), "utf8");
-              const canvasKey = `${room.code}:${group.canvasId}:${room.game!.generation}`;
+            if (memoryDrawing) {
+              const { bytes, canvasKey } = memoryDrawing;
               this.canvasBytes.set(canvasKey, (this.canvasBytes.get(canvasKey) ?? 0) + bytes);
               this.roomBytes.set(room.code, (this.roomBytes.get(room.code) ?? 0) + bytes);
             }

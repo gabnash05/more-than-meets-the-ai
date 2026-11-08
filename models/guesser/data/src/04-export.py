@@ -6,6 +6,7 @@ import os
 import sqlite3
 import tempfile
 import zipfile
+from contextlib import ExitStack
 from pathlib import Path
 
 from .common import (
@@ -18,7 +19,6 @@ from .common import (
     read_json,
 )
 from .settings import PACKAGE_ROOT, Settings
-
 
 _download = load_step("01-download")
 clean_record = _download.clean_record
@@ -51,20 +51,19 @@ def audit(settings: Settings) -> dict:
     os.close(descriptor)
     connection = sqlite3.connect(temporary_path)
     try:
-        connection.execute(
-            "CREATE TABLE seen (id TEXT PRIMARY KEY, hash TEXT UNIQUE, class_id INTEGER)"
-        )
-        connection.execute("CREATE INDEX seen_class_id ON seen(class_id,id)")
-        return _audit_impl(settings, connection)
+        connection.execute("CREATE TABLE seen (id TEXT PRIMARY KEY, hash TEXT UNIQUE)")
+        with ExitStack() as record_stream:
+            return _audit_impl(settings, connection, record_stream)
     finally:
         connection.close()
         Path(temporary_path).unlink(missing_ok=True)
 
 
-def _audit_impl(settings, connection):
+def _audit_impl(settings, connection, record_stream: ExitStack):
     import pyarrow.parquet as pq
 
     base = settings.base
+    prepared = (base / "prepared").resolve()
     summary_path = base / "dataset-summary.json"
     existing_summary = read_json(summary_path) if summary_path.exists() else None
     if existing_summary is None:
@@ -97,6 +96,8 @@ def _audit_impl(settings, connection):
         for class_id in classes
     }
     hashes = {}
+    current_file = None
+    source = None
     progress("export", "auditing prepared manifests")
     for split in ("train", "validation", "test"):
         path = base / "prepared" / "manifests" / f"{split}.parquet"
@@ -121,42 +122,44 @@ def _audit_impl(settings, connection):
                 raise DataError(
                     "Manifest duplication or invalid membership", "audit_failed"
                 )
-            record_path = (base / "prepared" / row["record_file"]).resolve()
-            if not record_path.is_relative_to((base / "prepared").resolve()):
-                raise DataError("Invalid record path", "invalid_path")
-            if (
-                row["byte_offset"] != offsets.get(row["record_file"], 0)
-                or row["byte_length"] <= 0
-            ):
+            relative = row["record_file"]
+            offset, length = row["byte_offset"], row["byte_length"]
+            next_path = None
+            if source is None or relative != current_file:
+                next_path = (prepared / relative).resolve()
+                if not next_path.is_relative_to(prepared):
+                    raise DataError("Invalid record path", "invalid_path")
+            if offset != offsets.get(relative, 0) or length <= 0:
                 raise DataError("Noncontiguous record offsets", "audit_failed")
-            with record_path.open("rb") as source:
-                source.seek(row["byte_offset"])
-                raw = source.read(row["byte_length"])
-            if (
-                len(raw) != row["byte_length"]
-                or not raw.endswith(b"\n")
-                or b"\n" in raw[:-1]
-            ):
+            if next_path is not None:
+                record_stream.close()
+                source = record_stream.enter_context(next_path.open("rb"))
+                source.seek(offset)
+                current_file = relative
+            assert source is not None
+            raw = source.read(length)
+            if len(raw) != length or raw.find(b"\n") != length - 1:
                 raise DataError("Invalid record boundary", "audit_failed")
-            offsets[row["record_file"]] = row["byte_offset"] + row["byte_length"]
-            record_digests.setdefault(row["record_file"], hashlib.sha256()).update(raw)
+            offsets[relative] = offset + length
+            if offset == 0:
+                record_digests[relative] = hashlib.sha256()
+            record_digests[relative].update(raw)
             record = json.loads(raw)
             clean, _ = clean_record(record, classes[class_id]["source_name"])
             strokes = record["drawing"]
-            times = [t for stroke in strokes for t in stroke[2]]
             if (
                 json_bytes(clean) != json_bytes(record)
                 or record.get("recognized") != row["recognized"]
                 or len(strokes) != row["stroke_count"]
                 or sum(len(stroke[0]) for stroke in strokes) != row["point_count"]
-                or times[-1] - times[0] != row["duration_ms"]
+                or strokes[-1][2][-1] - strokes[0][2][0] != row["duration_ms"]
             ):
                 raise DataError("Manifest metadata mismatch", "audit_failed")
             if str(record["key_id"]) != drawing_id or trajectory_hash(record) != digest:
                 raise DataError("Indexed record mismatch", "audit_failed")
             try:
                 connection.execute(
-                    "INSERT INTO seen VALUES (?,?,?)", (drawing_id, digest, class_id)
+                    "INSERT INTO seen VALUES (?,?)", (drawing_id, digest)
                 )
             except sqlite3.IntegrityError as exc:
                 raise DataError("Duplicate ID or trajectory", "audit_failed") from exc
@@ -172,9 +175,7 @@ def _audit_impl(settings, connection):
             counts[class_id][split] += 1
             processed += 1
             if processed % 100_000 == 0:
-                progress(
-                    "export", f"audited {split} {processed:,}/{total_rows:,} rows"
-                )
+                progress("export", f"audited {split} {processed:,}/{total_rows:,} rows")
     for relative, end in offsets.items():
         if (base / "prepared" / relative).stat().st_size != end:
             raise DataError("Unindexed record data", "audit_failed")
@@ -257,7 +258,9 @@ def export_dataset(settings: Settings, output_dir: str | Path | None = None) -> 
                     archive.write(source, f"prepared/records/{split}/{source.name}")
         os.replace(temporary, path)
         results[role] = {"path": str(path), "sha256": file_hash(path)}
-        progress("export", f"wrote {path.name} ({path.stat().st_size / 1024**2:,.1f} MiB)")
+        progress(
+            "export", f"wrote {path.name} ({path.stat().st_size / 1024**2:,.1f} MiB)"
+        )
     atomic_json(output / "checksums.json", results)
     progress("export", f"checksums written to {output / 'checksums.json'}")
     return results

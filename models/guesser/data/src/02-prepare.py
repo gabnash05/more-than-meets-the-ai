@@ -14,14 +14,13 @@ from .common import (
     candidate_path,
     file_hash,
     json_bytes,
-    load_step,
     labels,
+    load_step,
     priority,
     progress,
     read_json,
 )
 from .settings import PACKAGE_ROOT, Settings
-
 
 _download = load_step("01-download")
 clean_record = _download.clean_record
@@ -146,7 +145,8 @@ def _summary(
                     "candidate_sha256",
                     "candidate_count",
                     "keep",
-                ) + (
+                )
+                + (
                     ("profile", "sampling_method", "complete", "full_source_verified")
                     if settings.download_method == "prefix"
                     else ()
@@ -180,6 +180,47 @@ def _exclusions(settings):
     )
 
 
+def _candidate_entries(settings: Settings, item: dict):
+    class_id = item["class_id"]
+    next_offset = 0
+    with candidate_path(settings, class_id).open("rb") as source:
+        for raw in source:
+            offset = next_offset
+            length = len(raw)
+            next_offset += length
+            if not raw.strip():
+                continue
+            row = json.loads(raw)
+            record = row["record"]
+            cleaned, _ = clean_record(record, item["source_name"])
+            record_bytes = json_bytes(record)
+            content = hashlib.sha256(record_bytes).hexdigest()
+            if (
+                not isinstance(row.get("drawing_id"), str)
+                or not row["drawing_id"]
+                or row["drawing_id"] != record["key_id"]
+                or row["class_id"] != class_id
+                or row["priority_hex"]
+                != f"{priority('select-v1', row['drawing_id'], settings.seed):064x}"
+                or row["trajectory_hash"] != trajectory_hash(record)
+                or json_bytes(cleaned) != record_bytes
+                or row.get("content_sha256", content) != content
+            ):
+                raise DataError(
+                    "Invalid candidate", "invalid_candidate", class_id=class_id
+                )
+            yield (
+                row["drawing_id"],
+                class_id,
+                row["trajectory_hash"],
+                content,
+                row["priority_hex"],
+                offset,
+                length,
+                int(row.get("id_conflict", False)),
+            )
+
+
 def prepare(settings: Settings) -> dict:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -194,56 +235,22 @@ def prepare(settings: Settings) -> dict:
     os.close(fd)
     db = sqlite3.connect(index_path)
     try:
-        db.executescript("""CREATE TABLE candidates (id TEXT, class_id INTEGER, hash TEXT,
-            content TEXT, rank TEXT, offset INTEGER, length INTEGER, flagged INTEGER);
-            CREATE INDEX by_id ON candidates(id); CREATE INDEX by_hash ON candidates(hash);""")
+        db.execute("""CREATE TABLE candidates (id TEXT, class_id INTEGER, hash TEXT,
+            content TEXT, rank TEXT, offset INTEGER, length INTEGER, flagged INTEGER)""")
         total = len(classes)
         candidates = sum(row.get("candidate_count", 0) for row in receipts.values())
         progress("prepare", f"indexing {candidates:,} candidates from {total} classes")
         for index, item in enumerate(classes, start=1):
-            class_id = item["class_id"]
-            with candidate_path(settings, class_id).open("rb") as source:
-                while True:
-                    offset = source.tell()
-                    raw = source.readline()
-                    if not raw:
-                        break
-                    if not raw.strip():
-                        continue
-                    row = json.loads(raw)
-                    record = row["record"]
-                    cleaned, _ = clean_record(record, item["source_name"])
-                    content = hashlib.sha256(json_bytes(record)).hexdigest()
-                    if (
-                        not isinstance(row.get("drawing_id"), str)
-                        or not row["drawing_id"]
-                        or row["drawing_id"] != record["key_id"]
-                        or row["class_id"] != class_id
-                        or row["priority_hex"]
-                        != f"{priority('select-v1', row['drawing_id'], settings.seed):064x}"
-                        or row["trajectory_hash"] != trajectory_hash(record)
-                        or json_bytes(cleaned) != json_bytes(record)
-                        or row.get("content_sha256", content) != content
-                    ):
-                        raise DataError(
-                            "Invalid candidate", "invalid_candidate", class_id=class_id
-                        )
-                    db.execute(
-                        "INSERT INTO candidates VALUES (?,?,?,?,?,?,?,?)",
-                        (
-                            row["drawing_id"],
-                            class_id,
-                            row["trajectory_hash"],
-                            content,
-                            row["priority_hex"],
-                            offset,
-                            len(raw),
-                            int(row.get("id_conflict", False)),
-                        ),
-                    )
+            db.executemany(
+                "INSERT INTO candidates VALUES (?,?,?,?,?,?,?,?)",
+                _candidate_entries(settings, item),
+            )
             if index % 25 == 0 or index == total:
                 progress("prepare", f"indexed {index}/{total} classes")
-        db.executescript("""CREATE TABLE conflicts AS SELECT id FROM candidates GROUP BY id
+        db.executescript("""CREATE INDEX by_id ON candidates(id);
+            CREATE INDEX by_hash ON candidates(hash);
+            CREATE INDEX by_class_rank_id ON candidates(class_id, rank, id);
+            CREATE TABLE conflicts AS SELECT id FROM candidates GROUP BY id
             HAVING COUNT(DISTINCT content)>1 OR COUNT(DISTINCT class_id)>1 OR MAX(flagged)>0;
             CREATE INDEX conflict_ids ON conflicts(id);
             CREATE TABLE cross_hashes AS SELECT hash FROM candidates GROUP BY hash
@@ -276,7 +283,6 @@ def prepare(settings: Settings) -> dict:
         db.execute(
             "CREATE TABLE selected (class_id INTEGER, id TEXT, hash TEXT, offset INTEGER, length INTEGER, split_rank TEXT)"
         )
-        db.execute("CREATE INDEX selected_class ON selected(class_id, split_rank, id)")
         shortage = []
         progress(
             "prepare",
@@ -337,6 +343,7 @@ def prepare(settings: Settings) -> dict:
                 hint=hint,
                 classes=shortage,
             )
+        db.execute("CREATE INDEX selected_class ON selected(class_id, split_rank, id)")
         schema = pa.schema(
             [
                 (name, typ)
@@ -365,7 +372,9 @@ def prepare(settings: Settings) -> dict:
                 writers[split] = pq.ParquetWriter(
                     manifest_dir / f"{split}.parquet.part", schema
                 )
-            progress("prepare", f"writing split records and manifests for {total} classes")
+            progress(
+                "prepare", f"writing split records and manifests for {total} classes"
+            )
             for index, item in enumerate(classes, start=1):
                 cid = item["class_id"]
                 counts[cid] = {}
@@ -391,8 +400,7 @@ def prepare(settings: Settings) -> dict:
                                 output.write(raw)
                                 digest.update(raw)
                                 strokes = record["drawing"]
-                                times = [t for stroke in strokes for t in stroke[2]]
-                                duration = times[-1] - times[0]
+                                duration = strokes[-1][2][-1] - strokes[0][2][0]
                                 t = timing[cid]
                                 t["min_ms"] = (
                                     duration

@@ -117,10 +117,11 @@ export class LocalRoomClient implements RoomClient {
   }
   async join(code: string, profile: PlayerProfile) {
     await this.roomWrites;
-    const s = await loadLocalRoomSession(code.trim().toUpperCase());
-    if (!/^[A-Z0-9]{6}$/.test(code.trim().toUpperCase()))
+    const normalizedCode = code.trim().toUpperCase();
+    const s = await loadLocalRoomSession(normalizedCode);
+    if (!/^[A-Z0-9]{6}$/.test(normalizedCode))
       throw new RoomClientError("invalid", "Enter a valid room code.");
-    if (!s || s.snapshot.code !== code.trim().toUpperCase())
+    if (!s || s.snapshot.code !== normalizedCode)
       throw new RoomClientError("not-found", "Room not found.");
     if (s.snapshot.phase !== "lobby")
       throw new RoomClientError("in-progress", "This match is in progress.");
