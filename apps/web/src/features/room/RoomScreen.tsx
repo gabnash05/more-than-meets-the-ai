@@ -164,6 +164,12 @@ export default function RoomScreen() {
       if (event.type === "gameplay" && event.name === "drawing-tail-discarded") { setError("Some drawing changes were not confirmed saved and could not be restored."); setStreamVersion(version => version + 1); }
       if (event.type === "connection") {
         setConnection(event.status);
+        if (event.message === "Room session ended") {
+          const current = loadRoomSession();
+          if (current?.code === code && current.resumeToken === saved.resumeToken) clearRoomSession();
+          setSession(null);
+          setError(event.message);
+        }
         if (event.status !== "connected") setCaughtUp(false);
       }
       if (event.type === "drawing") {
@@ -667,7 +673,7 @@ export default function RoomScreen() {
                   ? "Each guesser earns personal speed points. The drawer earns recognition when people solve the drawing."
                   : "Work together for shared team points. Teams draw on separate canvases."}
               </p>
-              {!session.demo && <p>AI is unavailable in this match. Human points still count, with no AI adjustment.</p>}
+              {!session.demo && <p>AI guesses are scored separately from human points.</p>}
               <p>Drawers rotate each prompt round. No written answer clues.</p>
             </section>
           </aside>
@@ -717,9 +723,9 @@ export default function RoomScreen() {
                 onError={setError}
               />
             {choosing && <section className="room-panel room-result-overlay"><h2>{session.privateState?.promptOptions?.length ? "Choose a word" : "Waiting for the drawer"}</h2><div className="room-modal-actions">{session.privateState?.promptOptions?.map(option => <button className="room-button" key={option.id} onClick={() => void action(() => client.current!.choosePrompt(option.id))}>{option.label}</button>)}</div></section>}
-            {snap.phase === "interrupted" && <section className="room-panel room-result-overlay"><h2>Round interrupted</h2><p>The saved drawing is available to review.</p>{promptsExhausted ? <p>Not enough unused prompts remain.</p> : <p>Retry this round with a fresh word.</p>}{host ? <><div className="room-modal-actions">{!promptsExhausted && <button className="room-button" onClick={() => void action(() => client.current!.retryInterrupted())}>Retry round</button>}{snap.canReturnToLobby && <><p>Returning ends this match; prior results are saved.</p><button className="room-button" onClick={() => void action(() => client.current!.returnToLobby())}>Return to lobby</button></>}</div></> : <p>Waiting for the host to retry or return to the lobby.</p>}</section>}
+            {snap.phase === "interrupted" && <section className="room-panel room-result-overlay"><h2>Round interrupted</h2><p>The drawing saved for this session is available to review.</p>{promptsExhausted ? <p>Not enough unused prompts remain.</p> : <p>Retry this round with a fresh word.</p>}{host ? <><div className="room-modal-actions">{!promptsExhausted && <button className="room-button" onClick={() => void action(() => client.current!.retryInterrupted())}>Retry round</button>}{snap.canReturnToLobby && <><p>Returning ends this match; prior results are saved for this session.</p><button className="room-button" onClick={() => void action(() => client.current!.returnToLobby())}>Return to lobby</button></>}</div></> : <p>Waiting for the host to retry or return to the lobby.</p>}</section>}
             </div>
-            {game?.sync && !result && snap.phase !== "finished" && <p role="status">{pendingDrawing > 0 ? "Drawing changes queued on this device; waiting for the room service. " : ""}{game.sync.sequence === 0 ? "Canvas ready" : game.sync.durableSequence < game.sync.sequence ? "Server received drawing; saving…" : "Server-received drawing saved"}</p>}
+            {game?.sync && !result && snap.phase !== "finished" && <p role="status">{pendingDrawing > 0 ? "Drawing changes queued on this device; waiting for the room service. " : ""}{game.sync.sequence === 0 ? "Canvas ready" : game.sync.durableSequence < game.sync.sequence ? "Server received drawing; saving…" : "Server-received drawing saved for this session"}</p>}
             {drawing && role === "drawer" && (
               <fieldset
                 className="room-tools"
@@ -802,7 +808,7 @@ export default function RoomScreen() {
             )}
           </section>
           <aside className="room-chat-column">
-            {snap.phase !== "finished" && <AiCard game={game} result={result} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && (!result || !game?.result?.aiBenchmark))} />}
+            {snap.phase !== "finished" && <AiCard game={game} result={result} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
             <div className="room-chat-order">
               <section
                 data-testid="room-chat"

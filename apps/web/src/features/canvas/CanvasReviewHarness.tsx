@@ -11,6 +11,7 @@ type CanvasReviewApi = {
   echo(): Promise<void>;
   replayAndUnmount(): void;
   operations(): CanvasOperation[];
+  renderPng(prefix: CanvasOperation[]): Promise<string | null>;
 };
 
 declare global {
@@ -36,6 +37,19 @@ export default function CanvasReviewHarness() {
         setMounted(false);
       },
       operations: () => [...operations.current],
+      renderPng: async prefix => {
+        await canvas.current!.hydrate(prefix);
+        const source = document.querySelector<HTMLCanvasElement>('canvas[aria-label="Drawing canvas"]')!;
+        const image = document.createElement("canvas");
+        image.width = source.width;
+        image.height = source.height;
+        const context = image.getContext("2d", { willReadFrequently: true })!;
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, image.width, image.height);
+        context.drawImage(source, 0, 0);
+        const pixels = context.getImageData(0, 0, image.width, image.height).data;
+        return pixels.some(value => value < 255) ? image.toDataURL("image/png") : null;
+      },
     };
     return () => { delete window.canvasReview; };
   }, []);

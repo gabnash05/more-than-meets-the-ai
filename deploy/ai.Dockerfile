@@ -1,0 +1,22 @@
+FROM ghcr.io/astral-sh/uv:0.12.18@sha256:3adc3706091ce7c2fe595e669628caedd6d951551b92b258b7e7dbe06d9440bc AS uv
+FROM python:3.13.9-slim-bookworm@sha256:b685a4fa58bb19d1814d78a1ec0f0208f351452724f78b20212c984d6e124a34
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+ARG AI_RUNTIME=litert
+ENV PYTHONPATH=/repo UV_PROJECT_ENVIRONMENT=/opt/venv UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never \
+    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY --from=uv /uv /usr/local/bin/uv
+WORKDIR /repo
+COPY apps/ai/pyproject.toml apps/ai/uv.lock ./apps/ai/
+RUN case "$AI_RUNTIME" in \
+      litert) uv sync --locked --no-dev --project apps/ai ;; \
+      vit) uv sync --locked --no-dev --extra vit --project apps/ai ;; \
+      *) echo "Invalid AI_RUNTIME" >&2; exit 2 ;; \
+    esac
+COPY apps/ai/ai_service ./apps/ai/ai_service
+COPY models/guesser/inference ./models/guesser/inference
+COPY models/referee/inference ./models/referee/inference
+COPY models/guesser/data/src/__init__.py models/guesser/data/src/06-images.py models/guesser/data/src/common.py models/guesser/data/src/settings.py ./models/guesser/data/src/
+USER 1000:1000
+EXPOSE 8000
+CMD ["/opt/venv/bin/uvicorn", "--app-dir", "/repo/apps/ai", "ai_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]

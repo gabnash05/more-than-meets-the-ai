@@ -22,7 +22,7 @@ The separate follow-up scopes are [Team gameplay](docs/TEAM-GAMEPLAY-NEXT-PLAN.m
 
 The results/chat correction adds ranked avatar cards, a clearer recap, green correct confirmations and chat following. Fresh matches use private selected-target history with a 348-word catalogue. See [the correction checks and testing notes](docs/FRONTEND-VALIDATION.md).
 
-The next phase covers a database-free VM deployment, Cloudflare Tunnel and an optional trained model service. [Deployment and AI guessing plan](docs/DEPLOYMENT-AND-AI-PLAN.md).
+Deploy the web and room API with Compose in memory mode or with an external PostgreSQL database. The optional AI profile provides a pinned smoke-test Guesser and an independent Referee fixture. [Deployment runbook](deploy/README.md)
 
 ## Guesser data and evaluation
 

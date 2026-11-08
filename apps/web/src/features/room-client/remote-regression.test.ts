@@ -261,3 +261,30 @@ describe("remote room recovery", () => {
     });
   });
 });
+
+
+describe("expired remote sessions", () => {
+  it("cleans only the expired player's room outbox after a confirmed missing room", async () => {
+    const payload = { roomCode: "ABC123", canvasId: "c", generation: 1, streamId: "s", clientSeq: [1, 1], operations: [] } as unknown as DrawingBatch;
+    await saveDrawingEnvelope({ requestId: "expired", playerId: "p", order: 1, payload });
+    await saveDrawingEnvelope({ requestId: "other", playerId: "other", order: 2, payload });
+    vi.stubGlobal("sessionStorage", { getItem: () => JSON.stringify({ code: "ABC123", playerId: "p", resumeToken: "token" }) });
+    const client = new RemoteRoomClient({ fetch: vi.fn(async () => ({ ok: false, status: 404, json: async () => ({ code: "not-found", message: "Room not found." }) }) as Response) as typeof fetch });
+    await expect(client.resume("ABC123", "token")).rejects.toMatchObject({ code: "session-ended" });
+    const entries = await loadDrawingEnvelopes();
+    expect(entries.some(item => item.requestId === "expired")).toBe(false);
+    expect(entries.some(item => item.requestId === "other")).toBe(true);
+    await deleteDrawingEnvelope("other");
+    vi.unstubAllGlobals();
+    client.dispose();
+  });
+  it("retains outbox on transient resume failure", async () => {
+    const payload = { roomCode: "ABC123", canvasId: "c", generation: 1, streamId: "s", clientSeq: [1, 1], operations: [] } as unknown as DrawingBatch;
+    await saveDrawingEnvelope({ requestId: "transient", playerId: "p", order: 1, payload });
+    const client = new RemoteRoomClient({ fetch: vi.fn(async () => { throw new Error("offline"); }) as typeof fetch });
+    await expect(client.resume("ABC123", "token")).rejects.toMatchObject({ code: "connection" });
+    expect((await loadDrawingEnvelopes()).some(item => item.requestId === "transient")).toBe(true);
+    await deleteDrawingEnvelope("transient");
+    client.dispose();
+  });
+});

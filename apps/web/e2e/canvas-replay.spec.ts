@@ -63,6 +63,29 @@ test("restores identical pixels and does not echo replay operations", async ({ p
   await expect(canvas).toHaveAttribute("aria-busy", "false");
   await expect.poll(() => pixels(page)).toEqual(before);
   expect((await journal(page)).count).toBe(beforeCount);
+  const prefix = await page.evaluate(() => new Promise<import("../src/contracts/drawing").CanvasOperation[]>((resolve, reject) => {
+    const request = indexedDB.open("more-than-meets-drawing-journal", 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      const read = db.transaction("journals").objectStore("journals").getAll();
+      read.onerror = () => reject(read.error);
+      read.onsuccess = () => { resolve(read.result.flat()); db.close(); };
+    };
+  }));
+  const expectedPng = await canvas.evaluate((element: HTMLCanvasElement) => {
+    const flat = document.createElement("canvas");
+    flat.width = element.width;
+    flat.height = element.height;
+    const context = flat.getContext("2d")!;
+    context.fillStyle = "white";
+    context.fillRect(0, 0, flat.width, flat.height);
+    context.drawImage(element, 0, 0);
+    return flat.toDataURL("image/png");
+  });
+  await page.goto("/review/canvas/");
+  await expect(page.getByLabel("Drawing canvas")).toHaveAttribute("data-ready", "true");
+  expect(await page.evaluate(operations => window.canvasReview!.renderPng(operations), prefix)).toBe(expectedPng);
 });
 
 test("guest cannot paint on the shared canvas", async ({ page }) => {
