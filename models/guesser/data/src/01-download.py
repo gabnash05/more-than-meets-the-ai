@@ -17,8 +17,6 @@ from .common import (
     acquisition_recipe,
     atomic_json,
     candidate_path,
-    file_hash,
-    iter_jsonl,
     object_hash,
     priority,
     progress,
@@ -352,21 +350,31 @@ def verify_receipt(settings: Settings, meta: dict) -> dict:
             or not isinstance(keep, int)
             or isinstance(keep, bool)
             or keep < 1
-            or receipt.get("candidate_sha256") != file_hash(path)
         ):
             raise ValueError("Receipt identity mismatch")
-        rows = list(iter_jsonl(path))
-        if len(rows) != receipt.get("candidate_count") or len(rows) > keep:
+
+        digest = hashlib.sha256()
+        count = 0
+        with path.open("rb") as source:
+            for line in source:
+                digest.update(line)
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if (
+                    not isinstance(row, dict)
+                    or not isinstance(row.get("drawing_id"), str)
+                    or row.get("class_id") != meta["class_id"]
+                    or not isinstance(row.get("record"), dict)
+                    or not isinstance(row.get("trajectory_hash"), str)
+                    or not isinstance(row.get("priority_hex"), str)
+                ):
+                    raise ValueError("Invalid candidate")
+                count += 1
+        if receipt.get("candidate_sha256") != digest.hexdigest():
+            raise ValueError("Receipt identity mismatch")
+        if count != receipt.get("candidate_count") or count > keep:
             raise ValueError("Candidate count mismatch")
-        if any(
-            not isinstance(row.get("drawing_id"), str)
-            or row.get("class_id") != meta["class_id"]
-            or not isinstance(row.get("record"), dict)
-            or not isinstance(row.get("trajectory_hash"), str)
-            or not isinstance(row.get("priority_hex"), str)
-            for row in rows
-        ):
-            raise ValueError("Invalid candidate")
         if receipt.get("source_kind") == "quickdraw" and receipt.get("complete"):
             if (
                 not receipt.get("full_source_verified")
@@ -374,7 +382,7 @@ def verify_receipt(settings: Settings, meta: dict) -> dict:
                 or receipt.get("source_bytes") != int(meta["size"])
                 or not meta.get("md5Hash")
                 or receipt.get("source_md5") != meta["md5Hash"]
-                or len(rows) != keep
+                or count != keep
             ):
                 raise ValueError("Source evidence mismatch")
         elif receipt.get("source_kind") == "quickdraw_partial":
@@ -390,7 +398,7 @@ def verify_receipt(settings: Settings, meta: dict) -> dict:
                 or receipt["source_bytes"] < 1
                 or receipt["source_bytes"] > int(meta["size"])
                 or receipt.get("source_md5") is not None
-                or len(rows) != keep
+                or count != keep
             ):
                 raise ValueError("Partial source evidence mismatch")
         elif receipt.get("full_source_verified"):
@@ -614,7 +622,9 @@ def download(
             try:
                 with _open_source(meta) as response:
                     if partial:
-                        rows, stats = sample_partial_stream(response, meta, settings, keep)
+                        rows, stats = sample_partial_stream(
+                            response, meta, settings, keep
+                        )
                     else:
                         rows, stats = sample_full_stream(response, meta, settings, keep)
                 return save_candidates(
