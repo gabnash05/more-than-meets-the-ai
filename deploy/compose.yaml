@@ -2,7 +2,7 @@ name: more-than-meets-the-ai
 
 services:
   web:
-    image: ${WEB_IMAGE:-mmtai-web}:${IMAGE_TAG:?Set IMAGE_TAG to a reviewed Git SHA}
+    image: ${WEB_IMAGE:-mmtai-web}:${IMAGE_TAG:-local}
     build:
       context: ..
       dockerfile: deploy/web.Dockerfile
@@ -19,7 +19,7 @@ services:
       retries: 5
 
   api:
-    image: ${API_IMAGE:-mmtai-api}:${IMAGE_TAG:?Set IMAGE_TAG to a reviewed Git SHA}
+    image: ${API_IMAGE:-mmtai-api}:${IMAGE_TAG:-local}
     build:
       context: ..
       dockerfile: deploy/api.Dockerfile
@@ -55,7 +55,7 @@ services:
 
   ai:
     profiles: [ai]
-    image: ${AI_IMAGE:-mmtai-inference}:${IMAGE_TAG:?Set IMAGE_TAG to a reviewed Git SHA}
+    image: ${AI_IMAGE:-mmtai-inference}:${IMAGE_TAG:-local}
     build:
       context: ..
       dockerfile: deploy/ai.Dockerfile

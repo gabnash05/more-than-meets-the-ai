@@ -1,122 +1,90 @@
 # Deploy More Than Meets the AI
 
-Use a Linux host with Docker Engine, the Docker Compose plugin, Git and `curl`. Commands run from the checkout root. The host ingress forwards to `127.0.0.1:8080` by default. Set `WEB_BIND` to the address and port your ingress uses, and set `WEB_ORIGINS` to the exact HTTP or HTTPS browser origins, without trailing slashes. For example, use `http://127.0.0.1:8080,https://game.example.com` for local verification and a public HTTPS site. The deployer configures DNS, TLS and ingress.
+Use a host with Docker Engine and the Compose plugin. Run the commands below from `deploy/` in your normal Git checkout.
 
-## First install
+## Start the game
 
-Set `REVIEWED_REVISION` to the full reviewed Git SHA. Copy the environment template once and keep it on the host across updates.
+For public hosting, copy `.env.example` to `.env` and set `WEB_ORIGINS` to the exact browser origin, such as `https://game.example.com`. Separate multiple origins with commas and omit trailing slashes. Point the HTTPS ingress at `127.0.0.1:8080`. Set `WEB_BIND` if the ingress uses a different bind address or port. The defaults work for a local launch.
 
 ```sh
-git clone https://github.com/gabnash05/more-than-meets-the-ai.git
-cd more-than-meets-the-ai
-git checkout --detach "$REVIEWED_REVISION"
-cp deploy/.env.example deploy/.env
-export IMAGE_TAG="$(git rev-parse HEAD)"
-sh deploy/preflight.sh base
-docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build --wait
+sh preflight.sh
+docker compose up -d --build --wait
 curl -fsS http://127.0.0.1:8080/api/health
 ```
 
-Keep `ROOM_STORE=memory` for a database-free VM. Refresh and reconnect recover the accepted canvas while the API process lives. Each room retains its latest match. A new match reclaims the earlier archive. The API admits 32 rooms and expires rooms after 30 minutes without a connected player. Replacing the API ends memory-mode sessions. The journal holds up to 1 MiB of encoded operations per canvas and 8 MiB per room. At the limit, players can finish the round using the accepted drawing.
+The game starts in memory mode. Play a match in two browser sessions and check shared drawing, refresh recovery and final standings. The browser's Network panel should show HTTP `101` for `/socket.io/`. Restarting the API ends memory-mode rooms.
 
-## Check a match
-
-1. Open the same URL in two independent browser sessions. Create a room, join with its invite, and start a one-round Individual match as host.
-2. Check for HTTP `101` on `/socket.io/` in the browser Network panel. Choose a prompt, draw and verify that the other browser sees the drawing. Refresh the drawer and check that the accepted drawing returns.
-3. Submit the correct guess from the other browser and check the recap and standings. Restart `api`, then refresh or reconnect in the old room. Both browsers should report **Room session ended**. Create a fresh room to verify the restarted proxy path.
-
-## Operate and roll back
-
-Define this shell helper from the checkout root. Keep the previous Git revision and both of its image tags before updating.
+## Status and updates
 
 ```sh
-compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml "$@"; }
-compose ps
-compose logs --tail 100 -f web api
-compose stop
+docker compose ps
+docker compose logs --tail 100 -f web api
 ```
 
-To update, fetch the reviewed revision, then check out and build the pair together.
+Update your branch with `git pull --ff-only`, then repeat the start commands. If you want to keep images for rollback, set a release name such as `IMAGE_TAG=demo-1` in `.env` before building. Give each release a different tag and keep the previous web and API images. To restore that pair, set the previous tag and run `docker compose up -d --no-build --wait`. Use the previous Compose file if its service settings changed. Add `--profile ai` when operating a stack with local inference.
+
+## PostgreSQL
+
+Set `ROOM_STORE=postgres` and `DATABASE_URL` in `.env`. Run the migration against the configured database before starting the services.
 
 ```sh
-PREVIOUS_REVISION="$(git rev-parse HEAD)"
-git fetch origin
-git checkout --detach "$REVIEWED_REVISION"
-export IMAGE_TAG="$(git rev-parse HEAD)"
-sh deploy/preflight.sh base
-compose up -d --build --wait
+sh preflight.sh postgres
+docker compose build web api
+docker compose run --rm --no-deps api npm run db:migrate
+docker compose up -d --no-build --wait
 ```
 
-To roll back, use the previous Compose configuration and the previously built image pair.
+PostgreSQL keeps interrupted drawing prefixes and committed results across API restarts. Check migration compatibility before rolling back the API.
 
-```sh
-git checkout --detach "$PREVIOUS_REVISION"
-export IMAGE_TAG="$PREVIOUS_REVISION"
-compose up -d --no-build --wait
-curl -fsS http://127.0.0.1:8080/api/health
-```
+## Optional AI
 
-## External PostgreSQL
+Use Linux x86-64 containers for inference. Put the bearer credential in a file named `ai-token` in a private directory outside the checkout. Set `AI_SECRETS_DIR` in `.env` to that directory's absolute path. Give the host operator and container UID 1000 access.
 
-To use a persistent store, set `ROOM_STORE=postgres` and `DATABASE_URL` in the host environment file. Supply a reachable PostgreSQL database and keep that file out of Git. Run migrations once against the configured database before starting the stack.
+### AI on the game host
 
-```sh
-sh deploy/preflight.sh postgres
-compose build web api
-compose run --rm --no-deps api npm run db:migrate
-compose up -d --no-build --wait
-```
-
-PostgreSQL keeps interrupted drawing prefixes and committed results across API restarts. Check migration compatibility with the previous API image before a PostgreSQL rollback.
-
-## Optional inference
-
-Use x86-64 Linux for the AI profile. Run the Quick, Draw! smoke model in an isolated test stack on loopback. It uses the pinned INT8 bundle and 345 ordered labels. The smoke test checks transport and mapping. Run model evaluation separately.
-
-Create a private credential directory outside the checkout. Put the same bearer credential in the file named `ai-token` on each participating host. Restrict access to the host operator and container UID 1000. Set `AI_SECRETS_DIR` to the absolute host directory. Compose mounts it read-only. Keep the credential out of shell history and logs.
-
-### Inference on the game host
-
-Set these values in `deploy/.env`.
+For a private Quick, Draw! smoke test, add these settings to `.env`.
 
 ```dotenv
 API_TARGET=inference
-AI_RUNTIME=litert
 AI_SERVICE_URL=http://ai:8000
 GUESSER_PROVIDER=http
 GUESSER_MODEL_ID=quickdraw-int8-smoke
-REFEREE_PROVIDER=unavailable
 AI_SMOKE_TEST=1
 ```
 
 ```sh
-sh deploy/fetch-smoke-model.sh
-sh deploy/preflight.sh ai-local
-compose --profile ai up -d --build --wait
-sh deploy/smoke-ai.sh
-compose --profile ai logs --tail 100 ai api
+sh fetch-smoke-model.sh
+sh preflight.sh ai-local
+docker compose --profile ai up -d --build --wait
+sh smoke-ai.sh
 ```
 
-The smoke script checks authenticated model readiness, opens a private match through the running NestJS server, sends a fixed drawing and checks that a mapped answer reached the committed recap. Stop `ai` and check that players can still start and complete a human-only match. Include the `ai` profile when operating the three-service stack.
+The smoke script checks model readiness and drives a private match to a mapped answer. Use `docker compose --profile ai logs --tail 100 ai api` to diagnose failures.
 
-### Separate inference host
+### AI on a separate host
 
-On the inference host, use the same Git revision and `AI_RUNTIME`. Set `AI_BIND` to the host's private interface and port. Set `AI_SECRETS_DIR`, `GUESSER_MODEL_ID` and `AI_SMOKE_TEST` as above, then run the following from its checkout.
+On the inference host, set `AI_BIND` to its private IPv4 address and port, and set `AI_SECRETS_DIR`, `GUESSER_MODEL_ID` and `AI_SMOKE_TEST` for the smoke bundle. Use the same Compose files as the game host.
 
 ```sh
-sh deploy/fetch-smoke-model.sh
-sh deploy/preflight.sh ai-host
-docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.ai-host.yaml up -d --build --wait ai
+sh fetch-smoke-model.sh
+sh preflight.sh ai-host
+docker compose -f compose.yaml -f compose.ai-host.yaml up -d --build --wait ai
 ```
 
-On the game host, set `AI_SERVICE_URL` to the HTTPS endpoint on the inference host, or use a private HTTP endpoint carried inside an encrypted link and set `AI_PRIVATE_LINK=1`. Use the same secret and selected model ID. Run `sh deploy/preflight.sh ai-remote`, bring up the base stack with `API_TARGET=inference` and run `sh deploy/smoke-ai.sh` from the game host.
+On the game host, use the settings from the previous section with the same credential. Set `AI_SERVICE_URL` to the inference host's HTTPS endpoint. For HTTP over an encrypted private link, also set `AI_PRIVATE_LINK=1`.
+
+```sh
+sh preflight.sh ai-remote
+docker compose up -d --build --wait
+sh smoke-ai.sh
+```
 
 ### Model bundles
 
-`AI_ARTIFACT_DIR` contains one directory per model ID. The service reports per-role status at authenticated `GET /health/ready`. Its liveness check stays available when a role is disabled or its artifact cannot load.
+`AI_ARTIFACT_DIR` contains one directory per model ID and defaults to `.local/ai-artifacts` in the checkout. `GET /health/live` checks the worker. Authenticated `GET /health/ready` reports each role's status, model ID and artifact revision.
 
-The INT8 smoke artifact uses light ink on a dark background, following the publisher's training code. Fixed public source bitmaps provide a polarity and label-order check. The bundle includes source attribution and hash-pinned model, labels and metadata.
+The downloaded INT8 bundle is for private smoke tests. Its hashes verify the model, labels and metadata before installation.
 
-Set `AI_RUNTIME=vit` to install the optional CPU ViT dependencies. A ViT bundle uses `weights.safetensors`, ordered `labels.txt` and the validation-selected `checkpoint-selection.json`. The version 1 manifest uses role `guesser`, adapter `vit-tiny`, `modelId`, `artifactRevision`, input `[1,3,224,224]`, output `[1,345]`, the training `preprocessing` candidate, `preprocessingConfigHash` and a filename-to-SHA-256 map in `files`. Export the selected backbone state dict from trusted weights and confirm evaluation parity before enabling it.
+Set `AI_RUNTIME=vit` for the CPU ViT dependencies. The bundle uses `weights.safetensors`, ordered `labels.txt` and `checkpoint-selection.json`. Its version 1 manifest sets role `guesser`, adapter `vit-tiny`, `modelId`, `artifactRevision`, input `[1,3,224,224]`, output `[1,345]`, the selected `preprocessing`, `preprocessingConfigHash` and a filename-to-SHA-256 map in `files`. Confirm evaluation parity with trusted weights before enabling it.
 
-The synthetic Referee adapter requires `AI_TEST_FIXTURES=1` and `REFEREE_MODEL_ID=referee-fixture-v1`. Enable `REFEREE_PROVIDER=http` to exercise it in a test match. Text and number evidence are evaluated independently and remain internal.
+For a private Referee fixture test, set `AI_TEST_FIXTURES=1`, `REFEREE_MODEL_ID=referee-fixture-v1` and `REFEREE_PROVIDER=http`. Its text and number evidence stays internal.
