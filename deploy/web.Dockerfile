@@ -1,4 +1,8 @@
-FROM node:24.22.2-bookworm-slim AS build
+FROM node:24.22.2-trixie-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends zlib1g \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global --no-audit --no-fund --cache /tmp/npm-cache npm@11.21.2 \
+    && rm -rf /tmp/npm-cache
 WORKDIR /repo
 COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
 COPY packages/game-contracts ./packages/game-contracts
