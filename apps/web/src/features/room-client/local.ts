@@ -1,3 +1,4 @@
+import { createUuid as id } from "@/lib/uuid";
 import type {
   RoomClient,
   RoomEvent,
@@ -18,8 +19,6 @@ import {
 export { persistLocalRoomSession, deleteLocalRoomSession } from "./storage";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-const id = () =>
-  globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 export class LocalRoomClient implements RoomClient {
   private session: RoomSession | null = null;
   private recovering = false;

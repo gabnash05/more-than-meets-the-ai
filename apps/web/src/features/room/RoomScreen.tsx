@@ -1,4 +1,6 @@
 "use client";
+
+import { createUuid } from "@/lib/uuid";
 import {
   useCallback,
   useEffect,
@@ -230,7 +232,7 @@ export default function RoomScreen() {
     if (!code || !game?.canvasId) return;
     const b = createDrawingBatcher({
       roomCode: code,
-      streamId: crypto.randomUUID(),
+      streamId: createUuid(),
       canvasId: game.canvasId,
       generation: game.generation,
       transport: "room-client",

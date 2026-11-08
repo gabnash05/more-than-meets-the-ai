@@ -1,4 +1,5 @@
 import { io, type Socket } from "socket.io-client";
+import { createUuid } from "@/lib/uuid";
 import type {
   RoomClient,
   InterruptedSketch,
@@ -248,7 +249,7 @@ export class RemoteRoomClient implements RoomClient {
     let envelope = savedEnvelope ?? this.pending.get(key);
     if (!envelope) {
       envelope = {
-        requestId: globalThis.crypto.randomUUID(),
+        requestId: createUuid(),
         expectedRevision: this.session?.snapshot.revision,
         generation: this.session?.snapshot.game?.generation,
         payload,
@@ -413,7 +414,7 @@ export class RemoteRoomClient implements RoomClient {
     return job;
   }
   submitDrawing(batch: DrawingBatch) {
-    const envelope: DrawingEnvelope = { requestId: globalThis.crypto.randomUUID(), playerId: this.session?.playerId ?? "", order: ++this.outboxOrder, expectedRevision: this.session?.snapshot.revision, generation: batch.generation, payload: batch };
+    const envelope: DrawingEnvelope = { requestId: createUuid(), playerId: this.session?.playerId ?? "", order: ++this.outboxOrder, expectedRevision: this.session?.snapshot.revision, generation: batch.generation, payload: batch };
     const saved = saveDrawingEnvelope(envelope);
     const job = this.outboxChain.then(async () => {
       await saved;
