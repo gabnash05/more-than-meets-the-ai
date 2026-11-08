@@ -1,5 +1,5 @@
-FROM ghcr.io/astral-sh/uv:0.12.18 AS uv
-FROM python:3.13.9-slim-bookworm
+FROM ghcr.io/astral-sh/uv:0.13.7 AS uv
+FROM python:3.13.18-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 ARG AI_RUNTIME=litert

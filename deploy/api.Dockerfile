@@ -1,4 +1,4 @@
-FROM node:24.11.1-bookworm-slim AS node-runtime
+FROM node:24.22.2-bookworm-slim AS node-runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/*
 
