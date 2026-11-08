@@ -221,12 +221,12 @@ function validPoint(p: unknown): boolean {
         v.pressure <= 1))
   );
 }
-function validateOperations(group: Group, batch: DrawingBatch): void {
+function validateOperations(group: Group, batch: DrawingBatch, seen: Set<string>, operationsJson: string): void {
   requireThat(
     Array.isArray(batch.operations) &&
       batch.operations.length > 0 &&
       batch.operations.length <= 256 &&
-      JSON.stringify(batch.operations).length <= 128000,
+      operationsJson.length <= 128000,
     "invalid-drawing",
     "Drawing batch is too large or empty.",
   );
@@ -238,11 +238,12 @@ function validateOperations(group: Group, batch: DrawingBatch): void {
     "Invalid client sequence.",
   );
   let points = 0;
+  const batchIds = new Set<string>();
   for (const [index, op] of batch.operations.entries()) {
     requireThat(
       boundedText(op.opId, 100) &&
         boundedText(op.actionId, 100) &&
-        !group.seenOps.includes(op.opId) &&
+        !seen.has(op.opId) && !batchIds.has(op.opId) &&
         Number.isFinite(op.at) &&
         op.clientSeq === batch.clientSeq[0] + index,
       "invalid-drawing",
@@ -323,7 +324,7 @@ function validateOperations(group: Group, batch: DrawingBatch): void {
       group.redo.pop();
       group.undo.push(op.targetActionId);
     } else throw new GameError("invalid-drawing", "Unknown drawing operation.");
-    group.seenOps.push(op.opId);
+    batchIds.add(op.opId);
   }
   requireThat(points <= 2048, "invalid-drawing", "Too many drawing points.");
 }
@@ -344,6 +345,7 @@ export class RoomEngine {
   private idleSince = new Map<string, number>();
   private canvasBytes = new Map<string, number>();
   private roomBytes = new Map<string, number>();
+  private seenOperationIds = new WeakMap<Group, { length: number; ids: Set<string> }>();
   private evictionTimer?: ReturnType<typeof setInterval>;
   private connections = new Map<string, { code: string; playerId: string }>();
   private leases = new Map<string, string>();
@@ -1035,7 +1037,10 @@ export class RoomEngine {
             this.archiveErrors.delete(room.code);
             break;
           } catch {
-            this.archiveErrors.add(room.code);
+            if (!this.archiveErrors.has(room.code)) {
+              this.archiveErrors.add(room.code);
+              this.publish(room);
+            }
             await new Promise((resolve) => setTimeout(resolve, 1000));
           }
         }
@@ -1857,9 +1862,10 @@ export class RoomEngine {
               "invalid-drawing",
               "Drawing stream has a missing or repeated operation.",
             );
+            const operationsJson = JSON.stringify(batch.operations);
             const memoryDrawing = this.options.store instanceof MemoryGameStore
               ? {
-                  bytes: Buffer.byteLength(JSON.stringify(batch.operations), "utf8"),
+                  bytes: Buffer.byteLength(operationsJson, "utf8"),
                   canvasKey: `${room.code}:${group.canvasId}:${room.game!.generation}`,
                 }
               : null;
@@ -1867,17 +1873,25 @@ export class RoomEngine {
               const { bytes, canvasKey } = memoryDrawing;
               requireThat((this.canvasBytes.get(canvasKey) ?? 0) + bytes + 1024 <= 1024 * 1024 && (this.roomBytes.get(room.code) ?? 0) + bytes + 1024 <= 8 * 1024 * 1024, "drawing-limit", "Drawing storage limit reached for this session.");
             }
+            let seen = this.seenOperationIds.get(group);
+            if (!seen || seen.length !== group.seenOps.length) {
+              seen = { length: group.seenOps.length, ids: new Set(group.seenOps) };
+              this.seenOperationIds.set(group, seen);
+            }
             const candidate = {
               ...group,
               undo: [...group.undo],
               redo: [...group.redo],
-              seenOps: [...group.seenOps],
             };
-            validateOperations(candidate, batch);
+            validateOperations(candidate, batch, seen.ids, operationsJson);
             group.openAction = candidate.openAction;
             group.undo = candidate.undo.slice(-20);
             group.redo = candidate.redo.slice(-20);
-            group.seenOps = candidate.seenOps;
+            for (const operation of batch.operations) {
+              group.seenOps.push(operation.opId);
+              seen.ids.add(operation.opId);
+            }
+            seen.length = group.seenOps.length;
             group.streams ??= {};
             group.streams[batch.streamId] = batch.clientSeq[1];
             if (memoryDrawing) {
@@ -1974,8 +1988,13 @@ export class RoomEngine {
         }
         ack.revision = room.revision;
         room.requests[key].ack = clone(ack);
-        this.publish(room);
-        this.schedule(room);
+        if (name !== "room:drawing") {
+          this.publish(room);
+          this.schedule(room);
+        } else if (!(this.options.store instanceof MemoryGameStore) && (this.archiveCounts.get(room.code) ?? 0) === 1) {
+          // Slow archives need a saving update. Memory mode publishes its durable watermark immediately.
+          this.publish(room);
+        }
         return ack;
       } catch (error) {
         if (backup) Object.assign(room, backup);

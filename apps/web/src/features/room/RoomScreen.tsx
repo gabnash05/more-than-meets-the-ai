@@ -132,6 +132,8 @@ export default function RoomScreen() {
     canvas = useRef<DrawingCanvasHandle>(null),
     batcher = useRef<DrawingBatcher | null>(null);
   const activeCanvas = useRef<{ id: string; generation: number } | null>(null);
+  const inviteCodeInput = useRef<HTMLInputElement>(null);
+  const inviteLinkInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const saved = loadRoomSession();
     if (!code || !saved || saved.code !== code) {
@@ -332,13 +334,27 @@ export default function RoomScreen() {
       })
       .finally(() => setSettingsPending(false));
   }
-  async function copy(value: string) {
+  async function copy(input: HTMLInputElement | null) {
+    if (!input) return;
+    let copied = false;
     try {
-      await navigator.clipboard.writeText(value);
-      setCopyStatus("Copied!");
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(input.value);
+        copied = true;
+      }
     } catch {
-      setCopyStatus("Copy unavailable. Select the text and copy it manually.");
+      // Clipboard permission can be denied even on HTTPS.
     }
+    if (!copied) {
+      input.focus();
+      input.select();
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        // Leave the selected text available for manual copying.
+      }
+    }
+    setCopyStatus(copied ? "Copied!" : "Text selected. Copy it manually.");
   }
   if (!session || !snap || !me)
     return (
@@ -441,11 +457,12 @@ export default function RoomScreen() {
                 <div className="room-invite-row">
                   <input
                     id="room-invite-code"
+                    ref={inviteCodeInput}
                     readOnly
                     value={code}
                     onFocus={(e) => e.currentTarget.select()}
                   />
-                  <button className="room-button" onClick={() => void copy(code)}>
+                  <button className="room-button" onClick={() => void copy(inviteCodeInput.current)}>
                     Copy code
                   </button>
                 </div>
@@ -455,11 +472,12 @@ export default function RoomScreen() {
                 <div className="room-invite-row">
                   <input
                     id="room-invite-link"
+                    ref={inviteLinkInput}
                     readOnly
                     value={link}
                     onFocus={(e) => e.currentTarget.select()}
                   />
-                  <button className="room-button" onClick={() => void copy(link)}>
+                  <button className="room-button" onClick={() => void copy(inviteLinkInput.current)}>
                     Copy link
                   </button>
                 </div>

@@ -53,25 +53,27 @@ export class PrismaGameStore implements GameStore {
 /** Process-local store. Values are cloned so callers cannot mutate committed state. */
 export class MemoryGameStore implements GameStore {
   private rooms = new Map<string, PersistedRoom>();
-  private drawings = new Map<string, DrawingRecord[]>();
+  private drawings = new Map<string, { roomCode: string; sequence: number; records: Map<number, DrawingRecord> }>();
   private results = new Map<string, FinalizedTurn>();
   private key(room: string, canvas: string, generation: number) { return JSON.stringify([room, canvas, generation]); }
   async loadRooms() { return structuredClone([...this.rooms.values()]); }
   async saveRoom(room: PersistedRoom) { this.rooms.set(room.code, structuredClone(room)); }
   async appendDrawing(record: DrawingRecord) {
     const key = this.key(record.roomCode, record.canvasId, record.generation);
-    const records = this.drawings.get(key) ?? [];
-    const existing = records.find(item => item.sequence === record.sequence);
+    const journal = this.drawings.get(key) ?? { roomCode: record.roomCode, sequence: 0, records: new Map<number, DrawingRecord>() };
+    const existing = journal.records.get(record.sequence);
     if (existing) {
       if (canonicalJson(existing.operations) !== canonicalJson(record.operations)) throw new Error("Conflicting drawing journal payload");
       return;
     }
-    if (record.sequence !== (records.at(-1)?.sequence ?? 0) + record.operations.length) throw new Error("Noncontiguous drawing journal");
-    records.push(structuredClone(record));
-    this.drawings.set(key, records);
+    if (record.sequence !== journal.sequence + record.operations.length) throw new Error("Noncontiguous drawing journal");
+    journal.records.set(record.sequence, structuredClone(record));
+    journal.sequence = record.sequence;
+    this.drawings.set(key, journal);
   }
   async loadDrawing(roomCode: string, canvasId: string, generation: number) {
-    return structuredClone(this.drawings.get(this.key(roomCode, canvasId, generation)) ?? []);
+    const journal = this.drawings.get(this.key(roomCode, canvasId, generation));
+    return structuredClone(Array.from(journal?.records.values() ?? []));
   }
   async finalizeTurn(record: FinalizedTurn) {
     const key = JSON.stringify([record.turnId, record.generation]);
@@ -84,7 +86,7 @@ export class MemoryGameStore implements GameStore {
     this.rooms.set(record.room.code, structuredClone(record.room));
   }
   clearArchive(code: string) {
-    for (const [key, records] of this.drawings) if (records[0]?.roomCode === code) this.drawings.delete(key);
+    for (const [key, journal] of this.drawings) if (journal.roomCode === code) this.drawings.delete(key);
     for (const [key, result] of this.results) if (result.room.code === code) this.results.delete(key);
   }
   deleteRoom(code: string) { this.clearArchive(code); this.rooms.delete(code); }

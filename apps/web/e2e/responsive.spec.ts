@@ -58,6 +58,30 @@ for (const [width, height] of viewports) {
           "canvas tools should fit with the canvas",
         ).toBeLessThanOrEqual(height);
       }
+      if (path === "drawing" && width <= 820) {
+        const positions = await page.evaluate(() => {
+          const bottom = (selector: string) => {
+            const element = document.querySelector(selector);
+            return element?.getBoundingClientRect().bottom ?? null;
+          };
+          const top = (selector: string) => {
+            const element = document.querySelector(selector);
+            return element?.getBoundingClientRect().top ?? null;
+          };
+          return {
+            drawingBottom: bottom(".room-drawing"),
+            chatTop: top("[data-testid='room-chat']"),
+            chatBottom: bottom("[data-testid='room-chat']"),
+            teamsTop: top(".room-teams"),
+            aiTop: top(".room-ai"),
+          };
+        });
+        expect(positions.chatTop, "chat should follow the drawing").toBeGreaterThanOrEqual(positions.drawingBottom!);
+        expect(positions.teamsTop, "roster should follow chat").toBeGreaterThanOrEqual(positions.chatBottom!);
+        if (positions.aiTop !== null) {
+          expect(positions.aiTop, "AI card should follow chat").toBeGreaterThanOrEqual(positions.chatBottom!);
+        }
+      }
     }
   });
 }
