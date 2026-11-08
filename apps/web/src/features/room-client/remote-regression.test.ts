@@ -76,6 +76,41 @@ function setup() {
   return { client, socket };
 }
 describe("remote room recovery", () => {
+  it("resumes and sends commands and drawing without crypto.randomUUID", async () => {
+    const getRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+    vi.stubGlobal("crypto", { getRandomValues });
+    const { client, socket } = setup();
+    try {
+      await client.resume("ABC123", "token");
+      socket.receive("connect");
+      const resync = socket.requests.at(-1)!;
+      resync.ack(null, { ok: true });
+
+      const chat = client.sendChat("hello");
+      const chatRequest = socket.requests.at(-1)!;
+      chatRequest.ack(null, { ok: true });
+      await chat;
+
+      const snapshot = session().snapshot;
+      snapshot.phase = "drawing";
+      snapshot.game = { canvasId: "uuid-test", generation: 1, drawerId: "p", hint: "", time: "", scores: {}, sync: { sequence: 0, durableSequence: 0 } };
+      socket.receive("room:event", { type: "snapshot", snapshot });
+      const batch = { roomCode: "ABC123", canvasId: "uuid-test", generation: 1, streamId: "stream", batchId: "batch", operations: [] } as unknown as DrawingBatch;
+      const drawing = client.submitDrawing(batch);
+      await vi.waitFor(() => expect(socket.requests).toHaveLength(3));
+      const drawingRequest = socket.requests.at(-1)!;
+      drawingRequest.ack(null, { ok: true, sequence: 1 });
+      await drawing;
+
+      const ids = [resync, chatRequest, drawingRequest].map(request => request.envelope.requestId);
+      expect(new Set(ids).size).toBe(3);
+      for (const id of ids) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      await deleteDrawingEnvelope(drawingRequest.envelope.requestId as string);
+    } finally {
+      client.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
   it("calls browser fetch with its global receiver", async () => {
     const socket = new FakeSocket();
     const native = vi.spyOn(globalThis, "fetch").mockImplementation(function (this: unknown) {

@@ -2,6 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type Atrament from "atrament";
+import { createUuid as uid } from "@/lib/uuid";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -12,8 +13,6 @@ import {
 } from "../../contracts/drawing";
 import { BitmapHistory, type Snapshot } from "./history";
 import styles from "./DrawingCanvas.module.css";
-
-const uid = () => crypto.randomUUID();
 
 type Engine = { undo(): void; redo(): void; clear(): void; finish(): void; hydrate(operations: CanvasOperation[]): Promise<void>; applyOperations(operations: CanvasOperation[]): Promise<void> };
 const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
