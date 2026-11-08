@@ -1,0 +1,1754 @@
+{
+  "inspection_date_local": "2026-11-07",
+  "timezone": "Asia/Manila",
+  "source_record": "https://zenodo.org/records/7330402",
+  "source_api": "https://zenodo.org/api/records/7330402",
+  "code_commit": "d637b78af2f85d4331521c634c6431b2e569546e",
+  "archive_bytes": 397584204,
+  "dataset_range_response_bytes": 7360940,
+  "dataset_range_fraction": 0.018514166121147008,
+  "whole_zip_md5_verified": false,
+  "selection": "SHA256('198173:' + inner PNG path), lowest two per folder; format probe only",
+  "paired_sample_count": 16,
+  "followup_member_count": 4,
+  "archives": [
+    {
+      "archive": "DrawMon-ACMMM22_Dataset/multiclass/test.zip",
+      "triplets": 4460,
+      "uncompressed_bytes": 16976451306,
+      "png_bytes": 23206346
+    },
+    {
+      "archive": "DrawMon-ACMMM22_Dataset/multiclass/train.zip",
+      "triplets": 8470,
+      "uncompressed_bytes": 32238238164,
+      "png_bytes": 42277444
+    },
+    {
+      "archive": "DrawMon-ACMMM22_Dataset/only_text/test.zip",
+      "triplets": 792,
+      "uncompressed_bytes": 1197845852,
+      "png_bytes": 3928028
+    },
+    {
+      "archive": "DrawMon-ACMMM22_Dataset/only_text/train.zip",
+      "triplets": 9270,
+      "uncompressed_bytes": 14020665154,
+      "png_bytes": 46399714
+    }
+  ],
+  "folder_counts": {
+    "multiclass/test": {
+      "val": 4460
+    },
+    "multiclass/train": {
+      "train/text": 2890,
+      "train/circle": 2513,
+      "train/symbol": 1212,
+      "train/real": 646,
+      "train/number": 1209
+    },
+    "only_text/test": {
+      "val": 792
+    },
+    "only_text/train": {
+      "train": 9270
+    }
+  },
+  "crc_size_candidate_group_counts": {
+    "combined": 6495,
+    "only_text_train_repeats": 4635,
+    "multiclass_train_repeats": 2,
+    "cross_variant_train_evaluation": 115,
+    "within_variant_train_evaluation": 0
+  },
+  "disclosed_multiclass_evaluation_images": [
+    "val/sample_4036.png",
+    "val/sample_2326.png",
+    "val/sample_879.png"
+  ],
+  "samples": [
+    {
+      "variant": "multiclass/test",
+      "path": "val/sample_4036.png",
+      "preview": "multiclass-test-val-4036.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -2.8322439193725586,
+        "max": 2.72331166267395,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76383.0,
+        0.0,
+        39.0,
+        32.0,
+        0.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_4036.png": "e5535e3037a621e9e41acee786093a93580fb614c56f7c6d444289803e3d8002",
+        "sample_4036.npy": "65cc600fd2faf01e684a5b4fbfada38f5bf47ca9716957390cdcd993f0d965a5",
+        "label_4036.npy": "15ced434ecda02182b44af4dcf0d5981b1c2a8dd1e65758e2afdb1ad3cdcf72c"
+      },
+      "encoded_presence": {
+        "text": 0,
+        "number": 1,
+        "symbol": 1,
+        "circle": 0
+      },
+      "positive_anchor_counts": {
+        "text": 0.0,
+        "number": 39.0,
+        "symbol": 32.0,
+        "circle": 0.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-test-val-4036.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "f761cb8413c3f946c616daef55ef547442850b6dfe2bc7813d1425768db8378d"
+      },
+      "encoded_referee_proxies": [
+        0,
+        1
+      ]
+    },
+    {
+      "variant": "multiclass/test",
+      "path": "val/sample_2326.png",
+      "preview": "multiclass-test-val-2326.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -2.836146831512451,
+        "max": 2.7783477306365967,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76446.0,
+        0.0,
+        0.0,
+        0.0,
+        8.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_2326.png": "f9f535b55ba70c7db779e08c838b16aeb20f8598e7a9c515e1bbde96f14dac26",
+        "sample_2326.npy": "615289d171ce036912f92b81ad5ef04ece96134cd01945d9b547121afbd05457",
+        "label_2326.npy": "ebf44ffb6eb8788a99a95848bef5a442d9ffaa01eab34f323ecede6e75a4eeef"
+      },
+      "encoded_presence": {
+        "text": 0,
+        "number": 0,
+        "symbol": 0,
+        "circle": 1
+      },
+      "positive_anchor_counts": {
+        "text": 0.0,
+        "number": 0.0,
+        "symbol": 0.0,
+        "circle": 8.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-test-val-2326.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "3e6d42f43492bfb52b82c2cee4e6628e1f80c700d942f1fc15a642c8e6933621"
+      },
+      "encoded_referee_proxies": [
+        0,
+        0
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/circle/sample_895.png",
+      "preview": "multiclass-train-train-circle-895.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -3.7604918479919434,
+        "max": 4.210227012634277,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76385.0,
+        68.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_895.png": "ab20c0d23864c5e990f62a995eddc370386e6c51b4c5730b471c3796488893a3",
+        "sample_895.npy": "b342bf26a777aaf4b080e6a59a48d9d0704de852fa499ec3207c37eaa04fc4c6",
+        "label_895.npy": "908272a0d1b10774b7160006a95550a87d2cc76b7d3e79e324c007f2009cf459"
+      },
+      "encoded_presence": {
+        "text": 1,
+        "number": 0,
+        "symbol": 0,
+        "circle": 1
+      },
+      "positive_anchor_counts": {
+        "text": 68.0,
+        "number": 0.0,
+        "symbol": 0.0,
+        "circle": 1.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-circle-895.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "1988102d603b9d315e6f7e6a03e308381af415f4aecc2497133a14821897e25b"
+      },
+      "encoded_referee_proxies": [
+        1,
+        0
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/circle/sample_2384.png",
+      "preview": "multiclass-train-train-circle-2384.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -2.8683342933654785,
+        "max": 3.516827344894409,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76449.0,
+        0.0,
+        0.0,
+        0.0,
+        5.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_2384.png": "a1d003df92efcd835d6eac94d52589a35bdbf216524a6a97934265e8ef0f37d5",
+        "sample_2384.npy": "e140e75290ce4dbd9df38850a27212a196a004eb006f99d5d28c8ade5686bc16",
+        "label_2384.npy": "82030c38c66a57a01960949e5d2b1c730d887499a31f83e363111cd7d08261a7"
+      },
+      "encoded_presence": {
+        "text": 0,
+        "number": 0,
+        "symbol": 0,
+        "circle": 1
+      },
+      "positive_anchor_counts": {
+        "text": 0.0,
+        "number": 0.0,
+        "symbol": 0.0,
+        "circle": 5.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-circle-2384.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "e324c01ef03ecafac5c539ce966a1d5427ab0aea11ee103afa31fbdb7d68d042"
+      },
+      "encoded_referee_proxies": [
+        0,
+        0
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/number/sample_1005.png",
+      "preview": "multiclass-train-train-number-1005.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -2.5641026496887207,
+        "max": 2.896486282348633,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76399.0,
+        0.0,
+        55.0,
+        0.0,
+        0.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_1005.png": "432395d53319b005f9a487e769657b44be6c17b22211842b486877527da24f85",
+        "sample_1005.npy": "03df3e5872bd59f6d781f74601255d9a23545c7b9ce9943f2cd929291d635300",
+        "label_1005.npy": "56bfec0eca8c47cd57172fc275959cca8d1951d783a0fd55b1a93eedbdf6fc3e"
+      },
+      "encoded_presence": {
+        "text": 0,
+        "number": 1,
+        "symbol": 0,
+        "circle": 0
+      },
+      "positive_anchor_counts": {
+        "text": 0.0,
+        "number": 55.0,
+        "symbol": 0.0,
+        "circle": 0.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-number-1005.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "de551685e10098473be5b160e3acdec747d3c981738df2af25df173107f3ed3c"
+      },
+      "encoded_referee_proxies": [
+        0,
+        1
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/number/sample_766.png",
+      "preview": "multiclass-train-train-number-766.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 1.0,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76454.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_766.png": "f30d2fa71011954a43b6a765ccac19db185bfcdfe2302409a0c801032ffef418",
+        "sample_766.npy": "6f34f74c6f6b4ed8f0dd9f6e25bc42da789afe0965859760b986e85616937545",
+        "label_766.npy": "a18c90c870b601f6722518b523509f132abfe2006f2fab138176f46ddb089bcb"
+      },
+      "encoded_presence": {
+        "text": 0,
+        "number": 0,
+        "symbol": 0,
+        "circle": 0
+      },
+      "positive_anchor_counts": {
+        "text": 0.0,
+        "number": 0.0,
+        "symbol": 0.0,
+        "circle": 0.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-number-766.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "7fd61094e0d1c7480c10180cf3ae0ad00bde90ed8ff5775d8a642a75de8af582"
+      },
+      "encoded_referee_proxies": [
+        0,
+        0
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/real/sample_141.png",
+      "preview": "multiclass-train-train-real-141.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -3.2179720401763916,
+        "max": 3.1813864707946777,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76331.0,
+        47.0,
+        0.0,
+        59.0,
+        17.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_141.png": "0da74f3c260af8331944df0a08be4de5bbd076f7a31816ab518b01029819bcd4",
+        "sample_141.npy": "a4bf2b5825b08cd948067308d814542d935f59074ab82cf33eaf8a241794be79",
+        "label_141.npy": "74b2aaf4cdc37ebc9932d421bf94e7562bb18b6982bcbd1c84aa34d3eb68ae71"
+      },
+      "encoded_presence": {
+        "text": 1,
+        "number": 0,
+        "symbol": 1,
+        "circle": 1
+      },
+      "positive_anchor_counts": {
+        "text": 47.0,
+        "number": 0.0,
+        "symbol": 59.0,
+        "circle": 17.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-real-141.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "d2f30608b01007d111c58ce35e6a07e1f665dca331d9cecb67a028b87e919611"
+      },
+      "encoded_referee_proxies": [
+        1,
+        0
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/real/sample_7.png",
+      "preview": "multiclass-train-train-real-7.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -3.166093111038208,
+        "max": 2.8490028381347656,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76387.0,
+        0.0,
+        0.0,
+        67.0,
+        0.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_7.png": "15483a48ad171f4d8e5cd403f9a0e52dbbd19a3668930aa793c9be689560e8cf",
+        "sample_7.npy": "52c81e66da7da9dc757f9c6611f7a3b7488e76dd920bc9926e62e6ab9d528169",
+        "label_7.npy": "e01a0ec3c07587de8843622eaf5650ffe2af67f30748babda23408bdd48168ec"
+      },
+      "encoded_presence": {
+        "text": 0,
+        "number": 0,
+        "symbol": 1,
+        "circle": 0
+      },
+      "positive_anchor_counts": {
+        "text": 0.0,
+        "number": 0.0,
+        "symbol": 67.0,
+        "circle": 0.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-real-7.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "bd42a060cdb35080b86c492f452fb0fb467f3d5f46e1423661e0e90c597a236a"
+      },
+      "encoded_referee_proxies": [
+        0,
+        0
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/symbol/sample_444.png",
+      "preview": "multiclass-train-train-symbol-444.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -2.7271223068237305,
+        "max": 3.961946725845337,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76399.0,
+        0.0,
+        0.0,
+        55.0,
+        0.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_444.png": "f97da8124e30ce1906e00bdbe0561a8c21ff5bb87585425c58b15341c9012e35",
+        "sample_444.npy": "347e2c8708ffecb03a89ce616a6b7b61cbe82911d56302e28f161e4e7c1bfc5a",
+        "label_444.npy": "f2e6203705ce4c1a5c958fcfb3a3940f42ac8faa18c98b42eb3121267dd081f1"
+      },
+      "encoded_presence": {
+        "text": 0,
+        "number": 0,
+        "symbol": 1,
+        "circle": 0
+      },
+      "positive_anchor_counts": {
+        "text": 0.0,
+        "number": 0.0,
+        "symbol": 55.0,
+        "circle": 0.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-symbol-444.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "ebc2923d0970e2ed7b47695691e7403f21ca38caaa61acd633e2d47f41af68e4"
+      },
+      "encoded_referee_proxies": [
+        0,
+        0
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/symbol/sample_945.png",
+      "preview": "multiclass-train-train-symbol-945.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -3.0389363765716553,
+        "max": 3.0389363765716553,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76391.0,
+        0.0,
+        0.0,
+        63.0,
+        0.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_945.png": "32ffcd9d72dff6d5d020c48a77af778b63bc5c1aa432b9aa7fe28fe8faac4ecb",
+        "sample_945.npy": "e76d19f84eb8aa711b20380ca1fa3b1dd019d89ae57a446f55192cab9283e847",
+        "label_945.npy": "7ee29066029ca4237ff6bd03a294696b9dd3342fa6ef41314d5a906a21a510fc"
+      },
+      "encoded_presence": {
+        "text": 0,
+        "number": 0,
+        "symbol": 1,
+        "circle": 0
+      },
+      "positive_anchor_counts": {
+        "text": 0.0,
+        "number": 0.0,
+        "symbol": 63.0,
+        "circle": 0.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-symbol-945.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "7abe51c26c4179365361cd1985b67dc72f000e15209fcae13d5f91a94050b3e5"
+      },
+      "encoded_referee_proxies": [
+        0,
+        0
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/text/sample_1001.png",
+      "preview": "multiclass-train-train-text-1001.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -3.9045069217681885,
+        "max": 3.2351629734039307,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76433.0,
+        21.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_1001.png": "fca8751707cbf1efe772fe7b936f258189c5fd5ce5595b2b71a1aa490681df85",
+        "sample_1001.npy": "53487a5fa2bb8e9d065eef41dccd41663b9ce004daa2f7606eefdf49d33fe857",
+        "label_1001.npy": "739b2a3b6b5ed3565adfb9ae7d438291dcc9d4efc62bfb9d54ae195c256a3f26"
+      },
+      "encoded_presence": {
+        "text": 1,
+        "number": 0,
+        "symbol": 0,
+        "circle": 0
+      },
+      "positive_anchor_counts": {
+        "text": 21.0,
+        "number": 0.0,
+        "symbol": 0.0,
+        "circle": 0.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-text-1001.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "b82bd4242d4b95ebbc83bae077930798331e44372760b4a3ef5ec7d286e18b4e"
+      },
+      "encoded_referee_proxies": [
+        1,
+        0
+      ]
+    },
+    {
+      "variant": "multiclass/train",
+      "path": "train/text/sample_2304.png",
+      "preview": "multiclass-train-train-text-2304.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          76454,
+          9
+        ],
+        "dtype": "float32",
+        "min": -2.3549814224243164,
+        "max": 3.079134225845337,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        76443.0,
+        11.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_2304.png": "4da3813116fa06371774d424eff131b6295e0c2bc9427a9430887058dd0f68ce",
+        "sample_2304.npy": "93f348b5daf26d3120189776c4198e743ea660123e8ed6a5d3c62e604107500b",
+        "label_2304.npy": "240f3f4b5f0c99e307ff31f1a721e2005777e114a67adf253171bfcd88cc0bb9"
+      },
+      "encoded_presence": {
+        "text": 1,
+        "number": 0,
+        "symbol": 0,
+        "circle": 0
+      },
+      "positive_anchor_counts": {
+        "text": 11.0,
+        "number": 0.0,
+        "symbol": 0.0,
+        "circle": 0.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/multiclass-train-train-text-2304.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "dca90b2bec3c191fa4084cedf69ba872e05e718b0c303ffa713c60fa1ed2bfac"
+      },
+      "encoded_referee_proxies": [
+        1,
+        0
+      ]
+    },
+    {
+      "variant": "only_text/test",
+      "path": "val/sample_269.png",
+      "preview": "only_text-test-val-269.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          19110,
+          6
+        ],
+        "dtype": "float32",
+        "min": -2.3108065128326416,
+        "max": 2.6189138889312744,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        19098.0,
+        12.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_269.png": "b582ff6e82eba5a28c76d87611e7e94859917715de95138767ce50134aa9f114",
+        "sample_269.npy": "552a352291930b6d059b66662c37c8ff4259bc0a958f29d1eb156ed66f4454b5",
+        "label_269.npy": "03e9c4a69d0bbdd8cbe36965e8d88b16a8a7138cb07d6173ff54ce4bc1ce1906"
+      },
+      "encoded_presence": {
+        "text": 1
+      },
+      "positive_anchor_counts": {
+        "text": 12.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/only_text-test-val-269.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "eca2f659cbd3d85c917e396ad4dc548ee2ea3d4d3b7a20fb41808507380a967f"
+      },
+      "encoded_referee_proxies": [
+        1,
+        null
+      ]
+    },
+    {
+      "variant": "only_text/test",
+      "path": "val/sample_395.png",
+      "preview": "only_text-test-val-395.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          19110,
+          6
+        ],
+        "dtype": "float32",
+        "min": -1.9908047914505005,
+        "max": 2.668060779571533,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        19100.0,
+        10.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_395.png": "4aaa0695494f7c799b837405b7b8d200ae15c1cf1b3a852aeb47eb13b9165dd8",
+        "sample_395.npy": "85c0bfdd844bcac5e828edc27598263bdf27446ecc8315e32b2a07deb611d2cc",
+        "label_395.npy": "2f4d791a849eb37b2d935267a2a348ac46297a28f502f3dcce0f7b832c204277"
+      },
+      "encoded_presence": {
+        "text": 1
+      },
+      "positive_anchor_counts": {
+        "text": 10.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/only_text-test-val-395.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "9c91a7bb4bfb5bb5e42da8af5aded8927ebc60117c9f1d2c71cef56ef69ea212"
+      },
+      "encoded_referee_proxies": [
+        1,
+        null
+      ]
+    },
+    {
+      "variant": "only_text/train",
+      "path": "train/sample_5906.png",
+      "preview": "only_text-train-train-5906.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          19110,
+          6
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 1.0,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          1.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        19110.0,
+        0.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_5906.png": "71e230ec78a5188d9349933799b9310a784181383dc7e692bac57a1e187043c8",
+        "sample_5906.npy": "dd7804f1324c7c3dc5f8ad5b73ad152ba1e87ff7b72c348c23acb348643efca0",
+        "label_5906.npy": "3d352b4b25ca82900ab606e9b4e88554021904bb5beb8b2919d010047d3be1cc"
+      },
+      "encoded_presence": {
+        "text": 0
+      },
+      "positive_anchor_counts": {
+        "text": 0.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/only_text-train-train-5906.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "77e1110b6522ed6889d6daf64b69441db94bead36085c6def6d8a47bc6dbc144"
+      },
+      "encoded_referee_proxies": [
+        0,
+        null
+      ]
+    },
+    {
+      "variant": "only_text/train",
+      "path": "train/sample_3520.png",
+      "preview": "only_text-train-train-3520.png",
+      "sample": {
+        "shape": [
+          512,
+          512,
+          1
+        ],
+        "dtype": "float32",
+        "min": 0.0,
+        "max": 255.0,
+        "finite": true
+      },
+      "label": {
+        "shape": [
+          19110,
+          6
+        ],
+        "dtype": "float32",
+        "min": -3.1618595123291016,
+        "max": 3.4265503883361816,
+        "finite": true
+      },
+      "png": {
+        "size": [
+          512,
+          512
+        ],
+        "mode": "L",
+        "extrema": [
+          0,
+          255
+        ]
+      },
+      "last_class_columns_unique": [
+        [
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.0
+        ]
+      ],
+      "last_class_columns_sum": [
+        19088.0,
+        22.0
+      ],
+      "first_label_row": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      "sha256": {
+        "sample_3520.png": "12a58dc486bac62334778bbaa3cd27ac977dc010d634ff7b17fd3b0149084500",
+        "sample_3520.npy": "26b81b21a9a18a44d04d3b7ac905175099cf0883f840576b30fa7151472877bd",
+        "label_3520.npy": "a7ae4eaafc8b32400b894348f2e6c3fce54ae26bdd76cf5abd2aa14978130345"
+      },
+      "encoded_presence": {
+        "text": 1
+      },
+      "positive_anchor_counts": {
+        "text": 22.0
+      },
+      "png_matches_numpy": true,
+      "border_median": 0,
+      "shared_preprocess": {
+        "status": "ok",
+        "candidate": "foreground",
+        "config_hash": "ba83d035125c6bbb483eef31aa57339b26019422e8abf177fa3154ef3733f3c7",
+        "preview_path": "samples/shared/only_text-train-train-3520.png",
+        "tensor_shape": [
+          3,
+          224,
+          224
+        ],
+        "tensor_dtype": "float32",
+        "tensor_sha256": "a5cb99d4bbb675a2b2967c7ec50e757e1a6ab9d42b590998916522de78d5925f"
+      },
+      "encoded_referee_proxies": [
+        1,
+        null
+      ]
+    }
+  ],
+  "manual_findings": [
+    {
+      "path": "only_text/train/train/sample_5906.png",
+      "finding": "Visible handwritten word flute despite zero encoded text anchors; byte-identical sample_4378 also has zero text anchors.",
+      "inference_limit": "Manual inspection, not a complete label audit."
+    }
+  ],
+  "selected_planning_policy": {
+    "version": "separate-writing-advisories-v1",
+    "target_order": [
+      "text",
+      "number"
+    ],
+    "review_direction": "Shared Guesser canvas input, independent thresholds and persistence, human adjudication",
+    "implemented": false
+  },
+  "shared_preprocess_probe": {
+    "source_api": "guesser_data.preprocess",
+    "recipe": "shape-candidates-v1/foreground",
+    "sample_count": 16,
+    "ok_count": 16,
+    "purpose": "Check the existing shared image transform on saved ATYPICT files",
+    "source_module": "models/guesser/data/src/06-images.py",
+    "settings_module": "models/guesser/data/src/settings.py"
+  }
+}
