@@ -37,6 +37,10 @@ export class RemoteRoomClient implements RoomClient {
   private stream = "";
   private outboxChain: Promise<void> = Promise.resolve();
   private outboxOrder = Date.now() * 1000;
+  private drawingInFlight = new Set<Promise<void>>();
+  private drawingWrites = new Set<Promise<unknown>>();
+  private drawingFailure: unknown = null;
+  private drawingFailureRecovery: Promise<void> | null = null;
   private durableWatermarks = new Map<string, number>();
   private unbind: (() => void) | null = null;
   private listeners = new Set<(event: RoomEvent) => void>();
@@ -149,8 +153,10 @@ export class RemoteRoomClient implements RoomClient {
         }),
       );
     };
-    const onDisconnect = () =>
+    const onDisconnect = () => {
+      this.drawingFailure ??= new RoomClientError("connection", "Connection lost. Retry after restoring.", true);
       this.emit({ type: "connection", status: "disconnected" });
+    };
     const onError = (error: Error) => {
       this.emit({ type: "connection", status: "disconnected", message: error.message });
       void this.fetcher(`${this.options.apiUrl ?? ""}/api/rooms/${encodeURIComponent(session.snapshot.code)}/resume`, { headers: { authorization: `Bearer ${session.resumeToken}` } })
@@ -215,14 +221,18 @@ export class RemoteRoomClient implements RoomClient {
         this.sequence = event.sequence;
       }
       this.emit(event);
-      if (event.type === "drawing" && event.caughtUp) {
+      if (event.type === "drawing" && event.reset && event.caughtUp) {
         void this.restoreOutbox().then(() => { if (socket.connected && this.stream === `${event.canvasId}:${event.generation}`) this.emit({ type: "connection", status: "connected" }); }).catch((error) => {
           if (!(error instanceof RoomClientError && error.code === "invalid-drawing" && socket.connected))
             this.emit({ type: "connection", status: "disconnected", message: error.message });
         });
       }
-      if (event.type === "snapshot" && !event.snapshot.game)
+      if (event.type === "snapshot" && !event.snapshot.game) {
+        void Promise.allSettled([...this.drawingInFlight]).then(() => {
+          if (!this.session?.snapshot.game) { this.drawingFailure = null; this.drawingFailureRecovery = null; }
+        });
         this.emit({ type: "connection", status: "connected" });
+      }
     };
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
@@ -245,7 +255,7 @@ export class RemoteRoomClient implements RoomClient {
           true,
         ),
       );
-    const key = JSON.stringify([name, payload]);
+    const key = savedEnvelope ? "" : JSON.stringify([name, payload]);
     let envelope = savedEnvelope ?? this.pending.get(key);
     if (!envelope) {
       envelope = {
@@ -270,7 +280,7 @@ export class RemoteRoomClient implements RoomClient {
             );
             return;
           }
-          this.pending.delete(key);
+          if (key) this.pending.delete(key);
           if (!result?.ok)
             reject(
               new RoomClientError(
@@ -363,29 +373,15 @@ export class RemoteRoomClient implements RoomClient {
     if (!game || envelope.playerId !== this.session?.playerId || game.canvasId !== envelope.payload.canvasId || game.generation !== envelope.generation || this.session?.snapshot.code !== envelope.payload.roomCode) return;
     if (envelope.acceptedSequence !== undefined) return;
     let acceptedSequence: number | undefined;
-    try {
-      await this.command("room:drawing", envelope.payload, envelope, result => { acceptedSequence = result.sequence; });
-    } catch (error) {
-      if (error instanceof RoomClientError && ["invalid-drawing", "drawing-paused", "drawing-limit", "expired", "stale-generation"].includes(error.code)) {
-        const pending = await loadDrawingEnvelopes();
-        for (const item of pending) if (item.playerId === envelope.playerId && item.payload.roomCode === envelope.payload.roomCode && item.payload.canvasId === envelope.payload.canvasId && item.generation === envelope.generation && item.payload.streamId === envelope.payload.streamId && item.acceptedSequence === undefined) await deleteDrawingEnvelope(item.requestId);
-        this.emit({ type: "gameplay", name: "drawing-tail-discarded" });
-        await this.reportDrawingQueue();
-        this.emit({ type: "connection", status: "restoring" });
-        void this.resync().catch((reason) => this.emit({ type: "connection", status: "disconnected", message: reason.message }));
-        throw new RoomClientError("invalid-drawing", "Some drawing changes could not be saved after reconnection. Please continue with a new stroke.");
-      }
-      throw error;
-    }
+    await this.command("room:drawing", envelope.payload, envelope, result => { acceptedSequence = result.sequence; });
     if (acceptedSequence === undefined) throw new RoomClientError("malformed", "Drawing acknowledgement has no sequence.", true);
     envelope.acceptedSequence = acceptedSequence;
     await saveDrawingEnvelope(envelope);
-    await this.reportDrawingQueue();
     await this.pruneDurableOutbox();
   }
   private async pruneDurableOutbox() {
     const game = this.session?.snapshot.game;
-    if (!game?.sync) return;
+    if (!game?.sync) { await this.reportDrawingQueue(); return; }
     const envelopes = await loadDrawingEnvelopes();
     let discarded = false;
     for (const envelope of envelopes) {
@@ -399,16 +395,39 @@ export class RemoteRoomClient implements RoomClient {
     if (discarded) this.emit({ type: "gameplay", name: "drawing-tail-discarded" });
     await this.reportDrawingQueue();
   }
-  private async sendSavedDrawings(envelopes: DrawingEnvelope[]) {
-    for (const envelope of envelopes.sort((a, b) => a.order - b.order)) {
-      await this.sendSavedDrawing(envelope);
+  private async handleDrawingFailure(error: unknown, envelope: DrawingEnvelope, retryLive = false) {
+    if (!(error instanceof RoomClientError) || !["invalid-drawing", "drawing-paused", "drawing-limit", "expired", "stale-generation"].includes(error.code)) {
+      if (retryLive) {
+        this.emit({ type: "connection", status: "restoring" });
+        void this.resync().catch((reason) => this.emit({ type: "connection", status: "disconnected", message: reason.message }));
+      }
+      throw error;
     }
+    const pending = await loadDrawingEnvelopes();
+    for (const item of pending) if (item.playerId === envelope.playerId && item.payload.roomCode === envelope.payload.roomCode && item.payload.canvasId === envelope.payload.canvasId && item.generation === envelope.generation && item.payload.streamId === envelope.payload.streamId && item.acceptedSequence === undefined) await deleteDrawingEnvelope(item.requestId);
+    this.emit({ type: "gameplay", name: "drawing-tail-discarded" });
+    await this.reportDrawingQueue();
+    this.emit({ type: "connection", status: "restoring" });
+    void this.resync().catch((reason) => this.emit({ type: "connection", status: "disconnected", message: reason.message }));
+    throw new RoomClientError("invalid-drawing", "Some drawing changes could not be saved after reconnection. Please continue with a new stroke.");
   }
   private restoreOutbox() {
+    const recoveryAtStart = this.drawingFailureRecovery;
     const job = this.outboxChain.then(async () => {
+      await Promise.allSettled([...this.drawingInFlight]);
+      const recovery = this.drawingFailureRecovery;
+      this.drawingFailureRecovery = null;
+      if (recovery) {
+        if (recovery === recoveryAtStart) await recovery.catch(() => {});
+        else await recovery;
+      }
+      this.drawingFailure = null;
       const envelopes = await loadDrawingEnvelopes();
       await this.reportDrawingQueue();
-      await this.sendSavedDrawings(envelopes);
+      for (const envelope of envelopes.sort((a, b) => a.order - b.order)) {
+        try { await this.sendSavedDrawing(envelope); }
+        catch (error) { this.drawingFailure = error; await this.handleDrawingFailure(error, envelope); }
+      }
     });
     this.outboxChain = job.catch(() => {});
     return job;
@@ -416,13 +435,39 @@ export class RemoteRoomClient implements RoomClient {
   submitDrawing(batch: DrawingBatch) {
     const envelope: DrawingEnvelope = { requestId: createUuid(), playerId: this.session?.playerId ?? "", order: ++this.outboxOrder, expectedRevision: this.session?.snapshot.revision, generation: batch.generation, payload: batch };
     const saved = saveDrawingEnvelope(envelope);
-    const job = this.outboxChain.then(async () => {
-      await saved;
+    this.drawingWrites.add(saved);
+    void saved.then(() => this.drawingWrites.delete(saved), () => this.drawingWrites.delete(saved));
+    // Serialize persistence and emission, but allow a bounded number of ACKs in flight.
+    const launch = this.outboxChain.then(async () => {
+      try { await saved; }
+      catch (error) {
+        this.drawingFailure ??= error;
+        this.emit({ type: "connection", status: "disconnected", message: "Could not save drawing changes on this device." });
+        throw error;
+      }
+      while (this.drawingInFlight.size >= 4 && !this.drawingFailure)
+        await Promise.race([...this.drawingInFlight].map(task => task.catch(() => {})));
+      if (this.drawingFailure) throw this.drawingFailure;
       await this.reportDrawingQueue();
-      await this.sendSavedDrawings(await loadDrawingEnvelopes());
+      if (this.drawingFailure) throw this.drawingFailure;
+      const task = this.sendSavedDrawing(envelope);
+      this.drawingInFlight.add(task);
+      void task.then(() => this.drawingInFlight.delete(task), () => this.drawingInFlight.delete(task));
+      return { task };
     });
-    this.outboxChain = job.catch(() => {});
-    return job;
+    this.outboxChain = launch.then(() => {}, () => {});
+    return launch.then(({ task }) => task.catch(async error => {
+      if (!this.drawingFailure) {
+        this.drawingFailure = error;
+        this.emit({ type: "connection", status: "restoring" });
+        this.drawingFailureRecovery = (async () => {
+          await Promise.allSettled([...this.drawingInFlight, ...this.drawingWrites]);
+          await this.handleDrawingFailure(error, envelope, true);
+        })();
+      }
+      if (this.drawingFailureRecovery) await this.drawingFailureRecovery;
+      throw error;
+    }));
   }
   async resync() {
     const socket = this.socket;

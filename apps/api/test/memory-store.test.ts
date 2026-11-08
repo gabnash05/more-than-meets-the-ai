@@ -10,7 +10,11 @@ test("memory journal enforces contiguous idempotent batches and atomic results",
   await store.appendDrawing(first); await store.appendDrawing(first);
   await assert.rejects(store.appendDrawing({ ...first, sequence: 3 }), /Noncontiguous/);
   await assert.rejects(store.appendDrawing({ ...first, operations: [{ type: "other" }] }), /Conflicting/);
-  assert.deepEqual(await store.loadDrawing("ROOM", "c", 1), [first]);
+  const second = { ...first, sequence: 2, operations: [{ type: "second" }] };
+  await store.appendDrawing(second);
+  await store.appendDrawing(first);
+  await assert.rejects(store.appendDrawing({ ...first, operations: [{ type: "other" }] }), /Conflicting/);
+  assert.deepEqual(await store.loadDrawing("ROOM", "c", 1), [first, second]);
   const result = { room: { code: "ROOM", state: { revision: 2 } }, turnId: "t", generation: 1, results: { score: 1 } };
   await store.finalizeTurn(result); await store.finalizeTurn({ ...result, room: { code: "ROOM", state: { revision: 9 } } });
   await assert.rejects(store.finalizeTurn({ ...result, results: { score: 2 } }), /Conflicting/);
@@ -37,7 +41,12 @@ test("memory rooms have a capacity and idle rooms expire without evicting leases
 
 test("memory canvas limit rejects the tail without interrupting human scoring", async () => {
   const store = new MemoryGameStore();
-  const engine = new RoomEngine({ store, eventSink: () => {} });
+  const durableUpdates: number[] = [];
+  const engine = new RoomEngine({ store, eventSink: (id, event) => {
+    if (id === "drawer" && event.type === "snapshot" && event.snapshot.game?.sync) {
+      durableUpdates.push(event.snapshot.game.sync.durableSequence);
+    }
+  } });
   try {
     const host = await engine.create(profile);
     const code = host.snapshot.code;
@@ -57,7 +66,12 @@ test("memory canvas limit rejects the tail without interrupting human scoring", 
       requestId: `draw-${seq}`, generation: game.generation,
       payload: { roomCode: code, canvasId: game.canvasId, generation: game.generation, streamId: "stream", clientSeq: [seq, seq], operations: [operation] },
     });
+    durableUpdates.length = 0;
     assert.equal((await send(start, sequence)).ok, true);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(durableUpdates, [1]);
+    const duplicate = { type: "stroke.append", opId: "op-1", actionId: "stroke", at: 2, clientSeq: 2, points: [point] };
+    assert.equal((await send(duplicate, 2)).code, "invalid-drawing");
     let rejected = false;
     for (let seq = 2; seq <= 200; seq++) {
       const append = { type: "stroke.append", opId: `op-${seq}`, actionId: "stroke", at: seq, clientSeq: seq, points: Array.from({ length: 512 }, () => point) };

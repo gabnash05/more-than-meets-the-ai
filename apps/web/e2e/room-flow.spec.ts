@@ -12,6 +12,24 @@ test("host lobby exposes defaults, blockers, and invite dialog", async ({ page }
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("copies the invite link when the Clipboard API is unavailable", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read"]);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+  });
+  await page.goto("/review/");
+  await page.getByRole("button", { name: "Lobby · host" }).click();
+  await page.getByRole("button", { name: /Room REVIEW/ }).click();
+  const link = await page.getByRole("textbox", { name: "Room link" }).inputValue();
+  await page.getByRole("button", { name: "Copy link" }).click();
+  await expect(page.getByText("Copied!", { exact: true })).toBeVisible();
+  const copied = await page.evaluate(() => {
+    Reflect.deleteProperty(navigator, "clipboard");
+    return navigator.clipboard.readText();
+  });
+  expect(copied).toBe(link);
+});
+
 test("team minimum and supplied individual result are visible", async ({ page }) => {
   await page.goto("/review/");
   await page.getByRole("button", { name: "Team minimum blocker" }).click();
