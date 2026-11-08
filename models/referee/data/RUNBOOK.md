@@ -50,6 +50,8 @@ The real `train` run needs separate authorization. Prepared data, source caches,
 
 Only `download` reads the source. It checks the pinned record metadata and requires exact partial-content responses. It verifies the transferred ZIP data before use. The outer archive checksum is recorded as advertised, with verification reported separately. After an interruption, run the same command with the same profile and root to reuse verified cache entries.
 
+If the download fails during the Zenodo record request, check HTTPS access to `https://zenodo.org/api/records/7330402` from the same machine. If Python reports a missing `SSLKEYLOGFILE` path, clear that optional setting for the current PowerShell session with `Remove-Item Env:SSLKEYLOGFILE` and retry.
+
 Review `source/source-receipt.json` for archive bytes consumed, source kind, verification and selected counts. The real sample skips held-out images. Repeated download invocations have their own byte cap. The offline rehearsal receipt reports zero transferred archive bytes.
 
 ## 3. Prepare and optionally review

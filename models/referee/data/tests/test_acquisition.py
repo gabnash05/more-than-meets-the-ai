@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from referee_data.cli import main
 from referee_data.common import DataError
 from referee_data.example import build_example_files
 from referee_data.settings import TRAIN_ARCHIVE, Settings
@@ -70,6 +71,19 @@ def test_range_checks_headers_before_body_and_enforces_budget() -> None:
     with patch.object(acquire.urllib.request, "urlopen", return_value=good):
         with pytest.raises(DataError, match="Truncated"):
             acquire.RangeFile("https://example.invalid", 8, 4).read(4)
+
+
+def test_train_download_reports_which_source_request_failed(tmp_path, capsys) -> None:
+    args = ["download", "--profile", "train", "--data-root", str(tmp_path)]
+    with patch.object(
+        acquire.urllib.request,
+        "urlopen",
+        side_effect=FileNotFoundError(2, "No such file or directory"),
+    ):
+        assert main(args) == 1
+    error = capsys.readouterr().err
+    assert "Fetch Zenodo record 7330402" in error
+    assert "No such file or directory" in error
 
 
 def test_mocked_download_sample_and_train(tmp_path: Path, monkeypatch) -> None:
