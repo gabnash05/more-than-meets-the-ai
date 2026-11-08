@@ -72,7 +72,8 @@ def clean_record(record: dict, expected_word: str) -> tuple[dict, dict[str, int]
             repairs["empty_strokes"] += 1
             continue
 
-        cleaned_stroke = [[], [], []]
+        cleaned_x, cleaned_y, cleaned_times = [], [], []
+        previous = None
         for x, y, time_ms in zip(x_values, y_values, times):
             x = _coordinate(x)
             y = _coordinate(y)
@@ -85,14 +86,14 @@ def clean_record(record: dict, expected_word: str) -> tuple[dict, dict[str, int]
                 raise DataError("Invalid chronology", "invalid_time")
             last_time = time_ms
             point = (x, y, time_ms)
-            if cleaned_stroke[0] and point == tuple(
-                axis[-1] for axis in cleaned_stroke
-            ):
+            if point == previous:
                 repairs["duplicate_points"] += 1
                 continue
-            for axis, value in zip(cleaned_stroke, point):
-                axis.append(value)
-        strokes.append(cleaned_stroke)
+            cleaned_x.append(x)
+            cleaned_y.append(y)
+            cleaned_times.append(time_ms)
+            previous = point
+        strokes.append([cleaned_x, cleaned_y, cleaned_times])
 
     if not strokes:
         raise DataError("No visible extent", "no_extent")
