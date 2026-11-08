@@ -10,6 +10,7 @@ import { RoomClientError } from "@/contracts/room";
 import type { PlayerProfile } from "@/contracts/player";
 import type { DrawingBatch } from "@/contracts/drawing";
 import { saveDrawingEnvelope, deleteDrawingEnvelope, loadDrawingEnvelopes, type DrawingEnvelope } from "./outbox";
+import { loadRoomSession } from "./session";
 export interface RemoteOptions {
   apiUrl?: string;
   socketUrl?: string;
@@ -305,7 +306,7 @@ export class RemoteRoomClient implements RoomClient {
       headers: { authorization: `Bearer ${token}` },
     }); } catch (error) {
       if (error instanceof RoomClientError && ["unauthorized", "not-found"].includes(error.code)) {
-        const saved = (() => { try { return JSON.parse(sessionStorage.getItem("mtmai-room-session-v1") ?? "null") as { code?: string; playerId?: string; resumeToken?: string } | null; } catch { return null; } })();
+        const saved = loadRoomSession();
         const playerId = saved?.code === code && saved.resumeToken === token ? saved.playerId : undefined;
         await this.expireSession(code, playerId, error.code === "not-found");
         throw new RoomClientError("session-ended", "Room session ended");
@@ -397,11 +398,16 @@ export class RemoteRoomClient implements RoomClient {
     if (discarded) this.emit({ type: "gameplay", name: "drawing-tail-discarded" });
     await this.reportDrawingQueue();
   }
+  private async sendSavedDrawings(envelopes: DrawingEnvelope[]) {
+    for (const envelope of envelopes.sort((a, b) => a.order - b.order)) {
+      await this.sendSavedDrawing(envelope);
+    }
+  }
   private restoreOutbox() {
     const job = this.outboxChain.then(async () => {
       const envelopes = await loadDrawingEnvelopes();
       await this.reportDrawingQueue();
-      for (const envelope of envelopes.sort((a, b) => a.order - b.order)) await this.sendSavedDrawing(envelope);
+      await this.sendSavedDrawings(envelopes);
     });
     this.outboxChain = job.catch(() => {});
     return job;
@@ -412,8 +418,7 @@ export class RemoteRoomClient implements RoomClient {
     const job = this.outboxChain.then(async () => {
       await saved;
       await this.reportDrawingQueue();
-      const envelopes = await loadDrawingEnvelopes();
-      for (const pending of envelopes.sort((a, b) => a.order - b.order)) await this.sendSavedDrawing(pending);
+      await this.sendSavedDrawings(await loadDrawingEnvelopes());
     });
     this.outboxChain = job.catch(() => {});
     return job;

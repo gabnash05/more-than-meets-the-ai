@@ -2,7 +2,7 @@
 
 A multiplayer drawing game for an intelligent-systems class project, with a future transformer AI competitor.
 
-**Implemented Individual milestone (verified 7 November 2026):** real Individual remote play with a separate AI benchmark scorer/ledger and an unavailable provider boundary. Remote Team play is deferred to its own later plan. Real inference, referee serving, research exports and deployment remain separate work. The local browser adapter is a demo; the NestJS remote adapter provides real shared rooms. The AI behaviors described below are the intended later integration, not a claim that a model is connected.
+**Implemented Individual milestone (verified 7 November 2026)**. The NestJS remote adapter provides shared rooms for Individual play, and the browser-local adapter is a demo. Compose packages the web app, room API and optional inference service. Both AI providers default to unavailable. The optional profile supports a Guesser smoke test and Referee fixtures. Remote Team play, the team's trained model integrations and research evaluation have separate handoffs.
 
 **The default mode is individual free-for-all, not a team game.** One player draws on a shared canvas while every other player guesses for their own score and races the same AI guesser. The drawer and guessers are individual competitors, not teammates. Drawer duty rotates through the room's players; the highest finalized individual total wins.
 
@@ -14,7 +14,7 @@ Any visual strategy is allowed; written answer clues are prohibited, while incid
 
 ## Canvas frontend
 
-The application is in [apps/web](apps/web). It retains the approved create/invite/join/lobby flow, drawing tools and browser-local demo adapter. Its remote adapter now connects to the [NestJS room backend](apps/api/README.md) for authenticated guest sessions, shared lobby/drawing state, private selection from three words, human scoring, round rotation and final standings. AI inference is unavailable in this milestone. Human scoring remains human-v1 with AI modifiers zero; the prepared AI benchmark records null/unscored unavailable outcomes and exposes committed total/coverage for later real results. Remote Team selection/settings/starts are unavailable; its existing code and shared-target/private-canvas design are retained for a separate plan.
+The application is in [apps/web](apps/web). It retains the approved create/invite/join/lobby flow, drawing tools and browser-local demo adapter. Its remote adapter connects to the [NestJS room backend](apps/api/README.md) for authenticated guest sessions, shared lobby and drawing state, private selection from three words, human scoring, round rotation and final standings. Human scoring remains human-v1 with AI modifiers zero. The AI benchmark records unavailable outcomes as unscored and exposes committed totals and coverage. Remote Team settings and starts are deferred to the [Team gameplay plan](docs/TEAM-GAMEPLAY-NEXT-PLAN.md).
 
 See the [frontend run/build instructions](apps/web/README.md), [implementation plan](docs/FRONTEND-IMPLEMENTATION-PLAN.md), and [temporary UI scope](docs/FRONTEND-BASE-SCOPE.md). Build `apps/web` with `npm run build`; its `out/` directory can be served by a static host. No hosting provider has been configured by this implementation.
 
@@ -38,14 +38,14 @@ Team play is deferred and unavailable in the current remote milestone. Its prese
 
 ## Recovery and availability
 
-- NestJS accepts live events in memory and broadcasts them immediately; PostgreSQL archival runs asynchronously. A restart voids unfinished drawing turns and retries the same drawer/turn position with a fresh prompt while preserving committed prior results.
+- NestJS accepts live events in memory and broadcasts them immediately. With PostgreSQL configured, asynchronous archival preserves committed results and the saved drawing prefix across a restart. An unfinished turn retries the same drawer and turn position with a fresh prompt. Compose defaults to memory storage, where a process restart ends active room sessions.
 - In individual mode, connected players continue after another guesser disconnects. Accepted personal solves remain. If the drawer or every remaining unsolved guesser disconnects, pause for up to 30 seconds; on expiry close the turn with accepted human outcomes retained. Required connected players must return before the next turn.
 - If a required AI attempt is unavailable because of a service fault, preserve human-only scoring and neutralize the affected turn's AI-derived bonuses and reductions for all players, including the drawer's AI bonus. Referee outages leave advisory flagging unavailable. Readiness-related missed checkpoints require an explicit individual-mode policy; do not reuse a team-wide bonus penalty by accident.
-- Scores remain provisional until required records and results commit to PostgreSQL. Missed guesses, service failures and normal cancellations are distinct. A voided turn does not consume a drawing turn or advance rotation.
+- Scores remain provisional until the configured store commits the required records and results. Missed guesses, service failures and normal cancellations are distinct. A voided turn leaves the drawing-turn count and rotation in place.
 
 ## Architecture
 
-The implemented application stack is **Next.js**, a single **NestJS + Socket.IO** authority, and **PostgreSQL + Prisma** persistence. Live matches run in RAM with bounded background drawing archival; a committed watermark distinguishes saved strokes from an accepted live tail. A typed unavailable AI provider boundary leaves the future inference service/server and transport configurable in the later AI plan. Production deployment remains future work. No Redis or load balancer is needed for the selected single-process deployment. See [backend setup](apps/api/README.md), [the implementation milestone](docs/BACKEND-IMPLEMENTATION-PLAN.md), [SYSTEM-DESIGN.md](SYSTEM-DESIGN.md), and the retained [architecture preview](docs/get_the_picture_system_design.png). Local integration checks do not establish production capacity or model performance.
+The stack uses a **Next.js** static export behind **Nginx** and one **NestJS + Socket.IO** authority. The API uses memory storage or **PostgreSQL + Prisma** persistence. Live matches run in RAM with bounded background drawing archival. A committed watermark distinguishes saved strokes from an accepted live tail. See the [deployment runbook](deploy/README.md) for the implemented setup, [backend setup](apps/api/README.md) for local development and [SYSTEM-DESIGN.md](SYSTEM-DESIGN.md) for the architecture.
 
 ## Research evaluation workspace
 

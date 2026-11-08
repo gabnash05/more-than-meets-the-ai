@@ -9,6 +9,23 @@ const openDatabase = () =>
     request.onerror = () => reject(request.error);
   });
 
+function deleteStoredRoom(store: IDBObjectStore, code: string) {
+  store.delete(code);
+  const cursor = store.openCursor();
+  cursor.onsuccess = () => {
+    const entry = cursor.result;
+    if (!entry) return;
+    if (
+      typeof entry.key === "string" &&
+      entry.key.startsWith("session:") &&
+      entry.value?.roomCode === code
+    ) {
+      entry.delete();
+    }
+    entry.continue();
+  };
+}
+
 /** Persist a room and its viewer credential in one transaction. */
 export async function persistLocalRoomSession(
   session: RoomSession,
@@ -33,19 +50,7 @@ export async function persistLocalRoomSession(
         return;
       }
       if (session.snapshot.phase === "closed") {
-        store.delete(session.snapshot.code);
-        const cursor = store.openCursor();
-        cursor.onsuccess = () => {
-          const entry = cursor.result;
-          if (!entry) return;
-          if (
-            typeof entry.key === "string" &&
-            entry.key.startsWith("session:") &&
-            entry.value?.roomCode === session.snapshot.code
-          )
-            entry.delete();
-          entry.continue();
-        };
+        deleteStoredRoom(store, session.snapshot.code);
       } else {
         store.put(session, session.snapshot.code);
         store.put(
@@ -124,20 +129,7 @@ export async function deleteLocalRoomSession(code: string): Promise<void> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction("rooms", "readwrite");
-    const store = tx.objectStore("rooms");
-    store.delete(code);
-    const cursor = store.openCursor();
-    cursor.onsuccess = () => {
-      const entry = cursor.result;
-      if (!entry) return;
-      if (
-        typeof entry.key === "string" &&
-        entry.key.startsWith("session:") &&
-        entry.value?.roomCode === code
-      )
-        entry.delete();
-      entry.continue();
-    };
+    deleteStoredRoom(tx.objectStore("rooms"), code);
     tx.oncomplete = () => {
       db.close();
       resolve();

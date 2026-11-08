@@ -140,7 +140,7 @@ export function configuredInference(): Inference | undefined {
     maxGuesses: positiveSetting("AI_MAX_GUESSES_PER_TURN", 5, 5),
     requestTimeoutMs: positiveSetting("AI_REQUEST_TIMEOUT_MS", 2500, 2500),
   };
-  if (positiveSetting("AI_MAX_CONCURRENT_JOBS", 1, 1) !== 1) throw new Error("The Guesser uses one inference slot");
+  positiveSetting("AI_MAX_CONCURRENT_JOBS", 1, 1);
   try {
     const url = new URL(process.env.AI_SERVICE_URL ?? "");
     const rendererUrl = new URL(process.env.AI_RENDERER_URL ?? "http://127.0.0.1:3100/review/canvas/");

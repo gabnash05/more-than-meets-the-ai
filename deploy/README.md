@@ -21,7 +21,15 @@ docker compose ps
 docker compose logs --tail 100 -f web api
 ```
 
-Update your branch with `git pull --ff-only`, then repeat the start commands. If you want to keep images for rollback, set a release name such as `IMAGE_TAG=demo-1` in `.env` before building. Give each release a different tag and keep the previous web and API images. To restore that pair, set the previous tag and run `docker compose up -d --no-build --wait`. Use the previous Compose file if its service settings changed. Add `--profile ai` when operating a stack with local inference.
+Update your branch with `git pull --ff-only`. To keep images for rollback, set a unique release tag such as `IMAGE_TAG=demo-1` in `.env` before building and keep the previous images.
+
+```sh
+sh preflight.sh
+docker compose build --pull
+docker compose up -d --no-build --wait
+```
+
+To roll back, set the previous tag and run `docker compose up -d --no-build --wait`. Use the previous Compose file if its service settings changed. Add `--profile ai` after `docker compose` when operating a stack with local inference.
 
 ## PostgreSQL
 
