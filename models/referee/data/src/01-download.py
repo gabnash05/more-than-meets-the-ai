@@ -1,6 +1,9 @@
 """Acquire verified ATYPICT members using bounded HTTP ranges or local fixtures."""
 
 import hashlib
+import random
+import ssl
+import time
 import io
 import json
 import os
@@ -9,11 +12,13 @@ import shutil
 import stat
 import struct
 import urllib.request
+import urllib.error
 import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
-from http.client import HTTPResponse
+from http.client import HTTPResponse, IncompleteRead
 from pathlib import Path
+
 
 from .common import (
     DataError,
@@ -194,21 +199,72 @@ def read_member(source_root: Path, source_archive: str, member_path: str) -> byt
         return read(source_archive, member_path)
 
 
+class _TransientSourceError(DataError):
+    """A source connection failure that can be retried."""
+
 @contextmanager
 def _source_response(
-    request: str | urllib.request.Request, operation: str
+    request: str | urllib.request.Request,
+    operation: str,
+    max_attempts: int = 4,
 ) -> Iterator[HTTPResponse]:
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+    """Open an HTTP response with bounded retries for transient failures."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
+    url = (
+        request.full_url
+        if isinstance(request, urllib.request.Request)
+        else request
+    )
+    hostname = urllib.parse.urlsplit(url).hostname
+
+    for attempt in range(max_attempts):
+        try:
+            response = urllib.request.urlopen(request, timeout=60)
+
+        except OSError as exc:
+            keylog = os.environ.get("SSLKEYLOGFILE")
+
+            if (
+                isinstance(exc, FileNotFoundError)
+                and keylog
+                and exc.filename == keylog
+            ):
+                raise DataError(
+                    f"{operation}: TLS key log path is missing. "
+                    "Clear SSLKEYLOGFILE or set it to a file "
+                    "in an existing directory."
+                ) from exc
+
+            reason = (
+                exc.reason
+                if isinstance(exc, urllib.error.URLError)
+                else exc
+            )
+
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                raise DataError(
+                    f"{operation}: TLS certificate verification failed "
+                    f"for {hostname} ({url}): {reason}"
+                ) from exc
+
+            if attempt == max_attempts - 1:
+                raise _TransientSourceError(
+                    f"{operation}: connection failed after "
+                    f"{max_attempts} attempts for {url}: {exc}"
+                ) from exc
+
+            delay = min(2 ** attempt, 8) + random.uniform(0, 0.5)
+            time.sleep(delay)
+            continue
+
+        # Keep response reading outside the connection retry handler.
+        # The caller is responsible for handling interrupted reads.
+        with response:
             yield response
-    except OSError as exc:
-        keylog = os.environ.get("SSLKEYLOGFILE")
-        if isinstance(exc, FileNotFoundError) and keylog and exc.filename == keylog:
-            raise DataError(
-                f"{operation}: TLS key log path is missing. Clear SSLKEYLOGFILE "
-                "or set it to a file in an existing directory."
-            ) from exc
-        raise DataError(f"{operation}: {exc}") from exc
+        return
+
 
 
 class RangeFile(io.RawIOBase):
@@ -236,42 +292,113 @@ class RangeFile(io.RawIOBase):
 
     def read(self, size: int = -1) -> bytes:
         size = min(
-            self.size - self.position, size if size >= 0 else self.size - self.position
+            self.size - self.position,
+            size if size >= 0 else self.size - self.position,
         )
+
         if size <= 0:
             return b""
+
         if size > self.cap - self.total:
             raise DataError("Archive response byte budget exceeded", "byte_cap")
-        start, end = self.position, self.position + size - 1
-        request = urllib.request.Request(
-            self.url,
-            headers={
-                "Range": f"bytes={start}-{end}",
-                "Accept-Encoding": "identity",
-                "User-Agent": "CSC173-referee-data/1.0",
-            },
-        )
-        with _source_response(
-            request, f"Read ATYPICT archive bytes {start}-{end}"
-        ) as response:
-            if (
-                response.status != 206
-                or response.headers.get("Content-Range")
-                != f"bytes {start}-{end}/{self.size}"
-            ):
-                raise DataError("Server did not honour the exact archive range")
-            chunks = []
-            remaining = size
-            while remaining:
-                chunk = response.read(min(remaining, 65536))
-                self.total += len(chunk)
-                if not chunk:
-                    raise DataError("Truncated archive response")
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            data = b"".join(chunks)
+
+        chunks = []
+        remaining = size
+        max_attempts = 5
+        attempt = 0
+
+        while remaining:
+            start = self.position + (size - remaining)
+            end = self.position + size - 1
+
+            request = urllib.request.Request(
+                self.url,
+                headers={
+                    "Range": f"bytes={start}-{end}",
+                    "Accept-Encoding": "identity",
+                    "User-Agent": "CSC173-referee-data/1.0",
+                },
+            )
+
+            try:
+                with _source_response(
+                    request,
+                    f"Read ATYPICT archive bytes {start}-{end}",
+                    max_attempts=1,
+                ) as response:
+
+                    if (
+                        response.status != 206
+                        or response.headers.get("Content-Range")
+                        != f"bytes {start}-{end}/{self.size}"
+                    ):
+                        raise DataError(
+                            "Server did not honour the exact archive range"
+                        )
+
+                    while remaining:
+                        try:
+                            chunk = response.read(min(remaining, 65536))
+
+                        except IncompleteRead as exc:
+                            # IncompleteRead may contain bytes received before
+                            # the connection was interrupted.
+                            partial = exc.partial or b""
+
+                            if len(partial) > remaining:
+                                raise DataError(
+                                    "Archive response exceeded requested range"
+                                ) from exc
+
+                            if partial:
+                                chunks.append(partial)
+                                self.total += len(partial)
+                                remaining -= len(partial)
+
+                            raise OSError(
+                                "Truncated archive response"
+                            ) from exc
+
+                        if not chunk:
+                            raise DataError(
+                                f"Truncated archive response at byte "
+                                f"{self.position + size - remaining}"
+                            )
+
+                        if len(chunk) > remaining:
+                            raise DataError(
+                                "Archive response exceeded requested range"
+                            )
+
+                        chunks.append(chunk)
+                        self.total += len(chunk)
+                        remaining -= len(chunk)
+
+                # Reset retry counter after a successfully completed response.
+                attempt = 0
+
+            except (OSError, _TransientSourceError) as exc:
+                attempt += 1
+
+                if attempt >= max_attempts:
+                    raise DataError(
+                        f"Read ATYPICT archive bytes "
+                        f"{self.position}-{self.position + size - 1} "
+                        f"failed after {max_attempts} attempts: {exc}"
+                    ) from exc
+
+                delay = min(2 ** (attempt - 1), 8) + random.uniform(0, 0.5)
+
+                print(
+                    f"Connection interrupted. Resuming at byte "
+                    f"{self.position + size - remaining:,} "
+                    f"(attempt {attempt + 1}/{max_attempts})..."
+                )
+
+                time.sleep(delay)
+
         self.position += size
-        return data
+        return b"".join(chunks)
 
 
 class Slice(io.RawIOBase):
