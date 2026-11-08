@@ -1,6 +1,6 @@
 # Room API
 
-NestJS and Socket.IO run one authoritative room process backed by PostgreSQL. Node.js 24 and PostgreSQL are required. No inference service is connected; the AI is unavailable and its score adjustments are neutral.
+NestJS and Socket.IO run one authoritative room process on Node.js 24. Compose defaults to process-local memory. Direct startup defaults to PostgreSQL, and `ROOM_STORE=memory` starts a local server without a database. Optional inference and production setup are covered in the [deployment runbook](../../deploy/README.md).
 
 ## Setup and running
 
@@ -13,7 +13,7 @@ npm run db:migrate
 npm run dev
 ```
 
-Generate the Prisma client and apply the migrations before starting against a fresh database. For production, run `npm run build` followed by `npm start`. The API binds to loopback on port 3001 by default; `GET /api/health` reports readiness. The default allowed browser origins are `http://localhost:3000`, `http://localhost:3100`, and `http://127.0.0.1:3100`.
+Generate the Prisma client for either store. Apply migrations before starting against a fresh PostgreSQL database. For production, run `npm run build` followed by `npm start`. The API binds to loopback on port 3001 by default; `GET /api/health` reports readiness. The default allowed browser origins are `http://localhost:3000`, `http://localhost:3100`, and `http://127.0.0.1:3100`.
 
 Server timing values are configured in milliseconds, not through room settings: `GAME_CHOOSE_MS=15000`, `GAME_DRAW_MS=60000`, `GAME_RECAP_MS=8000`, and `GAME_GRACE_MS=30000`. Values must be positive whole numbers no greater than 3,600,000; invalid values prevent startup. Room rounds count the total number of drawing prompts in the match.
 

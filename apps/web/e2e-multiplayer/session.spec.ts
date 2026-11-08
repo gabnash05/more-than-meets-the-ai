@@ -10,12 +10,12 @@ async function pixels(page: Page) {
 test("two players choose privately, share ink, restore, finish and return", async ({ browser }) => {
   const hostContext = await browser.newContext(), guestContext = await browser.newContext();
   const host = await hostContext.newPage(), guest = await guestContext.newPage();
-  await host.goto("http://127.0.0.1:3100/");
+  await host.goto("/");
   await host.getByLabel("Your name").fill("Alex");
   await host.getByRole("button", { name: /Create a room/ }).click();
   await expect(host).toHaveURL(/room\/\?code=/);
   const code = new URL(host.url()).searchParams.get("code")!;
-  await guest.goto(`http://127.0.0.1:3100/?code=${code}`);
+  await guest.goto(`/?code=${code}`);
   await guest.getByLabel("Your name").fill("Bea");
   await guest.getByRole("button", { name: "Join room →" }).click();
   await expect(host.getByText("Bea", { exact: true })).toBeVisible();
@@ -107,12 +107,12 @@ test("word choice fits a narrow viewport and works with the keyboard", async ({ 
   const hostContext = await browser.newContext({ viewport: { width: 360, height: 800 } });
   const guestContext = await browser.newContext();
   const host = await hostContext.newPage(), guest = await guestContext.newPage();
-  await host.goto("http://127.0.0.1:3100/");
+  await host.goto("/");
   await host.getByLabel("Your name").fill("Mobile");
   await host.getByRole("button", { name: /Create a room/ }).click();
   await expect(host).toHaveURL(/room\/\?code=/);
   const code = new URL(host.url()).searchParams.get("code")!;
-  await guest.goto(`http://127.0.0.1:3100/?code=${code}`);
+  await guest.goto(`/?code=${code}`);
   await guest.getByLabel("Your name").fill("Guest");
   await guest.getByRole("button", { name: "Join room →" }).click();
   await expect(host.getByText("Guest", { exact: true })).toBeVisible();
@@ -134,12 +134,12 @@ test("word choice fits a narrow viewport and works with the keyboard", async ({ 
 test("drawing tools replay to a second browser and survive refresh", async ({ browser }) => {
   const hostContext = await browser.newContext(), guestContext = await browser.newContext();
   const host = await hostContext.newPage(), guest = await guestContext.newPage();
-  await host.goto("http://127.0.0.1:3100/");
+  await host.goto("/");
   await host.getByLabel("Your name").fill("Artist");
   await host.getByRole("button", { name: /Create a room/ }).click();
   await expect(host).toHaveURL(/room\/\?code=/);
   const code = new URL(host.url()).searchParams.get("code")!;
-  await guest.goto(`http://127.0.0.1:3100/?code=${code}`);
+  await guest.goto(`/?code=${code}`);
   await guest.getByLabel("Your name").fill("Viewer");
   await guest.getByRole("button", { name: "Join room →" }).click();
   await expect(host.getByText("Viewer", { exact: true })).toBeVisible();

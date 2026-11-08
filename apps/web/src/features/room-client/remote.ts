@@ -112,6 +112,18 @@ export class RemoteRoomClient implements RoomClient {
     this.connect(this.session);
     return this.session;
   }
+  private async expireSession(code: string, playerId?: string, missingRoom = false) {
+    try {
+      if (playerId || missingRoom) for (const item of await loadDrawingEnvelopes()) {
+        if (item.payload.roomCode === code && (playerId === undefined || item.playerId === playerId)) await deleteDrawingEnvelope(item.requestId);
+      }
+    } catch { /* Storage may be unavailable; the expired credential is still unusable. */ }
+    this.unbind?.();
+    this.socket?.disconnect();
+    this.socket = null;
+    this.session = null;
+    this.emit({ type: "connection", status: "disconnected", message: "Room session ended" });
+  }
   private connect(session: RoomSession) {
     this.unbind?.();
     this.socket?.disconnect();
@@ -137,12 +149,17 @@ export class RemoteRoomClient implements RoomClient {
     };
     const onDisconnect = () =>
       this.emit({ type: "connection", status: "disconnected" });
-    const onError = (error: Error) =>
-      this.emit({
-        type: "connection",
-        status: "disconnected",
-        message: error.message,
-      });
+    const onError = (error: Error) => {
+      this.emit({ type: "connection", status: "disconnected", message: error.message });
+      void this.fetcher(`${this.options.apiUrl ?? ""}/api/rooms/${encodeURIComponent(session.snapshot.code)}/resume`, { headers: { authorization: `Bearer ${session.resumeToken}` } })
+        .then(async response => {
+          if (response.status !== 401 && response.status !== 404) return;
+          const body = await response.json() as { code?: string };
+          const expectedCode = response.status === 401 ? "unauthorized" : "not-found";
+          if (this.session === session && body?.code === expectedCode) await this.expireSession(session.snapshot.code, session.playerId);
+        })
+        .catch(() => {});
+    };
     const onEvent = (event: RoomEvent) => {
       if (!event || typeof event !== "object" || typeof event.type !== "string")
         return;
@@ -282,11 +299,19 @@ export class RemoteRoomClient implements RoomClient {
       },
     );
   }
-  resume(code: string, token: string) {
+  async resume(code: string, token: string) {
     this.emit({ type: "connection", status: "restoring" });
-    return this.bootstrap(`/api/rooms/${encodeURIComponent(code)}/resume`, {
+    try { return await this.bootstrap(`/api/rooms/${encodeURIComponent(code)}/resume`, {
       headers: { authorization: `Bearer ${token}` },
-    });
+    }); } catch (error) {
+      if (error instanceof RoomClientError && ["unauthorized", "not-found"].includes(error.code)) {
+        const saved = (() => { try { return JSON.parse(sessionStorage.getItem("mtmai-room-session-v1") ?? "null") as { code?: string; playerId?: string; resumeToken?: string } | null; } catch { return null; } })();
+        const playerId = saved?.code === code && saved.resumeToken === token ? saved.playerId : undefined;
+        await this.expireSession(code, playerId, error.code === "not-found");
+        throw new RoomClientError("session-ended", "Room session ended");
+      }
+      throw error;
+    }
   }
   updateSettings(settings: RoomSettings) {
     return this.command("room:settings", settings);
@@ -339,7 +364,7 @@ export class RemoteRoomClient implements RoomClient {
     try {
       await this.command("room:drawing", envelope.payload, envelope, result => { acceptedSequence = result.sequence; });
     } catch (error) {
-      if (error instanceof RoomClientError && ["invalid-drawing", "drawing-paused", "expired", "stale-generation"].includes(error.code)) {
+      if (error instanceof RoomClientError && ["invalid-drawing", "drawing-paused", "drawing-limit", "expired", "stale-generation"].includes(error.code)) {
         const pending = await loadDrawingEnvelopes();
         for (const item of pending) if (item.playerId === envelope.playerId && item.payload.roomCode === envelope.payload.roomCode && item.payload.canvasId === envelope.payload.canvasId && item.generation === envelope.generation && item.payload.streamId === envelope.payload.streamId && item.acceptedSequence === undefined) await deleteDrawingEnvelope(item.requestId);
         this.emit({ type: "gameplay", name: "drawing-tail-discarded" });

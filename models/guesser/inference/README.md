@@ -1,13 +1,7 @@
 # Guesser inference
 
-Model loading and prediction service code belongs here.
+The CPU service loads one validated Guesser bundle at startup. The pinned LiteRT INT8 bundle is an explicitly enabled integration smoke model. Its training bitmaps use light strokes on a dark background, and the interpreter supplies tensor quantization.
 
-This is a placeholder; no inference implementation is included yet.
+The optional ViT-Tiny adapter reuses the selected training preprocessor, ordered labels and a validation-selected, safely exported state dict. Serving readiness requires a compatible bundle. Compare predictions against the evaluation pipeline once trusted weights arrive.
 
-Use the sibling [data package](../data/README.md) for prepared data and shared preprocessing. Data-pipeline checks remain in `../data/tests/`.
-
-## Required libraries
-
-Use timm and the existing checkpoint APIs to reconstruct/load the trained model, PyTorch eval/inference_mode for predictions, and FastAPI/Pydantic/Uvicorn for the service. Reuse the exact selected data preprocessor. Implement only the game's queue/checkpoint/version/pass policy around those libraries.
-
-See the [library guide](../LIBRARIES.md) and [implementation rules](../AGENTS.md). These choices do not mean the model packages or service are installed yet.
+See the [deployment runbook](../../../deploy/README.md) for setup and bundle fields.

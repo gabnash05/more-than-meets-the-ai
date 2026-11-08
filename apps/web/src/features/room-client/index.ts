@@ -26,6 +26,7 @@ export function saveRoomSession(session: RoomSession) {
     SESSION_KEY,
     JSON.stringify({
       code: session.snapshot.code,
+      playerId: session.playerId,
       resumeToken: session.resumeToken,
     }),
   );
@@ -33,6 +34,7 @@ export function saveRoomSession(session: RoomSession) {
 export function loadRoomSession(): {
   code: string;
   resumeToken: string;
+  playerId?: string;
 } | null {
   try {
     return JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? "null");
