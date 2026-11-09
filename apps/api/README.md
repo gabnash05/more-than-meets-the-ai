@@ -29,9 +29,17 @@ If fewer than three unused words remain, the authority reports a blocker and per
 
 ## Protocol and recovery
 
+Routine archival progress is coalesced into at most one full room snapshot per 200 ms window. Canonical drawing operations, lifecycle transitions and archive errors still publish immediately. The optional `game.closing` flag means every drawing group is closed while the authority is still saving/finalizing; it does not mean scores have committed. Archive completion wakes finalization directly rather than waiting for the one-second recovery poll. A last human solve or drawing deadline closes a held stroke on the server before finalization; a failed closing save cannot broadcast or archive an end that was rolled back.
+
+The PostgreSQL adapter bounds connection acquisition at two seconds, statement execution at three seconds and lock waits at one second. PostgreSQL cancels stalled statements itself, so a client-side timer cannot leave a write running after the engine has rolled back. These bounds reduce one cause of the ten-second socket acknowledgement timeout; they cannot guarantee a network acknowledgement or bound an arbitrarily long room command queue. Failed persistence retains the existing rollback/retry behavior. No migration is needed.
+
 Bootstrap endpoints are `/api/rooms`, `/api/rooms/:code/join`, and `/api/rooms/:code/resume`. Credentials are bearer tokens and must not be put in URLs. Prompt options are delivered privately to the choosing drawer; the target is withheld from unsolved guessers. The API authorizes each viewer's room events and saved interrupted sketch access.
 
 Drawing acknowledgements report accepted sequence positions separately from the durable watermark. On restart, the saved durable sketch is available read-only via bearer-protected `/api/rooms/:code/interrupted/:canvasId/:generation`. An interrupted turn can be retried at the same position with a fresh prompt; previously committed results remain in PostgreSQL.
+
+New drawing submissions use the canonical `DrawingPayload` fields without browser-local diagnostics; legacy stored payloads remain accepted and unchanged on retry. Batch ordering, validation, request deduplication and accepted/durable acknowledgement semantics are unchanged. The shared 512-point append limit also bounds newly captured browser chunks before operation IDs are assigned. See the [drawing-sync contract](../../docs/FRONTEND-ROOM-INTEGRATION.md#lossless-drawing-sync-follow-up--10-november-2026).
+
+Room metadata saves omit drawing operation arrays before deep cloning; the geometry stays in its separate journal. Remaining nested metadata is still copied so a store cannot mutate the live room. Command rollback snapshots and database commit barriers remain intact. No SQL migration is required for this follow-up.
 
 The shared TypeScript contracts live in `packages/game-contracts/src`; the web contract files re-export them. The API build compiles those shared sources alongside the server under `apps/api/dist`, and `npm start` runs the compiled server entry point.
 
