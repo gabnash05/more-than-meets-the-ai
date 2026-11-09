@@ -7,9 +7,13 @@ test("host can configure Guesser and Referee in the lobby", async ({ page }) => 
   const referee = page.getByRole("checkbox", { name: "Enable AI Referee" });
   await expect(guesser).toBeChecked();
   await expect(referee).toBeChecked();
-  await guesser.uncheck();
+  await guesser.click();
   await expect(guesser).not.toBeChecked();
-  await referee.uncheck();
+  await referee.click();
+  await expect(referee).not.toBeChecked();
+  await expect(referee).toBeEnabled();
+  await page.reload();
+  await expect(guesser).not.toBeChecked();
   await expect(referee).not.toBeChecked();
   await expect(page.getByRole("button", { name: /Start match/ })).toBeEnabled();
 });
