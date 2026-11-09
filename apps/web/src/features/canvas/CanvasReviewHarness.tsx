@@ -9,6 +9,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } 
 
 type CanvasReviewApi = {
   echo(): Promise<void>;
+  apply(operations: CanvasOperation[]): Promise<void>;
+  hydrate(operations: CanvasOperation[]): Promise<void>;
   replayAndUnmount(): void;
   operations(): CanvasOperation[];
   renderPng(prefix: CanvasOperation[]): Promise<string | null>;
@@ -31,6 +33,8 @@ export default function CanvasReviewHarness() {
   useEffect(() => {
     window.canvasReview = {
       echo: () => canvas.current!.applyOperations([...operations.current]),
+      apply: operations => canvas.current!.applyOperations(operations),
+      hydrate: operations => canvas.current!.hydrate(operations),
       replayAndUnmount: () => {
         const pending = canvas.current!.applyOperations([]);
         pending.then(() => setOutcome("resolved"), error => setOutcome(error.message));
