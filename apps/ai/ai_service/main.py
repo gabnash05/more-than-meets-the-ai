@@ -1,11 +1,12 @@
 """Private role-specific inference over bounded canonical PNG observations."""
 
+import json
+import logging
+import os
 from asyncio import Lock
 from contextlib import asynccontextmanager
 from hmac import compare_digest
 from io import BytesIO
-import logging
-import os
 from pathlib import Path
 from time import time
 
@@ -20,6 +21,7 @@ from .bundles import load_bundle
 MAX_IMAGE = 4 * 1024 * 1024
 MAX_FORM = MAX_IMAGE + 8192
 LOG = logging.getLogger(__name__)
+EVENT_LOG = logging.getLogger("uvicorn.error")
 
 
 class Observation(BaseModel):
@@ -138,6 +140,16 @@ async def infer_admitted(request: Request, role: str) -> dict:
         return unavailable("inference-failed")
     if job.deadlineAt <= time() * 1000:
         return unavailable("deadline-expired")
+    if role == "guesser" and result.get("status") == "answer":
+        EVENT_LOG.info(json.dumps({
+            "event": "guesser_prediction",
+            "jobId": job.jobId,
+            "canvasId": job.canvasId,
+            "generation": job.generation,
+            "sequence": job.sequence,
+            "modelId": bundle.model_id,
+            "artifactRevision": bundle.revision,
+        }, separators=(",", ":")))
     return {**binding, **result}
 
 

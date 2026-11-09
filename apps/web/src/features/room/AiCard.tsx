@@ -5,7 +5,15 @@ const labels = { waiting: "", guessing: "Guessing", correct: "Guessed it", wrong
 
 export function AiCard({ game, result, unavailable = false }: { game?: RoomGame; result: boolean; unavailable?: boolean }) {
   const answer = result ? game?.result : undefined;
-  const status = unavailable ? "unavailable" : answer ? (answer.aiBenchmark ? answer.aiBenchmark.status === "solved" ? "correct" : answer.aiBenchmark.status === "unsolved" ? "wrong" : "unavailable" : answer.aiCorrect ? "correct" : "wrong") : (game?.aiStatus ?? "waiting");
+  const benchmarkStatus = answer?.aiBenchmark?.status;
+  let status = game?.aiStatus ?? "waiting";
+  if (unavailable || benchmarkStatus === "unavailable") {
+    status = "unavailable";
+  } else if (answer) {
+    const correct = benchmarkStatus ? benchmarkStatus === "solved" : answer.aiCorrect;
+    status = correct ? "correct" : "wrong";
+  }
+  const showAnswers = answer && (status !== "unavailable" || (benchmarkStatus === "unavailable" && answer.aiAnswers.length > 0));
   const finalAnswer = answer?.finalAnswer ?? answer?.aiAnswers.at(-1) ?? "—";
   const previous = answer?.aiAnswers.slice(0, -1) ?? [];
 
@@ -20,16 +28,11 @@ export function AiCard({ game, result, unavailable = false }: { game?: RoomGame;
         </svg>
         <div>
           <h2>{result ? "AI result" : "Your AI rival"}</h2>
-          {answer && !unavailable && <p className={styles.endStatus}>{labels[status]}</p>}
+          {showAnswers && <p className={styles.endStatus}>{labels[status]}</p>}
         </div>
       </div>
       <div className={styles.content}>
-        {unavailable ? (
-          <div className={styles.liveState} role="status">
-            <strong>AI unavailable</strong>
-            <p>Human points are still awarded. AI score adjustments are neutral.</p>
-          </div>
-        ) : answer ? (
+        {showAnswers ? (
           <div className={styles.resultStack}>
             <div className={`${styles.finalStrip} ${status === "correct" ? styles.finalCorrect : styles.finalWrong}`} data-testid="ai-final-answer">
               <span className={styles.finalLabel}>Final</span>
@@ -42,6 +45,11 @@ export function AiCard({ game, result, unavailable = false }: { game?: RoomGame;
                 {previous.length ? previous.map((word, index) => <div className={styles.previousWord} role="listitem" key={`${index}-${word}`}><span className={styles.attemptNumber}>{index + 1}</span><span>{word}</span></div>) : <div className={styles.previousEmpty}>No earlier guesses</div>}
               </div>
             </div>
+          </div>
+        ) : status === "unavailable" ? (
+          <div className={styles.liveState} role="status">
+            <strong>AI unavailable</strong>
+            <p>Human points are still awarded. AI score adjustments are neutral.</p>
           </div>
         ) : (
           <div className={styles.liveState}>
