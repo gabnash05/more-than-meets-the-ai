@@ -123,6 +123,111 @@ Send / commit (weights stay gitignored — transfer separately if needed):
 3. Small-run `checkpoint-selection.json` files (recipe + `labels_sha256`) and `ab_comparison/`
 4. Note the exact command used for small A/B, and that production only needs `--prepared-dir` (+ maybe more workers)
 
+## Exact training-view bundles and optional CUDA augmentation
+
+Three caches solve different costs: the existing Arrow mmap cache shares manifest
+metadata; the bounded validation cache reuses complete validation renders; the
+new immutable **training-view bundle** stores lossless pre-augmentation views
+separately for each original index, A/B arm and epoch. Source JSONL remains
+canonical. No training command builds, downloads, evicts or repairs a bundle.
+
+From `models/guesser/`, first estimate storage on the intended output filesystem:
+
+```sh
+uv run --no-sync python -m training.build_epoch_cache estimate --prepared-dir data/.local/data/production/prepared --output .local/cache/training-views/ab --arms a b --epochs 0 1 2 3 4 5 --samples 512 --reserve-bytes 10737418240
+```
+
+The estimate measures compressed payloads, not guaranteed SQLite capacity. The
+uncompressed pixels alone are about 257.95 GiB per arm/epoch for production.
+Approve a filesystem/budget before a full build; never substitute lossy pixels
+or freeze one image across epochs to make it fit. The following is an explicit,
+potentially expensive build, **not** an automatic next step:
+
+```sh
+uv run --no-sync python -m training.build_epoch_cache build --prepared-dir data/.local/data/production/prepared --output .local/cache/training-views/ab --arms a b --epochs 0 1 2 3 4 5 --max-bytes 107374182400 --reserve-bytes 10737418240 --workers 4
+```
+
+`--manifest-cache-dir .local/cache/manifests` optionally reuses the existing
+shared Arrow index during a build. The disk cap covers logical SQLite bytes and
+is enforced during writes using SQLite's page ceiling. Private staging uses
+memory rollback journals and bounded transactions; interrupted staging is never
+a valid bundle. Only a counted, identity-checked, closed, fsynced database is
+published. Cooperating builders serialize through a sibling lock; existing
+outputs/locks and other builders' staging are never removed. A killed builder
+can leave its own staging/lock for explicit operator inspection, not automatic
+pruning. Filesystem metadata and other jobs still require the free-space reserve.
+
+Enable the bundle in a **new** experiment root with matching A/B settings:
+
+```sh
+uv run --no-sync python -m training.train --run both --prepared-dir data/.local/data/production/prepared --checkpoint-root checkpoints/exact-input-new-run --training-view-cache .local/cache/training-views/ab --augment-device cpu --batch-size 8 --accumulate-grad-batches 4 --precision 32-true
+```
+
+The default is still `--augment-device cpu`. Opt into `--augment-device cuda`
+only after measuring its tradeoff; a busier GPU is not necessarily a faster run.
+CUDA mode samples the original
+per-image affine parameters in CPU workers, transfers pinned tensors through
+Lightning, expands cached one-channel pixels on CUDA and executes each affine
+independently. It never initializes CUDA inside workers or renormalizes pixels.
+The runtime checks a fixed boundary/random unique-index corpus before admitting
+a CUDA backend. This is a regression gate, not an exhaustive mathematical proof.
+Affine grid construction temporarily uses IEEE float32 because the model's
+`high`/TF32 matmul setting changes pixel selection; the model setting is restored
+even on exceptions. This adapter is for the single training-process/stream path,
+not concurrent unrelated inference threads. Validation remains unchanged.
+
+Source manifest/file identity, absolute prepared path, rendering source code,
+Python/platform and package versions are bound to the bundle. Ordinary edits or
+replacement require a rebuild; fingerprints are not signatures against malicious
+metadata forgery. Every entry has a verified digest. Missing/corrupt coverage
+raises instead of silently rendering/falling back. Sources and published bundles
+must stay immutable while readers run. Loader-time checks happen **before**
+prefetch and use the restored epoch, allowing resume bundles containing only the
+remaining epochs. Worker RNG state not saved by the original trainer is not
+retroactively recoverable. Completed A/B checkpoints/notebooks are not modified.
+
+### Measure before choosing a placement
+
+Use `training.benchmark_epoch_cache --help`. Modes `baseline`, `cached-cpu` and
+`cached-cuda` describe the **input/augmentation** path; `--require-cuda` forbids
+CPU model fallback in all modes. Comparisons check raw metadata/pixel bytes with
+the old reference entry points and seeded augmented tensors before timing.
+Warmup and measurement use disjoint batches from one fixed shuffled train-only
+sample, with the same weights, seed, workers, FP32 and accumulation. The late
+view epoch is frozen even though the bounded Trainer itself runs one epoch.
+Requested indices retain training's ordinary next-index fallback, not a
+filtered/reindexed replacement corpus. `--max-record-attempts-per-sample`
+(default 64) caps fallback work in both preflight and timed loading; exhaustion
+raises instead of silently changing selection. JSON records the prepared root,
+this policy and preflight attempt count. Use an explicitly copied train-only
+prepared root and its matching bundle when source access itself must remain
+inside a smaller corpus; `--samples` alone is not an I/O sandbox. The benchmark
+guard does not restrict normal training fallback.
+
+Linux example (set `HF_HUB_OFFLINE=1` using the equivalent shell syntax on Windows):
+
+```sh
+HF_HUB_OFFLINE=1 uv run --no-sync python -m training.benchmark_epoch_cache --mode cached-cuda --require-cuda --prepared-dir data/.local/data/production/prepared --bundle .local/cache/training-views/ab --arm b --epoch 2 --samples 2048 --batch-size 8 --num-workers 4 --repeats 3 --warmup-batches 16 --measure-batches 128
+```
+
+Repeat with `--mode cached-cpu`, then `--mode baseline` without `--bundle`, for
+both arms and a later epoch. Pretrained weights must already be cached; offline
+failure is not permission to download. JSON stdout reports each repeat, median
+images/s, real model/input devices, host wait, CUDA transfer/augmentation/compute
+events and allocated/reserved VRAM peaks. Driver utilization is not inferred
+from VRAM, and unmeasured worker CPU breakdown is explicitly null. Supply measured
+`--preparation-seconds` when available; warm speed alone does not prove a faster
+first experiment. Test-fixture model injections are labelled, not production
+model measurements. Full A/B retraining and production-sized builds remain
+separate operator decisions.
+
+The existing Pillow rasterizer, LANCZOS resizing, foreground/edge decisions and
+causal bounds remain authoritative. `gpu_views.py` contains a small exact uint8
+normalization-table experiment, not a full CUDA renderer. CUDA bilinear does not
+match Pillow LANCZOS; no approximate resize/raster substitution is enabled.
+Mixed precision, physical batch changes, extra workers and custom prefetch
+streams are separate measured experiments, not implicit changes to this recipe.
+
 ## Required libraries
 
 Use timm for the pretrained ViT-Tiny and its 345-class head; Lightning Trainer/Module/DataModule and callbacks for the training loop, device/precision handling, resume, checkpoint selection and logs; PyTorch Dataset/DataLoader for batches; torchvision v2 for ordinary augmentation; PyTorch loss/optimizer/schedulers and TorchMetrics for standard learning operations and scores. Keep custom code to data adaptation and the experiment protocol.
