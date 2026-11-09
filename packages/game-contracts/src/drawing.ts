@@ -1,5 +1,7 @@
 export const CANVAS_WIDTH = 1024;
 export const CANVAS_HEIGHT = 768;
+/** Maximum points accepted in one canonical stroke.append operation. */
+export const MAX_STROKE_APPEND_POINTS = 512;
 export type DrawingTool = "brush" | "eraser" | "fill";
 export interface DrawingSettings {
   tool: DrawingTool;
@@ -63,29 +65,44 @@ export interface DrawingCanvasProps {
   className?: string;
 }
 export type FlushReason =
-  "interval" | "stroke-end" | "command" | "manual" | "dispose";
+  "interval" | "stroke-start" | "stroke-end" | "command" | "size" | "count" | "manual" | "dispose";
 export type SequencedOperation = CanvasOperation & { clientSeq: number };
-export interface DrawingBatch {
-  transport: "console" | "local" | "remote" | "room-client";
+/** Canonical wire fields, excluding local diagnostics. */
+export interface DrawingPayload {
   batchId: string;
   streamId?: string;
   roomCode: string;
   canvasId: string;
   generation?: number;
   clientSeq: [number, number];
+  operations: SequencedOperation[];
+}
+/** Select canonical fields without changing identities, sequences, or operations. */
+export function toDrawingPayload(batch: DrawingPayload): DrawingPayload {
+  return { batchId: batch.batchId,
+    ...(batch.streamId !== undefined ? { streamId: batch.streamId } : {}),
+    roomCode: batch.roomCode, canvasId: batch.canvasId,
+    ...(batch.generation !== undefined ? { generation: batch.generation } : {}),
+    clientSeq: batch.clientSeq, operations: batch.operations };
+}
+export interface DrawingBatch extends DrawingPayload {
+  transport: "console" | "local" | "remote" | "room-client";
   flushReason: FlushReason;
   targetIntervalMs: number;
   elapsedMs: number;
   operationCount: number;
   pointCount: number;
+  /** UTF-8 bytes of the serialized canonical payload. */
   byteCount: number;
-  operations: SequencedOperation[];
 }
 export interface DrawingBatcherOptions {
   roomCode: string;
   canvasId: string;
   generation?: number;
   intervalMs?: number;
+  maxBytes?: number;
+  maxOperations?: number;
+  maxPoints?: number;
   transport?: DrawingBatch["transport"];
   streamId?: string;
   send?(batch: DrawingBatch): void;
