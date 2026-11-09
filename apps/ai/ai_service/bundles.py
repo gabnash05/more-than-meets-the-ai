@@ -79,7 +79,7 @@ def load_bundle(role: str, model_id: str, artifact_root: Path) -> Bundle:
             manifest["adapter"] != "vit-tiny"
             or manifest["preprocessing"] not in ("foreground", "edges")
             or manifest["input"] != [1, 3, 224, 224]
-            or set(files) != {"weights.safetensors", "labels.txt", "checkpoint-selection.json"}
+            or set(files) != {"weights.safetensors", "labels.txt", "labels.json", "checkpoint-selection.json"}
         ):
             return Bundle(model_id, reason="vit-contract-mismatch")
         for name, expected in files.items():
@@ -90,6 +90,21 @@ def load_bundle(role: str, model_id: str, artifact_root: Path) -> Bundle:
         labels = (root / "labels.txt").read_text(encoding="utf-8").splitlines()
         if len(labels) != 345 or len({label.casefold() for label in labels}) != 345 or any(not label.strip() for label in labels):
             return Bundle(model_id, reason="invalid-label-order")
+        if model_id != "quickdraw-int8-smoke":
+            try:
+                labels_json = json.loads(
+                    (root / "labels.json").read_text(encoding="utf-8")
+                )
+            except ValueError:
+                return Bundle(model_id, reason="invalid-label-order")
+            if (
+                not isinstance(labels_json, list)
+                or len(labels_json) != 345
+                or not all(isinstance(entry, dict) for entry in labels_json)
+                or [entry.get("class_id") for entry in labels_json] != list(range(345))
+                or [entry.get("source_name") for entry in labels_json] != labels
+            ):
+                return Bundle(model_id, reason="invalid-label-order")
         if model_id == "quickdraw-int8-smoke":
             adapter = QuickDraw(root / "model.tflite", labels)
         else:
