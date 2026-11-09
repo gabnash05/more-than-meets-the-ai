@@ -1,5 +1,25 @@
 # Backend validation and isolated setup
 
+## Lossless drawing-sync follow-up — 10 November 2026
+
+API typecheck, ESLint, production build and the complete isolated PostgreSQL-backed suite passed on Node.js 24.22.2: **57 passed, 2 deferred Team tests, 0 failures**. No API/browser session was running against the test database during the final backend suite. Existing SQL cancellation, journal/finalization idempotency, authentication/origin, privacy, scoring and actual compiled-process restart checks remain enabled.
+
+The metadata projection now removes drawing operation arrays before deep cloning, while retaining a separate owned copy of every remaining nested field. A public-command regression first observed two full-history clones where only the rollback copy was required; it now observes one. Tests additionally mutate the store-owned snapshot and verify live identity, selected prompts and undo remain intact, and verify a failed metadata save restores the exact accepted drawing prefix before a safe retry. Drawing geometry remains in its separate journal; rollback and commit barriers were not removed.
+
+The authority uses `DrawingPayload` and the shared 512-point append constant without changing accepted request validation, canonical ordering, accepted/durable watermarks or legacy verbose-payload compatibility. No SQL migration or model/provider change is required. The [frontend validation report](FRONTEND-VALIDATION.md) records the complete browser checks, bounded recovery and local measured comparison. No deployment, push, commit or production capacity claim is implied.
+
+## Drawing/round-flow and timeout corrections — 9 November 2026
+
+On Linux with Node.js 24.22.2, API typecheck, lint, production build and the complete backend suite passed: **55 passed, 2 explicitly deferred Team tests, 0 failures**. The task-owned PostgreSQL 18 container was bound only to `127.0.0.1:55437`, with the guarded `mtmai_test` database. The final backend run had no parallel API/browser session using that database.
+
+New regressions prove immediate archive-drain finalization, 200 ms archival snapshot coalescing with the correct final durable watermark, and canonical held-stroke closure after the last solve or deadline. Deadline tests cover ordinary completion, a failed closing save with no leaked stroke end, and a failed finalization that retains closing state and retries exactly once. Existing scoring/privacy, memory limits, authentication/origins, PostgreSQL idempotency and actual compiled-process restart checks also passed.
+
+A gated room-save test demonstrates head-of-line blocking of resync. A real PostgreSQL row-lock test failed before the adapter deadlines were added, then passed with server-side lock cancellation, unchanged stored state and a successful retry. Connection acquisition is bounded at 2 s, statements at 3 s and lock waits at 1 s. This is database-side cancellation, not a `Promise.race` that leaves a write running after rollback. It does not bound arbitrarily many queued commands or guarantee delivery over a broken network.
+
+Earlier local runs exposed missing `TEST_DATABASE_URL` and assertions tied to the old per-batch snapshot/open-stroke behavior. The environment was explicitly supplied and those assertions now verify coalescing and preservation of the original prefix plus exactly one canonical end. The final complete command passed; no test was skipped to hide those failures. Worker-sandbox IPC/build restrictions were bypassed by running the integrated checks normally, not by disabling typechecking.
+
+These are local validation results; they do not imply deployment, provider enablement, a capacity claim or confirmed attribution of the live screenshot's timeout. The exact original stalled command remains unknown. The frontend report records browser evidence and its limitations.
+
 ## Scope
 
 These are local checks for the single-process Individual milestone. They do not establish hosted CI, deployment, inference performance or production capacity. Team coverage stays explicitly deferred. See the [implementation scope](BACKEND-IMPLEMENTATION-PLAN.md), [API setup](../apps/api/README.md) and [frontend evidence](FRONTEND-VALIDATION.md).
