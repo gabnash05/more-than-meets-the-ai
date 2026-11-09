@@ -12,6 +12,7 @@ Scripts:
 - `dataset.py`: `RefereeDataset` / `RefereeDataModule` over JSONL manifests and image splits. Extracts multi-label binary arrays (`encoded_presence`).
 - `module.py`: timm ViT-Tiny (`num_classes=4`) + `BCEWithLogitsLoss` + dual-LR AdamW + warmup/cosine scheduler + `BinaryAveragePrecision` metrics (`val_ap_text`, `val_ap_number`, `val_mean_ap`).
 - `train.py`: Training loop with gradient accumulation, checkpointing under `checkpoints/referee_run/weights/`, and resume support.
+- `plot_metrics.py`: Plots epoch-level metrics from the Lightning CSV logs as standalone SVG files.
 - `smoke_test.py`: One-batch GPU sanity check for data loading and forward/backward passes.
 
 Put weights under [`../checkpoints/`](../checkpoints/).
@@ -36,6 +37,16 @@ uv run python -m training.train --prepared-dir "path/to/production/prepared" --n
 ```
 
 Artifacts per run: checkpoints/referee_run/weights/ (best weights saved via val_mean_ap).
+
+## Plot training metrics
+
+After training, generate one SVG per metric (for example, `val_loss.svg`, `val_ap_text.svg`, `val_ap_number.svg`, and `val_mean_ap.svg`):
+
+```powershell
+uv run python -m training.plot_metrics
+```
+
+By default, plots are written to `checkpoints/referee_run/metric_plots/`. Override the run or output directory with `--run-dir` and `--output-dir`.
 
 ## Pause and Resume
 Resume training using the same flags plus --resume:
