@@ -33,3 +33,18 @@ it("reveals recorded guesses at recap after a later attempt is unavailable", () 
   expect(recap).toContain("airplane");
   expect(recap).not.toContain(styles.solved);
 });
+
+it("shows rounded confidence for recap guesses while retaining legacy answer-only results", () => {
+  const game: RoomGame = {
+    generation: 1, canvasId: "canvas", drawerId: "drawer", hint: "", time: "", scores: {},
+    result: {
+      aiCorrect: true, aiAnswers: ["cat", "car"], aiGuesses: [
+        { answer: "cat", confidence: 0.734 }, { answer: "car", confidence: 0.956 },
+      ], word: "car", deltas: {},
+    },
+  };
+  const html = renderToStaticMarkup(createElement(AiCard, { game, result: true }));
+  expect(html).toContain(">73%</small>");
+  expect(html).toContain(">96%</span>");
+  expect(html).toContain("cat");
+});

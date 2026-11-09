@@ -38,16 +38,19 @@ class ViTTiny:
         self.model.eval()
         self.classify(torch.zeros((1, 3, 224, 224)))
 
-    def classify(self, batch) -> str:
+    def classify(self, batch) -> tuple[str, float]:
         with self.torch.inference_mode():
             output = self.model(batch)
         if tuple(output.shape) != (1, len(self.labels)) or not self.torch.isfinite(output).all():
             raise ValueError("invalid-model-output")
-        return self.labels[output.argmax(dim=1).item()]
+        probabilities = self.torch.softmax(output, dim=1)
+        confidence, index = probabilities.max(dim=1)
+        return self.labels[index.item()], confidence.item()
 
     def predict(self, image: Image.Image) -> dict:
         sample = self.images.preprocess(image, self.candidate)
         if sample["status"] != "ok":
             return {"status": "pass", "reason": "no-evidence"}
         batch = self.torch.from_numpy(sample["image"]).unsqueeze(0)
-        return {"status": "answer", "answer": self.classify(batch)}
+        answer, confidence = self.classify(batch)
+        return {"status": "answer", "answer": answer, "confidence": confidence}

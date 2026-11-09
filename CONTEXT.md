@@ -75,7 +75,7 @@ An AI-related positive score component when a human solves before the AI's accep
 An answer proposed by the AI. Actual answer text remains hidden from unsolved humans until reveal/replay. It is never a human solve or ordinary drawer-score contribution.
 
 ## AI progress
-The visible status of an AI guesser's attempt to identify the prompt, without disclosing its guess text during play.
+The AI card pulses red for a wrong prediction and green for a correct one. The committed recap shows each accepted guess and its model confidence.
 
 ## Replay
 The retrospective revealing the drawing's development, human/AI solve timing, attempts and flags after the drawing turn ends.
@@ -87,13 +87,13 @@ Any drawing-based way to communicate the shared prompt, subject to the prohibiti
 A prohibited written hint used to communicate the prompt, such as spelling the answer, writing initials or a translation, or supplying letter-by-letter hints.
 
 ## AI referee
-The separate transformer-powered referee that publicly warns players about suspected written answer clues. Its flags are advisory, and players resolve disputes.
+An optional classifier role that shares the Guesser's canvas renderer and reports text and number evidence. The private fixture exercises the Referee pipeline while trained weights are unavailable.
 
 ## Incidental writing
 Permitted writing that belongs to an object being depicted, rather than being used as a written hint to communicate the prompt.
 
 ## Referee flag
-An advisory warning of a suspected written clue, with disputes resolved by players. Optional-team warnings preserve opposing-canvas privacy; flags do not automatically deduct scores.
+An advisory board glow and confidence badge for persistent text detection. Players decide whether the writing is a prohibited clue or incidental to the drawing.
 
 ## Referee dispute
 A disagreement about whether flagged content is a prohibited written answer clue or permitted drawing content, resolved by the players.
@@ -111,7 +111,7 @@ In individual mode, drawer duty passes through the room players after a complete
 A scheduled contest won by the human with the highest finalized personal total in default individual mode. Optional team mode uses finalized team totals instead.
 
 ## AI guess budget
-The maximum number of AI guesser attempts available for a drawing turn, with fixed checkpoints. Humans have no fixed guess cap. Optional parallel team challenges use equal budgets per logical AI.
+The maximum number of AI guesser attempts available for a drawing turn. The default is 24 attempts, with at least two seconds between settlement and the next attempt.
 
 ## AI guess checkpoint
 A scheduled opportunity to infer from a frozen permitted drawing and hint state. In default play opportunities continue after the first human solve while other eligible humans remain unsolved.

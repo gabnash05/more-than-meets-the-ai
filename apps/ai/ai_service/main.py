@@ -141,6 +141,9 @@ async def infer_admitted(request: Request, role: str) -> dict:
     if job.deadlineAt <= time() * 1000:
         return unavailable("deadline-expired")
     if role == "guesser" and result.get("status") == "answer":
+        confidence = result.get("confidence")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            return unavailable("invalid-confidence")
         EVENT_LOG.info(json.dumps({
             "event": "guesser_prediction",
             "jobId": job.jobId,
