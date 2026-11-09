@@ -41,7 +41,7 @@ model = timm.create_model(
 )
 ```
 
-This is an implementation reference, not code executed during this review. `pretrained=True` downloads weights when first used, so run it only as part of the model owner's setup, with the cache on E:.
+This is an implementation reference, not a claim that weights have been downloaded on this host. `pretrained=True` downloads weights when first used. Choose a cache location with sufficient space; no particular drive letter or operating system is required.
 
 Use timm's pretrained metadata to check expected image size/normalization. Keep the project's shared current-prefix Foreground/Edges and fit/pad transform rather than blindly applying a model's generic center-crop transform. Existing prepared views are already float32 [3,224,224] and normalized; converting them with `torch.from_numpy` must not normalize them a second time. Standard training augmentation should use torchvision APIs, be seeded, and be absent from validation/live inference.
 
@@ -57,21 +57,43 @@ Project-specific code remains necessary for ordered timestamp cuts, exact sampli
 
 ## uv setup for the model project
 
-Keep `data/` independent so data preparation never requires a large torch/GPU install. The model uv project already lives at `models/guesser/` with an editable workspace dependency on `./data`. Teammates should sync that project rather than re-running `uv init`:
+Keep `data/` independent so data preparation never requires a large torch/GPU install. The model uv project lives at `models/guesser/` with an editable path dependency on `./data`, not a shared uv workspace. Model, data and evaluation each use their own `.venv`. Teammates should sync the appropriate project rather than re-running `uv init`:
 
-```powershell
-# Run in models/guesser/; keep environment and cache here.
-$env:UV_CACHE_DIR = Join-Path $PWD '.local/cache/uv'
-$env:TEMP = Join-Path $PWD '.local/tmp'
-$env:TMP = $env:TEMP
-$env:HF_HOME = Join-Path $PWD '.local/cache/huggingface'
-$env:TORCH_HOME = Join-Path $PWD '.local/cache/torch'
-$env:UV_PYTHON_DOWNLOADS = 'never'
-New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+```sh
 uv sync --frozen
 ```
 
-If the locked CUDA index does not match the host (for example a different driver or Linux), follow the official [uv PyTorch guide](https://docs.astral.sh/uv/guides/integration/pytorch/), adjust `[[tool.uv.index]]` / `[tool.uv.sources]` for torch/torchvision, then re-lock and sync. Keep torch and torchvision compatible. A gaming laptop description alone does not identify the correct wheel.
+Run that command from `models/guesser/`. It is identical in Windows PowerShell, Windows Command Prompt (cmd) and Linux bash; no environment activation is required. First-time sync may download large PyTorch/CUDA packages. Model weights download separately on first model construction.
+
+Optional cache settings are shell-specific. From `models/guesser/`, choose only the block for your shell; these relative paths keep caches in the ignored checkout-local `.local/` directory. Otherwise leave the defaults unchanged.
+
+PowerShell:
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD/.local/cache/uv"
+$env:HF_HOME = "$PWD/.local/cache/huggingface"
+$env:TORCH_HOME = "$PWD/.local/cache/torch"
+```
+
+Linux bash:
+
+```bash
+export UV_CACHE_DIR="$PWD/.local/cache/uv"
+export HF_HOME="$PWD/.local/cache/huggingface"
+export TORCH_HOME="$PWD/.local/cache/torch"
+```
+
+Windows Command Prompt:
+
+```bat
+set "UV_CACHE_DIR=%CD%/.local/cache/uv"
+set "HF_HOME=%CD%/.local/cache/huggingface"
+set "TORCH_HOME=%CD%/.local/cache/torch"
+```
+
+Set `UV_PYTHON_DOWNLOADS` to `never` using the same shell syntax only when Python is already installed and interpreter downloads are prohibited. Do not copy a `.venv` between operating systems: recreate it with uv and transfer prepared data/checkpoints separately.
+
+The current source markers select the explicit CUDA 12.6 index for torch/torchvision on Windows and PyPI on Linux. Linux does not require a re-lock merely because it is Linux; both resolutions are in the lock. The builds may differ across platforms. Verify CUDA availability after syncing using the check in the [training guide](training/README.md#setup-windows-and-linux). Driver compatibility is a runtime prerequisite, not something a successful lock guarantees. If the selected backend is unsuitable, coordinate a torch/torchvision source change following the official [uv PyTorch guide](https://docs.astral.sh/uv/guides/integration/pytorch/), then re-lock and sync; do not overwrite the Windows source configuration as a Linux workaround.
 
 Required model packages: `torch`, `torchvision`, `timm`, `lightning`, `torchmetrics`, `safetensors`. Service dependencies (`fastapi`, `pydantic`, `uvicorn`) remain for the inference owner. Commit `pyproject.toml` and `uv.lock`; teammates use `uv sync --frozen` when the lock matches their platform.
 

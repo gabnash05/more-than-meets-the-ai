@@ -3,7 +3,6 @@ import hashlib
 import json
 
 import pytest
-
 from guesser_data.common import DataError, candidate_path, load_step, receipt_path
 from guesser_data.settings import Settings
 

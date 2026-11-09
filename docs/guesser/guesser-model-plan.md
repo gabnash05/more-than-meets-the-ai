@@ -73,13 +73,13 @@ Choose one balanced training profile: production (default, 5,000 eligible origin
 
 Use the standalone Python 3.13/uv project at `models/guesser/data/`. Its real defaults are in `src/settings.py`; descriptive JSON configs have been removed. The relocated notebook/evaluation project is `models/guesser/evaluation/`, with a separate Python 3.12 lock. This refactor does not unify those environments.
 
-Run the [data README setup](../../models/guesser/data/README.md), then:
+Run the [data README setup](../../models/guesser/data/README.md), then run these commands from `models/guesser/data/` on Windows or Linux. Preview is optional:
 
-```powershell
-.\guesser-data.ps1 download
-.\guesser-data.ps1 prepare
-.\guesser-data.ps1 preview   # optional
-.\guesser-data.ps1 export
+```sh
+uv run --frozen guesser-data download
+uv run --frozen guesser-data prepare
+uv run --frozen guesser-data preview   # optional in PowerShell/bash; omit comment in cmd
+uv run --frozen guesser-data export
 ```
 
 Choose `--profile medium` or `--profile small` on each of the four commands above to download less and prepare a smaller training dataset. Omitting it preserves production. Real defaults remain in Python settings.
@@ -190,7 +190,7 @@ Starting configuration for both:
 | Epoch ceiling | 6, with best-validation checkpoint and patience 2 |
 | Schedule | Warmup then cosine decay, identical across A/B |
 | Precision | Begin with a successful FP32 run; use tested FP16 autocast/scaling if stable on the actual GPU |
-| Loader | Start with 0 workers for debugging; then 2–4 workers after measuring Windows RAM/CPU use |
+| Loader | Start with 0 workers for debugging; then 2–4 workers after measuring RAM/CPU use on the actual Windows or Linux host |
 | Seed | 198173, including samplers and augmentation |
 
 Run a small overfit check and an all-345-class smoke set before the full experiment. Check loss decreases, label mapping is correct, gradients are finite and padded blank images do not become confident release candidates.

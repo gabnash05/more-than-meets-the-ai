@@ -8,16 +8,14 @@ A small Python 3.13/uv project for preparing Quick, Draw! originals and creating
 
 From `models/guesser/data/`:
 
-```powershell
-$env:UV_CACHE_DIR = Join-Path $PWD '.local/cache/uv'
-$env:TEMP = Join-Path $PWD '.local/tmp'
-$env:TMP = $env:TEMP
-New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+```sh
 uv sync --frozen
-.\guesser-data.ps1 preflight
+uv run --frozen guesser-data preflight
 ```
 
-Use uv to change dependencies and keep `pyproject.toml`/`uv.lock` together. The launcher uses ignored local caches/temp files. Output defaults to `.local/data/production/`; `--data-root` can point to any drive. E: is recommended on this laptop because C: is nearly full.
+These commands are identical in PowerShell, cmd and bash. `uv run` selects the project's Python 3.13 environment, so nothing needs activating. On Windows, `.\guesser-data.ps1 <command>` is an optional shortcut for `uv run --frozen guesser-data <command>` that also points uv's cache and temp files under `.local/`.
+
+Use uv to change dependencies and keep `pyproject.toml`/`uv.lock` together. Output defaults to `.local/data/production/`; `--data-root` can point at any drive, so choose one with enough free space.
 
 ## Read the files in this order
 
@@ -44,11 +42,13 @@ Load:    05 read one drawing -> 06 cut -> render -> preprocess -> one image + cl
 
 ## Normal workflow
 
-```powershell
-.\guesser-data.ps1 download
-.\guesser-data.ps1 prepare
-.\guesser-data.ps1 preview   # optional
-.\guesser-data.ps1 export
+Annotated commands below work in PowerShell and bash. In Windows Command Prompt (cmd), omit `#` comments; the command text is unchanged.
+
+```sh
+uv run --frozen guesser-data download
+uv run --frozen guesser-data prepare
+uv run --frozen guesser-data preview   # optional: training-only contact sheets
+uv run --frozen guesser-data export
 ```
 
 ### Choose a dataset size
@@ -63,11 +63,11 @@ All three training profiles keep all 345 categories. Counts below are original d
 
 Omitting `--profile` keeps `production`. To download less and train on a smaller dataset, use the same profile for each command:
 
-```powershell
-.\guesser-data.ps1 download --profile medium
-.\guesser-data.ps1 prepare --profile medium
-.\guesser-data.ps1 preview --profile medium   # optional
-.\guesser-data.ps1 export --profile medium
+```sh
+uv run --frozen guesser-data download --profile medium
+uv run --frozen guesser-data prepare --profile medium
+uv run --frozen guesser-data preview --profile medium
+uv run --frozen guesser-data export --profile medium
 ```
 
 Replace `medium` with `small` for the smallest training dataset. Each size has its own `.local/data/<profile>/` folder and profile-named archives. Command results show the profile and target counts. `--candidates` can explicitly enlarge that profile's reserve.
@@ -80,21 +80,21 @@ Optional drawing exclusions go in `<data-root>/<profile>/excluded-ids.txt`, one 
 
 If preparation reports a shortage, explicitly enlarge the affected reserve, then prepare again:
 
-```powershell
-.\guesser-data.ps1 download --profile medium --class "cat" --candidates 3200
-.\guesser-data.ps1 prepare --profile medium
+```sh
+uv run --frozen guesser-data download --profile medium --class "cat" --candidates 3200
+uv run --frozen guesser-data prepare --profile medium
 ```
 
 See [the runbook](RUNBOOK.md) for transfer, loading and preprocessing examples.
 
 ## Small examples and supporting commands
 
-```powershell
-.\guesser-data.ps1 example        # one synthetic class; offline; separate example directory
-.\guesser-data.ps1 probe          # explicit small real-source ranges; separate probe directory
+```sh
+uv run --frozen guesser-data example   # synthetic class; offline; separate directory
+uv run --frozen guesser-data probe     # small real-source ranges; uses the network
 ```
 
-Examples/probes default to the smoke profile (16/2/2 originals/class), are marked nonproduction, and do not establish recognition accuracy or production throughput. Prefix probes do not verify a whole source checksum. There is no global download budget.
+`example` creates one synthetic class offline in a separate example directory; `probe` requests small real-source ranges in a separate probe directory. Examples/probes default to the smoke profile (16/2/2 originals/class), are marked nonproduction, and do not establish recognition accuracy or production throughput. Prefix probes do not verify a whole source checksum. There is no global download budget.
 
 Other commands: `preflight`, `status`, `inventory`, and `audit`. Every command supports `--help`, `--data-root`, `--profile` and `--json`. Download also supports repeatable `--class`, `--candidates` and `--concurrency`. Old `scan`, `freeze`, `qa` and `validate` commands show replacement hints. Normal output is readable text; JSON is optional.
 
@@ -111,6 +111,18 @@ with IndexedDrawings(".local/data/medium/prepared", "train") as drawings:
 ```
 
 Choose `.local/data/production/prepared`, `.local/data/medium/prepared` or `.local/data/small/prepared` to match your experiment. After extracting an export, use its `prepared/` directory instead. A dataset size is independent of the model DataLoader batch size in [`../training/`](../training/README.md); use one frozen dataset and split package consistently within each experiment. Results from different profiles use different held-out originals and are not a controlled size comparison.
+
+### Manifest random access and worker memory
+
+For multiworker training, pass `IndexedDrawings(prepared, "train", manifest_cache_dir=cache_dir)`, with a writable local cache directory separate from prepared data and rendered-image caches. Construction builds/reuses an immutable, uncompressed `*.arrow` IPC sidecar. Workers lazily memory-map it once per PID: the OS shares file-backed column buffers instead of keeping a full decoded split privately in every worker. `manifest_row(index)` slices one row before converting it to a fresh, complete dictionary, including nullable/nested audit columns. Original order, negative-index bounds, all columns, split membership and the caller's global shuffle are unchanged. Neither drawing payloads nor prepared files are rewritten.
+
+Cache identity includes the absolute prepared manifest path, size, nanosecond mtime/ctime, inode/device, format version and complete Arrow schema. Builds stream 16,384-row batches, disable Arrow decoding threads, and atomically publish only after rechecking source freshness. A standard-library SQLite transaction serializes competing cold builders; normal cache hits/readers do not hold this lock. Construction in the training parent finishes conversion before workers start. Read failures remain visible, never an empty result. Old generations are not automatically removed: close all readers before deleting unused cache files, and never modify a mapped sidecar in place.
+
+The default `manifest_cache_dir=None` creates no cache or lock files, preserving read-only use. Its first lookup still decodes the full split into a process-local Arrow table; **do not use that fallback to budget multiworker training RAM**. `cached_row_groups` remains accepted/validated for compatibility but limits neither representation; `max_handles` still bounds open JSONL files. `close()`/PID changes release table wrappers, mappings and record handles; pickle retains configuration/cache path but omits native data and open files. Cached readers recheck the original source generation when reopening and reject any change, including same-length replacement; recreate the reader after a new preparation. Already mapped readers retain their snapshot, so keep prepared data immutable throughout a run. The uncached fallback reloads current data and rejects changed row counts. These checks do not replace the package audit. Use a separate reader per thread because JSONL seek/read handles are mutable.
+
+A bounded production **train-manifest-only** probe (1,380,000 rows) built a 254.23 MiB IPC sidecar in 3.93 seconds with 285.04 MiB process peak RSS. Three simultaneous fresh spawned readers each had about 347.4 MiB RSS, but only 138.3 MiB PSS and 43.3 MiB USS: RSS counts the same mapped pages in each reader. Their aggregate PSS was 415.0 MiB, and Arrow reported zero allocated data-buffer bytes in each worker. Each repeated 1,024 shuffled lookups in 0.053–0.055 seconds, preserving the baseline IDs/class labels exactly. These are local finite probes, not full-training throughput or a ten-worker model RAM measurement. See [the runbook](RUNBOOK.md#manifest-only-timing-probe) for reproduction and limits.
+
+### Views and preprocessing
 
 Use `candidate="edges"` to toggle edge preprocessing. Keep the same choice across a model's training, validation, test and inference. Both modes fit/pad the current visible shape to 224x224 and normalize by mean/std 0.5; do not normalize twice. Timestamps create partial images; they are not direct ViT input features. Training views are 20% complete and otherwise use an elapsed-time cut in 10%-90%. Evaluation emits ten fixed 10%-100% stages, including blank, uncertain and unchanged outcomes. Crop bounds never use future points.
 
