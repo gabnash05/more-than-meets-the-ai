@@ -67,6 +67,8 @@ export interface RoomGame {
   sync?: { sequence: number; durableSequence: number };
   position?: { round: number };
   saving?: "idle" | "saving" | "blocked";
+  /** The current drawing turn is closed; its results are not yet published. */
+  closing?: boolean;
   scoringEligibility?: { eligible: boolean; reason?: string };
   generation: number;
   canvasId: string;
