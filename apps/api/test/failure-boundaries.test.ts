@@ -15,8 +15,8 @@ class FailingStore implements GameStore {
 const profile = { name: "Host", avatar: { shape: "pebble", expression: "smile", color: "cyan" } } as const;
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 async function bounded<T>(promise: Promise<T>, ms = 500): Promise<T> { let timer: ReturnType<typeof setTimeout> | undefined; try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("operation hung")), ms); })]); } finally { if (timer) clearTimeout(timer); } }
-async function setup() {
- const store = new FailingStore(); const engine = new RoomEngine({ store, eventSink: () => {}, config: { chooseMs: 2000, drawMs: 2000, recapMs: 2000, graceMs: 30 } });
+async function setup(drawMs = 2000) {
+ const store = new FailingStore(); const engine = new RoomEngine({ store, eventSink: () => {}, config: { chooseMs: 2000, drawMs, recapMs: 2000, graceMs: 30 } });
  const host = await engine.create(profile); const other = await engine.join(host.snapshot.code, { ...profile, name: "Other" });
  await engine.connect(host.snapshot.code, host.resumeToken, "host"); await engine.connect(host.snapshot.code, other.resumeToken, "other");
  return { store, engine, host, other, code: host.snapshot.code };
@@ -54,3 +54,195 @@ test("failed timer save does not expose an uncommitted phase and retries after r
 test("host is recoverable when others left and the last remaining player reconnects", async () => {
  const ctx = await setup(); try { const third = await ctx.engine.join(ctx.code, { ...profile, name: "Third" }); await ctx.engine.connect(ctx.code, third.resumeToken, "third"); await begin(ctx); assert.equal((await ctx.engine.command("other", "room:leave", { requestId: "other-leaves" })).ok, true); await ctx.engine.disconnect("third"); assert.equal((await ctx.engine.command("host", "room:leave", { requestId: "host-leaves" })).ok, true); await ctx.engine.connect(ctx.code, third.resumeToken, "third-again"); await wait(70); const state = await ctx.engine.resume(ctx.code, third.resumeToken); assert.equal(state.snapshot.hostId, third.playerId); } finally { ctx.store.failSave = false; await bounded(ctx.engine.shutdown()); }
 });
+
+test("archive drain wakes finalization without the one-second poll", async () => {
+  const ctx = await setup();
+  let releaseArchive!: () => void;
+  const archiveGate = new Promise<void>(resolve => { releaseArchive = resolve; });
+  let enteredFinalize!: () => void;
+  const finalized = new Promise<void>(resolve => { enteredFinalize = resolve; });
+  const append = ctx.store.appendDrawing.bind(ctx.store);
+  const finalize = ctx.store.finalizeTurn.bind(ctx.store);
+  ctx.store.appendDrawing = async record => {
+    await archiveGate;
+    await append(record);
+  };
+  ctx.store.finalizeTurn = async turn => {
+    enteredFinalize();
+    await finalize(turn);
+  };
+  try {
+    const { game, word } = await begin(ctx);
+    const drawing = await ctx.engine.command("host", "room:drawing", {
+      requestId: "drain-draw", generation: game.generation,
+      payload: {
+        roomCode: ctx.code, canvasId: game.canvasId,
+        generation: game.generation, streamId: "drain-stream",
+        clientSeq: [1, 1],
+        operations: [{
+          type: "canvas.clear", opId: "drain-op", actionId: "drain-action",
+          at: 1, clientSeq: 1,
+        }],
+      },
+    });
+    assert.equal(drawing.ok, true);
+    const solve = await ctx.engine.command("other", "room:guess", {
+      requestId: "drain-solve", generation: game.generation,
+      payload: { text: word },
+    });
+    assert.equal(solve.ok, true);
+    assert.equal(ctx.store.turns.size, 0);
+    const pending = (await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot;
+    assert.equal(pending.phase, "drawing");
+    assert.equal(pending.game?.closing, true);
+    assert.equal(pending.game?.result, undefined);
+    assert.ok(Object.values(pending.game!.scores).every(score => score === 0));
+    releaseArchive();
+    await bounded(finalized, 500);
+    await bounded(ctx.engine.command("host", "room:resync", {
+      requestId: "drain-sync",
+    }));
+    assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.phase, "result");
+    assert.equal(ctx.store.turns.size, 1);
+    await wait(30);
+    assert.equal(ctx.store.turns.size, 1);
+  } finally {
+    releaseArchive();
+    ctx.store.failSave = false;
+    ctx.store.failArchive = false;
+    ctx.store.failFinalize = false;
+    await bounded(ctx.engine.shutdown());
+  }
+});
+
+test("a stalled room save queues resync until the save settles", async () => {
+  const ctx = await setup();
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const save = ctx.store.saveRoom.bind(ctx.store);
+  try {
+    const { game } = await begin(ctx);
+    ctx.store.saveRoom = async room => { entered(); await gate; await save(room); };
+    const guess = ctx.engine.command("other", "room:guess", { requestId: "waiting-guess", generation: game.generation, payload: { text: "unlikely incorrect answer" } });
+    await bounded(started);
+    const sync = ctx.engine.command("host", "room:resync", { requestId: "waiting-sync" });
+    await assert.rejects(bounded(sync, 50), /operation hung/);
+    release();
+    assert.equal((await bounded(guess)).ok, true);
+    assert.equal((await bounded(sync)).ok, true);
+  } finally { release(); await bounded(ctx.engine.shutdown()); }
+});
+
+test("drained archive finalization failure retains closing state and retries once", async () => {
+  const ctx = await setup();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const append = ctx.store.appendDrawing.bind(ctx.store);
+  ctx.store.appendDrawing = async record => { await gate; await append(record); };
+  try {
+    const { game, word } = await begin(ctx);
+    assert.equal((await ctx.engine.command("host", "room:drawing", { requestId: "failure-draw", generation: game.generation, payload: {
+      roomCode: ctx.code, canvasId: game.canvasId, generation: game.generation, streamId: "failure", clientSeq: [1, 1],
+      operations: [{ type: "canvas.clear", opId: "failure-op", actionId: "failure-action", at: 1, clientSeq: 1 }],
+    } })).ok, true);
+    assert.equal((await ctx.engine.command("other", "room:guess", { requestId: "failure-solve", generation: game.generation, payload: { text: word } })).ok, true);
+    ctx.store.failFinalize = true;
+    release();
+    await wait(50);
+    const held = (await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot;
+    assert.equal(held.phase, "drawing");
+    assert.equal(held.game?.closing, true);
+    assert.equal(held.game?.saving, "blocked");
+    assert.equal(held.game?.result, undefined);
+    assert.ok(Object.values(held.game!.scores).every(score => score === 0));
+    ctx.store.failFinalize = false;
+    await wait(1100);
+    assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.phase, "result");
+    assert.equal(ctx.store.turns.size, 1);
+  } finally { release(); ctx.store.failFinalize = false; await bounded(ctx.engine.shutdown()); }
+});
+
+test("failed closing solve does not archive a stroke end before retry", async () => {
+  const ctx = await setup();
+  try {
+    const { game, word } = await begin(ctx);
+    const batch = (sequence: number, operation: object) => ({ roomCode: ctx.code, canvasId: game.canvasId, generation: game.generation, streamId: "rollback", clientSeq: [sequence, sequence], operations: [operation] });
+    const start = { type: "stroke.start", opId: "rollback-start", actionId: "rollback-action", at: 1, clientSeq: 1, point: { x: 1, y: 1, time: 1 }, settings: { tool: "brush", color: "#123456", size: 2 } };
+    assert.equal((await ctx.engine.command("host", "room:drawing", { requestId: "rollback-draw", generation: game.generation, payload: batch(1, start) })).ok, true);
+    ctx.store.failSave = true;
+    assert.equal((await ctx.engine.command("other", "room:guess", { requestId: "rollback-solve", generation: game.generation, payload: { text: word } })).ok, false);
+    assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.game?.closing, false);
+    assert.deepEqual(ctx.store.drawings.flatMap(row => row.operations).map(op => op.type), ["stroke.start"]);
+    ctx.store.failSave = false;
+    assert.equal((await ctx.engine.command("other", "room:guess", { requestId: "rollback-solve", generation: game.generation, payload: { text: word } })).ok, true);
+    await wait(30);
+    assert.deepEqual(ctx.store.drawings.flatMap(row => row.operations).map(op => op.type), ["stroke.start", "stroke.end"]);
+    assert.equal(ctx.store.turns.size, 1);
+  } finally { ctx.store.failSave = false; await bounded(ctx.engine.shutdown()); }
+});
+
+test("archive draining during closing save still wakes finalization", async () => {
+  const ctx = await setup();
+  let releaseArchive!: () => void;
+  let releaseSave!: () => void;
+  let enteredSave!: () => void;
+  const archiveGate = new Promise<void>(resolve => { releaseArchive = resolve; });
+  const saveGate = new Promise<void>(resolve => { releaseSave = resolve; });
+  const saveEntered = new Promise<void>(resolve => { enteredSave = resolve; });
+  const append = ctx.store.appendDrawing.bind(ctx.store);
+  const save = ctx.store.saveRoom.bind(ctx.store);
+  ctx.store.appendDrawing = async record => { await archiveGate; await append(record); };
+  try {
+    const { game, word } = await begin(ctx);
+    assert.equal((await ctx.engine.command("host", "room:drawing", { requestId: "save-race-draw", generation: game.generation, payload: {
+      roomCode: ctx.code, canvasId: game.canvasId, generation: game.generation, streamId: "save-race", clientSeq: [1, 1],
+      operations: [{ type: "canvas.clear", opId: "save-race-op", actionId: "save-race-action", at: 1, clientSeq: 1 }],
+    } })).ok, true);
+    ctx.store.saveRoom = async room => { enteredSave(); await saveGate; await save(room); };
+    const solve = ctx.engine.command("other", "room:guess", { requestId: "save-race-solve", generation: game.generation, payload: { text: word } });
+    await bounded(saveEntered);
+    releaseArchive();
+    await wait(20);
+    assert.equal(ctx.store.turns.size, 0);
+    releaseSave();
+    assert.equal((await bounded(solve)).ok, true);
+    for (let n = 0; n < 50 && !ctx.store.turns.size; n++) await wait(5);
+    assert.equal(ctx.store.turns.size, 1);
+    assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.phase, "result");
+  } finally { releaseArchive(); releaseSave(); await bounded(ctx.engine.shutdown()); }
+});
+
+for (const failure of ["none", "save", "finalize"] as const) {
+  test(`deadline closes a held stroke safely through ${failure} failure`, async () => {
+    const ctx = await setup(250);
+    try {
+      const { game } = await begin(ctx);
+      assert.equal((await ctx.engine.command("host", "room:drawing", { requestId: "deadline-stroke", generation: game.generation, payload: {
+        roomCode: ctx.code, canvasId: game.canvasId, generation: game.generation, streamId: "deadline", clientSeq: [1, 1],
+        operations: [{ type: "stroke.start", opId: "deadline-op", actionId: "held", at: 1, clientSeq: 1, point: { x: 3, y: 4, time: 1 }, settings: { tool: "brush", color: "#123456", size: 2 } }],
+      } })).ok, true);
+      ctx.store.failSave = failure === "save";
+      ctx.store.failFinalize = failure === "finalize";
+      await wait(350);
+      const view = (await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot;
+      if (failure === "save") {
+        assert.deepEqual(ctx.store.drawings.flatMap(row => row.operations).map(op => (op as { type: string }).type), ["stroke.start"]);
+        assert.equal(view.game?.closing, false, "a failed closing save must roll back before archiving");
+      } else {
+        assert.deepEqual(ctx.store.drawings.flatMap(row => row.operations).map(op => (op as { type: string }).type), ["stroke.start", "stroke.end"]);
+        if (failure === "finalize") {
+          assert.equal(view.phase, "drawing");
+          assert.equal(view.game?.closing, true, "finalization failure must retain the committed closing state");
+        }
+      }
+      ctx.store.failSave = false;
+      ctx.store.failFinalize = false;
+      if (failure !== "none") await wait(1100);
+      assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.phase, "result");
+      assert.deepEqual(ctx.store.drawings.flatMap(row => row.operations).map(op => (op as { type: string }).type), ["stroke.start", "stroke.end"]);
+      assert.equal(ctx.store.turns.size, 1);
+    } finally { ctx.store.failSave = false; ctx.store.failFinalize = false; await bounded(ctx.engine.shutdown()); }
+  });
+}
