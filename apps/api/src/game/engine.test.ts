@@ -91,10 +91,10 @@ test("independent solves, prompt secrecy and request deduplication", async () =>
     ).ok,
     true,
   );
-  assert.equal(
-    (await engine.resume(code, third.resumeToken)).snapshot.phase,
-    "drawing",
-  );
+  const afterFirstSolve = await engine.resume(code, third.resumeToken);
+  assert.equal(afterFirstSolve.snapshot.phase, "drawing");
+  assert.equal(afterFirstSolve.snapshot.game?.closing, false);
+  assert.equal(afterFirstSolve.privateState?.target, undefined);
   assert.equal(
     (
       await engine.command("three", "room:guess", {
@@ -1183,4 +1183,71 @@ test("exhaustion allows host to leave committed result but never active drawing"
   assert.ok(view.snapshot.startBlockers!.includes("Not enough unused prompts remain."));
   assert.equal((await recovered.resume(code, other.resumeToken)).snapshot.canReturnToLobby, false);
   await recovered.shutdown(); await engine.shutdown();
+});
+
+test("archive progress coalesces snapshots while drawing remains immediate", async () => {
+  const store = new MemoryStore();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const append = store.appendDrawing.bind(store);
+  store.appendDrawing = async record => { await gate; await append(record); };
+  const events: { type: string; snapshot?: { game?: { sync?: { durableSequence: number } } } }[] = [];
+  const engine = new RoomEngine({ store, eventSink: (id, event) => { if (id === "drawer") events.push(event); } });
+  try {
+    const host = await engine.create(profile);
+    const code = host.snapshot.code;
+    const other = await engine.join(code, { ...profile, name: "Other" });
+    await engine.connect(code, host.resumeToken, "drawer");
+    await engine.connect(code, other.resumeToken, "guesser");
+    let view = await engine.resume(code, host.resumeToken);
+    await engine.command("drawer", "room:start", { requestId: "start", expectedRevision: view.snapshot.revision });
+    view = await engine.resume(code, host.resumeToken);
+    const { generation, canvasId } = view.snapshot.game!;
+    await engine.command("drawer", "room:choose-prompt", { requestId: "choose", generation, payload: { id: view.privateState!.promptOptions![0].id } });
+    events.length = 0;
+    for (let n = 1; n <= 30; n++) {
+      const ack = await engine.command("drawer", "room:drawing", { requestId: `draw-${n}`, generation, payload: {
+        roomCode: code, canvasId, generation, streamId: "burst", clientSeq: [n, n],
+        operations: [{ type: "canvas.clear", opId: `op-${n}`, actionId: `action-${n}`, at: n, clientSeq: n }],
+      } });
+      assert.equal(ack.ok, true);
+    }
+    assert.equal(events.filter(event => event.type === "drawing").length, 30);
+    release();
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const snapshots = events.filter(event => event.type === "snapshot");
+    assert.ok(snapshots.length <= 2, `received ${snapshots.length} progress snapshots`);
+    assert.equal(snapshots.at(-1)?.snapshot?.game?.sync?.durableSequence, 30);
+  } finally {
+    release();
+    await engine.shutdown();
+  }
+});
+
+test("last solve closes an accepted held stroke before committing the result", async () => {
+  const store = new MemoryStore();
+  const events: { type: string; operations?: { type: string }[] }[] = [];
+  const engine = new RoomEngine({ store, eventSink: (id, event) => { if (id === "drawer") events.push(event); } });
+  try {
+    const host = await engine.create(profile);
+    const code = host.snapshot.code;
+    const other = await engine.join(code, { ...profile, name: "Other" });
+    await engine.connect(code, host.resumeToken, "drawer");
+    await engine.connect(code, other.resumeToken, "guesser");
+    let view = await engine.resume(code, host.resumeToken);
+    await engine.command("drawer", "room:start", { requestId: "start", expectedRevision: view.snapshot.revision });
+    view = await engine.resume(code, host.resumeToken);
+    const { generation, canvasId } = view.snapshot.game!;
+    const word = view.privateState!.promptOptions![0].id;
+    await engine.command("drawer", "room:choose-prompt", { requestId: "choose", generation, payload: { id: word } });
+    const batch = (sequence: number, operation: object) => ({ roomCode: code, canvasId, generation, streamId: "held", clientSeq: [sequence, sequence], operations: [operation] });
+    const start = { type: "stroke.start", opId: "held-start", actionId: "held-action", at: 1, clientSeq: 1, point: { x: 1, y: 1, time: 1 }, settings: { tool: "brush", color: "#123456", size: 2 } };
+    assert.equal((await engine.command("drawer", "room:drawing", { requestId: "held-start", generation, payload: batch(1, start) })).ok, true);
+    assert.equal((await engine.command("guesser", "room:guess", { requestId: "solve", generation, payload: { text: word } })).ok, true);
+    const tail = { type: "stroke.append", opId: "held-tail", actionId: "held-action", at: 2, clientSeq: 2, points: [{ x: 2, y: 2, time: 2 }] };
+    assert.equal((await engine.command("drawer", "room:drawing", { requestId: "held-tail", generation, payload: batch(2, tail) })).code, "forbidden");
+    for (let n = 0; n < 100 && !store.drawings.some(row => row.operations.some(op => op.type === "stroke.end")); n++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.ok(events.some(event => event.type === "drawing" && event.operations?.some(op => op.type === "stroke.end")));
+    assert.deepEqual(store.drawings.flatMap(row => row.operations).map(op => op.type), ["stroke.start", "stroke.end"]);
+  } finally { await engine.shutdown(); }
 });
