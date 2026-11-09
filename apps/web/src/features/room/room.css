@@ -150,3 +150,16 @@
 .room-countdown { display:inline-block; border:2px solid #181321; border-radius:999px; background:#ffe83d; padding:3px 9px; white-space:nowrap; }
 .room-trophy { width:42px; height:42px; flex:none; }
 @media(max-width:540px) { .room-recap-highlights { grid-template-columns:1fr; } }
+
+/* Reserve feedback space without delaying authoritative phase changes. */
+.room-feedback-slot { min-height: 2.75rem; }
+.room-feedback { margin: 0; padding: 9px 12px; border: 2px solid #181321; border-radius: 10px; background: #fff6b5; font-size: 14px; font-weight: 800; }
+.room-feedback.is-correct { background: #dcf8e4; color: #166534; }
+.room-recap, .room-final { animation: room-panel-enter 160ms ease-out; }
+@keyframes room-panel-enter {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .room-recap, .room-final { animation: none; }
+}
