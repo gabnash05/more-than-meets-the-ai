@@ -1,0 +1,89 @@
+# Pull-only game stack for the existing node1 layout. No build context is needed.
+# Copy beside runtime/api.env and secrets/postgres-password; retain the project name
+# and postgres_data volume when switching from the previously loaded local images.
+name: more-than-meets-the-ai
+
+services:
+  web:
+    image: ${IMAGE_PREFIX:-ghcr.io/gabnash05/more-than-meets-the-ai}-web:${IMAGE_TAG:?Set IMAGE_TAG to a successful workflow's sha-commit tag}
+    ports:
+      - "${WEB_BIND:-127.0.0.1:10005}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 96m
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/room/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    image: ${IMAGE_PREFIX:-ghcr.io/gabnash05/more-than-meets-the-ai}-api:${IMAGE_TAG:?Set IMAGE_TAG to a successful workflow's sha-commit tag}
+    env_file:
+      - ${API_ENV_FILE:-./runtime/api.env}
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3001"
+      ROOM_STORE: postgres
+      WEB_ORIGINS: ${WEB_ORIGINS:?Set WEB_ORIGINS to the public HTTPS origin}
+      GUESSER_PROVIDER: unavailable
+      REFEREE_PROVIDER: unavailable
+      AI_SMOKE_TEST: "0"
+      AI_TEST_FIXTURES: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 512m
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db:
+    image: docker.io/library/postgres:18-alpine
+    environment:
+      POSTGRES_DB: mtmai
+      POSTGRES_USER: mtmai
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    restart: unless-stopped
+    mem_limit: 384m
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mtmai -d mtmai"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_SECRET_FILE:-./secrets/postgres-password}
+
+volumes:
+  postgres_data:
