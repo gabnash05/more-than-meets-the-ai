@@ -145,3 +145,36 @@ test("Guesser drops cleared work and marks timed-out evaluation unscored", async
     assert.equal(result.aiBenchmark?.points, null);
   } finally { await room.engine.shutdown(); }
 });
+
+test("live Guesser status hides answers and retains an accepted answer after a later failure", async () => {
+  let settle: ((outcome: Outcome) => void) | undefined;
+  let calls = 0;
+  let answer = "";
+  const room = await fixture(async () => {
+    calls++;
+    if (calls === 1) return new Promise<Outcome>(resolve => { settle = resolve; });
+    return { status: "unavailable", reason: "provider-unavailable" };
+  }, async (_key, operations) => Buffer.from(String(operations.length)));
+  answer = PROMPTS.find(word => word !== room.target)!;
+  try {
+    await room.ink();
+    room.advance(5000);
+    await waitFor(() => calls === 1);
+    const during = (await room.guest()).snapshot.game!;
+    assert.equal(during.aiStatus, "guessing");
+    assert.equal(during.result, undefined);
+    assert.equal(JSON.stringify(during).includes(answer), false);
+    settle!({ status: "answer", answer });
+    await waitFor(() => calls === 1 && settle !== undefined);
+    await delay(30);
+    assert.equal((await room.guest()).snapshot.game!.aiStatus, "waiting");
+    room.advance(13000);
+    await room.ink();
+    await waitFor(() => calls === 2);
+    await delay(30);
+    assert.equal((await room.guest()).snapshot.game!.aiStatus, "unavailable");
+    const result = await room.finish();
+    assert.deepEqual(result.aiAnswers, [answer]);
+    assert.equal(result.aiBenchmark?.points, null);
+  } finally { await room.engine.shutdown(); }
+});

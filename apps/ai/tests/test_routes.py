@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import json
+import logging
 from threading import Event
 from time import time
 
@@ -11,6 +12,7 @@ import numpy as np
 from PIL import Image
 
 from ai_service import main
+from ai_service.bundles import Bundle
 from ai_service.main import app
 from models.guesser.inference.quickdraw import prepare
 
@@ -84,3 +86,63 @@ def test_quickdraw_uses_light_ink_and_passes_blank():
     assert pixels.shape == (1, 28, 28, 1)
     assert pixels.dtype == np.float32
     assert pixels[0, 0, 0, 0] == 0 and pixels[0, 14, 14, 0] == 1
+
+
+def test_guesser_prediction_logs_only_safe_correlation_fields(tmp_path, monkeypatch, caplog):
+    credential = tmp_path / "credential"
+    credential.write_text("fixture-secret-for-tests", encoding="utf-8")
+    monkeypatch.setenv("AI_SECRET_FILE", str(credential))
+    monkeypatch.setenv("GUESSER_MODEL_ID", "test-guesser")
+    now = time()
+    monkeypatch.setattr(main, "time", lambda: now)
+
+    class AnswerAdapter:
+        def predict(self, image):
+            return {"status": "answer", "answer": "private-answer"}
+
+    guesser = Bundle("test-guesser", "revision-1", adapter=AnswerAdapter())
+    monkeypatch.setattr(
+        main,
+        "load_bundle",
+        lambda role, model_id, artifact_root: guesser if role == "guesser" else Bundle(model_id),
+    )
+    headers = {"Authorization": "Bearer fixture-secret-for-tests"}
+    job = {
+        "jobId": "job-123",
+        "turnId": "turn-456",
+        "canvasId": "canvas-789",
+        "generation": 4,
+        "sequence": 12,
+        "deadlineAt": int(now * 1000) + 10000,
+        "modelId": "test-guesser",
+        "artifactRevision": "revision-1",
+        "hint": "private-hint",
+    }
+    data = BytesIO()
+    Image.new("RGB", (1024, 768), "white").save(data, format="PNG")
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"), TestClient(app) as client:
+        response = client.post(
+            "/v1/guess",
+            headers=headers,
+            data={"metadata": json.dumps(job)},
+            files={"image": ("canvas.png", data.getvalue(), "image/png")},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "private-answer"
+    records = [record for record in caplog.records if record.name == "uvicorn.error"]
+    assert len(records) == 1
+    event = json.loads(records[0].message)
+    assert event == {
+        "event": "guesser_prediction",
+        "jobId": "job-123",
+        "canvasId": "canvas-789",
+        "generation": 4,
+        "sequence": 12,
+        "modelId": "test-guesser",
+        "artifactRevision": "revision-1",
+    }
+    assert "private-answer" not in records[0].message
+    assert "private-hint" not in records[0].message
+    assert "fixture-secret-for-tests" not in records[0].message
