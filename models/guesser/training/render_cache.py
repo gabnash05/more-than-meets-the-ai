@@ -13,6 +13,68 @@ from typing import Any
 import numpy as np
 
 
+def encode_sample(sample: dict[str, Any]) -> tuple[str, bytes]:
+    """Encode identical float32 channels in the existing validation layout."""
+    metadata = dict(sample)
+    image = metadata.pop("image", None)
+    if image is None:
+        metadata["_cache_shape"] = None
+        payload = b""
+    else:
+        if (
+            not isinstance(image, np.ndarray)
+            or image.dtype != np.float32
+            or image.ndim != 3
+            or image.shape[0] != 3
+            or min(image.shape[1:]) <= 0
+        ):
+            raise ValueError("Cache requires three identical float32 channels")
+        raw = image[0].tobytes()
+        if image[1].tobytes() != raw or image[2].tobytes() != raw:
+            raise ValueError("Cache requires bitwise-identical channels")
+        metadata["_cache_shape"] = list(image.shape[1:])
+        payload = zlib.compress(raw)
+    return json.dumps(metadata, allow_nan=False), payload
+
+
+def decode_sample(
+    metadata: str, payload: bytes, *, channels: int = 3
+) -> dict[str, Any]:
+    """Decode a detached image with bounded decompression and strict layout checks."""
+    if channels not in (1, 3):
+        raise ValueError("Unsupported channel count")
+    sample = json.loads(metadata)
+    if not isinstance(sample, dict) or "_cache_shape" not in sample:
+        raise ValueError("Invalid cached metadata")
+    shape = sample.pop("_cache_shape")
+    if shape is None:
+        if payload:
+            raise ValueError("Image-less cache entry contains image bytes")
+        sample["image"] = None
+        return sample
+    if (
+        not isinstance(shape, list)
+        or len(shape) != 2
+        or any(type(n) is not int or n <= 0 for n in shape)
+    ):
+        raise ValueError("Invalid cached image shape")
+    size = shape[0] * shape[1] * 4
+    if size > 64 * 1024 * 1024:
+        raise ValueError("Cached image exceeds decode limit")
+    decompressor = zlib.decompressobj()
+    raw = decompressor.decompress(payload, size + 1)
+    if (
+        len(raw) != size
+        or not decompressor.eof
+        or decompressor.unused_data
+        or decompressor.unconsumed_tail
+    ):
+        raise ValueError("Invalid cached image payload")
+    channel = np.frombuffer(raw, dtype=np.float32).reshape(shape)
+    sample["image"] = np.repeat(channel[None, :, :], channels, axis=0)
+    return sample
+
+
 class RenderCache:
     """Store lossless single-channel float32 views within a payload byte budget.
 
@@ -69,41 +131,11 @@ class RenderCache:
             ).fetchone()
         if row is None:
             return None
-        sample = json.loads(row[0])
-        # Only one identical channel is stored; expand without renormalizing.
-        shape = sample.pop("_cache_shape")
-        sample["image"] = (
-            np.repeat(
-                np.frombuffer(zlib.decompress(row[1]), dtype=np.float32).reshape(shape)[
-                    None
-                ],
-                3,
-                axis=0,
-            )
-            if shape is not None
-            else None
-        )
-        return sample
+        return decode_sample(row[0], row[1])
 
     def put(self, key: str, sample: dict[str, Any]) -> None:
         """Publish a sample if space remains, retaining reusable rows when full."""
-        metadata = dict(sample)
-        image = metadata.pop("image", None)
-        if image is not None:
-            if (
-                image.dtype != np.float32
-                or image.ndim != 3
-                or image.shape[0] != 3
-                or not np.array_equal(image[0], image[1])
-                or not np.array_equal(image[0], image[2])
-            ):
-                raise ValueError("Cache requires identical float32 image channels")
-            metadata["_cache_shape"] = list(image.shape[1:])
-            payload = zlib.compress(image[0].tobytes())
-        else:
-            metadata["_cache_shape"] = None
-            payload = b""
-        encoded = json.dumps(metadata, allow_nan=False)
+        encoded, payload = encode_sample(sample)
         size = len(payload) + len(encoded.encode()) + len(key.encode())
         if size > self.max_bytes:
             return
