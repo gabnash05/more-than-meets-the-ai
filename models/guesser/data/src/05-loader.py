@@ -1,8 +1,7 @@
-"""Small, process-local indexed loader; no model or PyTorch dependency."""
+"""Indexed drawing access with optional OS-shared manifests; no model dependency."""
 
 from __future__ import annotations
 
-import bisect
 import hashlib
 import json
 import os
@@ -10,8 +9,13 @@ import random
 from collections import OrderedDict
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pyarrow as pa
 
 from .common import DataError, load_step
+from .manifest_cache import check_source, prepare_manifest_cache, source_identity
 from .settings import (
     BLANK_RETRIES,
     COMPLETE_PROBABILITY,
@@ -30,13 +34,19 @@ render_qd = _images.render_qd
 
 
 class IndexedDrawings:
-    """Seek records using Parquet offsets; handles and row caches belong to one PID.
+    """Seek records using a compact Arrow manifest and PID-local record handles.
 
     Supply the prepared/ folder of a prepared dataset. The model consumes only the
     resulting image and class_id; raw record metadata are for auditing.
 
     Flow: read one original -> cut by time -> render -> preprocess one image.
     PyTorch DataLoader batching belongs to the model project.
+    With manifest_cache_dir, construction builds/reuses a batched Arrow IPC file;
+    each process lazily maps it without copying the decoded split. None keeps the
+    read-only-compatible, process-local Parquet fallback. Only the requested row
+    becomes Python objects. cached_row_groups remains accepted but does not limit
+    either full-split representation. Keep prepared data and cache files immutable
+    while readers are active; source generation changes on mmap reopen fail loud.
     """
 
     def __init__(
@@ -45,6 +55,7 @@ class IndexedDrawings:
         split: str = "train",
         max_handles: int = 8,
         cached_row_groups: int = 2,
+        manifest_cache_dir: str | Path | None = None,
     ):
         if (
             split not in ("train", "validation", "test")
@@ -56,11 +67,31 @@ class IndexedDrawings:
         self.split = split
         self.max_handles = max_handles
         self.cached_row_groups = cached_row_groups
+        self.manifest_cache_dir = (
+            Path(manifest_cache_dir).resolve()
+            if manifest_cache_dir is not None
+            else None
+        )
         import pyarrow.parquet as pq
 
-        metadata = pq.ParquetFile(
-            self.prepared / "manifests" / f"{split}.parquet"
-        ).metadata
+        self._source_path = self.prepared / "manifests" / f"{split}.parquet"
+        self._source_identity = source_identity(self._source_path)
+        with pq.ParquetFile(self._source_path) as source:
+            metadata = source.metadata
+            schema = source.schema_arrow
+        check_source(self._source_path, self._source_identity)
+        # Training supplies a writable cache directory. Build eagerly here so
+        # workers only map the published file, never all decode their own table.
+        self._cache_path = (
+            prepare_manifest_cache(
+                self._source_path,
+                self.manifest_cache_dir,
+                self._source_identity,
+                schema,
+            )
+            if self.manifest_cache_dir is not None
+            else None
+        )
         self.ends = []
         total = 0
         for row_group_index in range(metadata.num_row_groups):
@@ -69,13 +100,15 @@ class IndexedDrawings:
         self.total = total
         self._reset()
 
-    def _reset(self):
+    def _reset(self) -> None:
+        """Initialize an unloaded reader owned by the current process."""
         self._pid = os.getpid()
         self._handles = OrderedDict()
-        self._rows = OrderedDict()
-        self._parquet = None
+        self._manifest: pa.Table | None = None
+        self._mapping = None
 
-    def _check_process(self):
+    def _check_process(self) -> None:
+        """Discard inherited buffers and record handles before a worker reads."""
         if self._pid != os.getpid():
             self.close()
             self._pid = os.getpid()
@@ -84,6 +117,12 @@ class IndexedDrawings:
         return self.total
 
     def manifest_row(self, index: int) -> dict:
+        """Return a fresh complete row; negative indices follow sequence bounds.
+
+        Lazily map/decode one split per PID. Close/pickle omit mapped/native data.
+        Cached readers reject changed source generations on reopening; fallback
+        readers reload current data but require unchanged row counts.
+        """
         self._check_process()
         if index < 0:
             index += self.total
@@ -91,17 +130,43 @@ class IndexedDrawings:
             raise IndexError(index)
         import pyarrow.parquet as pq
 
-        group = bisect.bisect_right(self.ends, index)
-        if group not in self._rows:
-            if self._parquet is None:
-                self._parquet = pq.ParquetFile(
-                    self.prepared / "manifests" / f"{self.split}.parquet"
-                )
-            self._rows[group] = self._parquet.read_row_group(group).to_pylist()
-            if len(self._rows) > self.cached_row_groups:
-                self._rows.popitem(last=False)
-        self._rows.move_to_end(group)
-        return self._rows[group][index - (self.ends[group - 1] if group else 0)]
+        # Map shared IPC when configured; otherwise decode the read-only fallback
+        # once. Keep chunks rather than copying the split to consolidate them.
+        if self._manifest is None:
+            if self._cache_path is not None:
+                import pyarrow as pa
+
+                check_source(self._source_path, self._source_identity)
+                # IPC read_all creates column/chunk wrappers over mapped buffers;
+                # no decompression, combine_chunks, or full-table copy occurs.
+                mapping = pa.memory_map(str(self._cache_path), "r")
+                try:
+                    table = pa.ipc.open_file(mapping).read_all()
+                    check_source(self._source_path, self._source_identity)
+                except BaseException:
+                    mapping.close()
+                    raise
+                self._mapping = mapping
+                self._manifest = table
+                return table.slice(index, 1).to_pylist()[0]
+            with pq.ParquetFile(
+                self.prepared / "manifests" / f"{self.split}.parquet"
+            ) as source:
+                # Bounds came from construction; do not reuse them if a new
+                # source has a different length. Recreate the loader instead.
+                if source.metadata.num_rows != self.total:
+                    raise DataError(
+                        "Indexed manifest changed; recreate loader and audit package",
+                        "audit_failed",
+                    )
+                # Workers may be forked; do not depend on an inherited Arrow
+                # decoding thread pool when initializing their native table.
+                table: pa.Table = source.read(use_threads=False)
+                self._manifest = table
+        # Slice before conversion, preserving nested/null audit columns while
+        # materializing only the requested row as a fresh Python dictionary.
+        assert self._manifest is not None
+        return self._manifest.slice(index, 1).to_pylist()[0]
 
     def __getitem__(self, index: int) -> dict:
         row = self.manifest_row(index)
@@ -158,11 +223,15 @@ class IndexedDrawings:
             }
 
     def close(self) -> None:
+        """Release record handles, table wrappers and mapping; allow reopening."""
         for handle in getattr(self, "_handles", {}).values():
             handle.close()
         self._handles = OrderedDict()
-        self._rows = OrderedDict()
-        self._parquet = None
+        self._manifest = None
+        mapping = getattr(self, "_mapping", None)
+        if mapping is not None:
+            mapping.close()
+        self._mapping = None
 
     def __enter__(self):
         return self
@@ -170,11 +239,10 @@ class IndexedDrawings:
     def __exit__(self, *_):
         self.close()
 
-    def __getstate__(self):
+    def __getstate__(self) -> dict:
+        """Serialize configuration only, never native buffers or open files."""
         state = dict(self.__dict__)
-        state.update(
-            _handles=OrderedDict(), _rows=OrderedDict(), _parquet=None, _pid=-1
-        )
+        state.update(_handles=OrderedDict(), _manifest=None, _mapping=None, _pid=-1)
         return state
 
     def __del__(self):

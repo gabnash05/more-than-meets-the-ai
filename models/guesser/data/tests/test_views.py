@@ -1,7 +1,6 @@
 import numpy as np
-from PIL import Image
-
 from guesser_data.common import load_step
+from PIL import Image
 
 loader = load_step("05-loader")
 images = load_step("06-images")

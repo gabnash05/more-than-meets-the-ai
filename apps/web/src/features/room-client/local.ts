@@ -176,6 +176,8 @@ export class LocalRoomClient implements RoomClient {
   async updateSettings(settings: RoomSettings) {
     const s = this.host();
     if (
+      (settings.aiGuesserEnabled !== undefined && typeof settings.aiGuesserEnabled !== "boolean") ||
+      (settings.aiRefereeEnabled !== undefined && typeof settings.aiRefereeEnabled !== "boolean") ||
       ![settings.seats, settings.teamCount, settings.seatsPerTeam].every(
         Number.isInteger,
       ) ||
@@ -237,7 +239,7 @@ export class LocalRoomClient implements RoomClient {
         "Move players before reducing team capacity.",
       );
     this.change((snapshot) => {
-      snapshot.settings = clone(settings);
+      snapshot.settings = { ...DEFAULT_ROOM_SETTINGS, ...snapshot.settings, ...settings };
       snapshot.teams = settings.mode === "team" ? teams : [];
       if (settings.mode === "individual")
         snapshot.players.forEach((p) => {

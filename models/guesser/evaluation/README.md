@@ -1,14 +1,22 @@
 # Guesser evaluation workspace
 
-This Python/Jupyter workspace supports the project's evaluation and inference work: auditing held-out inputs, evaluating frozen model checkpoints, measuring latency, and preparing the live inference interface. The environment and its smoke-check notebook are set up; the evaluator, serving API, model weights, and performance results are future work.
+This Python/Jupyter workspace supports Guesser data auditing, model-training orchestration, and the later evaluation/inference workflow. The training scripts live in the separate Python 3.13 model project; the notebook launches them through uv rather than importing them into this Python 3.12 kernel. The fixed-stage evaluator, serving API, trained checkpoints, and performance results are not implemented or included yet.
 
 ## What this workspace is for
 
-- **Available now:** reproducible Python/Jupyter environment, source package scaffold, and `00_environment_check.ipynb` to verify the interpreter and scientific/image imports.
+- **Available now:** reproducible Python/Jupyter environment; `00_environment_check.ipynb`; `01_dataset_pipeline.ipynb`; `02_dataset_audit.ipynb` for manifest checks and an opt-in indexed-payload audit; `03_training.ipynb` for A/B training orchestration; and `04_model_evaluation.ipynb` for protocol guidance and readiness checks.
 - **Planned use cases:** audit held-out drawing splits and rendered inputs; compare stage-wise recognition metrics for frozen checkpoints; inspect errors/calibration; measure snapshot-to-result latency; and connect a selected checkpoint to the inference API.
-- **Not included yet:** Quick, Draw! data, model checkpoints, the evaluator, an inference service, or model results. Do not report the smoke notebook as an evaluation.
+- **Not included by the repository:** local Quick, Draw! data, trained model checkpoints, the fixed ten-stage prediction runner, an inference service, or model results. Do not report smoke training or training-validation curves as the final evaluator.
 
 ## Supported environment
+
+The [training input guide](../training/README.md#exact-training-view-bundles-and-optional-cuda-augmentation)
+now provides separate model-environment estimate/build/benchmark commands for
+immutable epoch views and opt-in CUDA affine execution. Do not render these
+bundles in the notebook environment, rewrite notebook cells or replace completed
+A/B artifacts to adopt them. Start a separately configured training process with
+a new output root. Input throughput measurements are not ten-stage recognition
+or held-out accuracy results.
 
 - Python **3.12.16**, pinned in `.python-version` and constrained in `pyproject.toml`. This follows the Guesser plan's supported range and is a safer shared base for the planned ML stack.
 - Target: 64-bit Windows and Linux. The committed `uv.lock` includes platform-specific wheel selections for both, and Windows resolution passed a uv dry run from Linux; a live Windows notebook run remains to be verified.
@@ -60,10 +68,10 @@ git check-attr -a -- models/guesser/evaluation/notebooks/00_environment_check.ip
 
 ## Start JupyterLab
 
-From the repository root:
+From the repository root, launch Jupyter with the repository as its contents root. This keeps notebook Markdown links to sibling project files (for example `models/guesser/training/README.md`) inside Jupyter's allowed file tree. Do not append the notebooks directory as a positional argument: Jupyter uses that directory as the server root instead. Open `models/guesser/evaluation/notebooks` from the Jupyter file browser.
 
 ```sh
-uv run --project models/guesser/evaluation jupyter lab models/guesser/evaluation/notebooks
+uv run --project models/guesser/evaluation jupyter lab --ServerApp.root_dir=.
 ```
 
 JupyterLab uses the project's Python kernel. Open `00_environment_check.ipynb` and run all cells to check Python, package imports, and a small image operation. It reports the current OS and interpreter so collaborators can confirm which environment they launched.
@@ -117,9 +125,71 @@ and rejects a mismatched dataset summary. `DATA_ROOT` and the legacy
 `prepared/`, not the parent data directory used in notebook 01. Explicit paths
 take precedence; relative overrides use the kernel working directory. A full
 split-isolation audit requires all three manifests, so a trainer-only archive
-cannot pass by itself. Keep held-out archives sealed until evaluation is frozen.
-The data CLI's export audit also checks payload integrity for the selected
-profile. Neither notebook measures recognition quality.
+cannot pass by itself. Keep held-out archives out of model selection and threshold
+tuning. The data CLI export step already checks payload integrity for the selected
+profile. Notebook 02 verifies manifests; neither notebook measures recognition
+quality.
+
+## Reproduce the current A/B training comparison
+
+Use one profile from data preparation through training. The pipeline notebook
+currently defaults to the data CLI's `production` profile; the training notebook
+defaults to `small`. Set them to the same value before running cells. For the
+small-profile model workflow, set `PROFILE` to `small` in notebooks 01 and 02,
+and keep `DATA_PROFILE` set to `small` in notebook 03.
+
+1. In `01_dataset_pipeline.ipynb`, if that profile is not already prepared, set
+   `RUN_PIPELINE = True` and run the pipeline cells. Export creates the trainer
+   and held-out-test packages and runs the data package's payload-integrity audit.
+   If the data already exists, leave the pipeline disabled.
+2. In `02_dataset_audit.ipynb`, select the same profile and run the manifest
+   audit. Use its optional payload-audit cell only to repeat the export check on
+   an existing dataset. If rendering or preprocessing changed, generate and
+   inspect the preview in notebook 01 before exporting again.
+3. In `03_training.ipynb`, select the same `DATA_PROFILE`, set
+   `TRAINING_MODE = 'full'` and `RUN_SELECTION = 'both'`, then set
+   `RUN_TRAINING = True`. After A and B complete, set `RUN_COMPARISON = True`
+   and run the comparison cell. The outputs are `checkpoint-selection.json`,
+   `metrics.csv`, `comparison.md`, `comparison-summary.json`, and plots under
+   the chosen checkpoint root's `ab_comparison/` directory.
+4. `04_model_evaluation.ipynb` checks whether the validation manifest and both
+   checkpoint handoffs exist. It does not produce recognition scores. The
+   fixed ten-stage prediction/scoring runner is not implemented, so the current
+   reproducible A/B report is a training/validation comparison only.
+
+Keep the held-out-test package out of selection and threshold tuning. Do not
+compare scores from different profiles as if they were a controlled dataset-size
+experiment; each profile has its own split membership.
+
+## Training orchestration notebook
+
+`03_training.ipynb` is a cross-environment launcher for the existing A/B model
+scripts, not a second training implementation. It calls `training.train` and
+`training.compare_ab` through the Python 3.13 model project's uv environment;
+do not import those modules into the Python 3.12 notebook kernel. The notebook
+uses the already-prepared `small` profile by default, never downloads/prepares
+data, and reads only train/validation splits. Training is disabled by default;
+fast and full runs have separate ignored checkpoint roots. Remove inherited
+`PYTHONPATH`/`PYTHONHOME` from subprocesses so the model interpreter cannot
+accidentally import packages from the notebook host environment.
+
+The launcher inherits `training.train`'s input-pipeline defaults: shared
+memory-mapped train/validation manifests and a bounded, lossless validation-view
+cache. Training widths and partial cuts still change with the shared worker epoch;
+training renders are not frozen or cached across epochs. Cache files live under
+the model project's ignored `.local/cache/`, not in exported datasets. See the
+[training cache/worker guide](../training/README.md#deterministic-views-cache-and-workers)
+for storage requirements, invalidation, relocation and benchmark-disable flags.
+Existing kernels must launch a new trainer process to load changed training code;
+autoreloading the notebook does not update an already-running child.
+
+## Model-evaluation notebook
+
+`04_model_evaluation.ipynb` gives the next action for the current repository
+state: if checkpoints are missing, return to notebook 03 and finish both runs;
+if present, run notebook 03's comparison cell. It checks prerequisites only;
+there is no ten-stage prediction/scoring command yet. The model plan describes
+that intended evaluation, but it cannot be reproduced until the runner exists.
 
 ## Notebook workflow and merge conflicts
 

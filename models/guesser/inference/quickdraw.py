@@ -47,7 +47,7 @@ class QuickDraw:
         # Invoke once before reporting readiness so the first game request uses a warm interpreter.
         self.classify(np.zeros((1, 28, 28, 1), dtype=np.float32))
 
-    def classify(self, pixels: np.ndarray) -> str:
+    def classify(self, pixels: np.ndarray) -> tuple[str, float]:
         dtype = self.input["dtype"]
         if dtype != np.float32:
             scale, zero = self.input["quantization"]
@@ -58,10 +58,18 @@ class QuickDraw:
         scores = self.interpreter.get_tensor(self.output["index"])
         if not np.isfinite(scores).all():
             raise ValueError("nonfinite-output")
-        return self.labels[int(np.argmax(scores))]
+        if self.output["dtype"] != np.float32:
+            scale, zero = self.output["quantization"]
+            scores = (scores.astype(np.float32) - zero) * scale
+        index = int(np.argmax(scores))
+        confidence = float(scores.flat[index])
+        if not 0 <= confidence <= 1:
+            raise ValueError("invalid-confidence")
+        return self.labels[index], confidence
 
     def predict(self, image: Image.Image) -> dict:
         pixels = prepare(image)
         if pixels is None:
             return {"status": "pass", "reason": "no-evidence"}
-        return {"status": "answer", "answer": self.classify(pixels)}
+        answer, confidence = self.classify(pixels)
+        return {"status": "answer", "answer": answer, "confidence": confidence}

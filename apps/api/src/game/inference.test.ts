@@ -7,6 +7,7 @@ import { MemoryGameStore } from "../store";
 import { RoomEngine } from "./engine";
 import { PROMPTS } from "./prompts";
 import { DEFAULT_AVATAR } from "../../../../packages/game-contracts/src/player";
+import type { RoomEvent, RoomSettings } from "../../../../packages/game-contracts/src/room";
 
 async function waitFor(condition: () => boolean) {
   for (let i = 0; i < 150; i++) {
@@ -16,17 +17,23 @@ async function waitFor(condition: () => boolean) {
   assert.fail("Expected observation never settled");
 }
 
-async function fixture(submit: Inference["submit"], render: Inference["render"]) {
+async function fixture(
+  submit: Inference["submit"],
+  render: Inference["render"],
+  referee = false,
+  switches?: Pick<RoomSettings, "aiGuesserEnabled" | "aiRefereeEnabled">,
+) {
+  const events: RoomEvent[] = [];
   let now = Date.now();
   const initial = now;
   const store = new MemoryGameStore();
   const engine = new RoomEngine({
     store,
     clock: () => now,
-    eventSink: () => {},
+    eventSink: (_id, event) => { events.push(event); },
     inference: {
-      options: { firstGuessMs: 5000, guessCooldownMs: 8000, maxGuesses: 5, requestTimeoutMs: 250 },
-      ready: role => role === "guesser" ? { modelId: "fixture", artifactRevision: "fixture-v1", labels: PROMPTS.slice() } : undefined,
+      options: { firstGuessMs: 1500, guessCooldownMs: 2000, maxGuesses: 24, requestTimeoutMs: 250 },
+      ready: role => role === "guesser" ? { modelId: "fixture", artifactRevision: "fixture-v1", labels: PROMPTS.slice() } : referee ? { modelId: "referee", artifactRevision: "fixture-v1" } : undefined,
       render,
       submit,
       close: async () => {},
@@ -42,7 +49,24 @@ async function fixture(submit: Inference["submit"], render: Inference["render"])
   };
   await engine.connect(code, host.resumeToken, "host");
   await engine.connect(code, guest.resumeToken, "guest");
-  const lobby = await resume(host.resumeToken);
+  let lobby = await resume(host.resumeToken);
+  assert.equal(lobby.snapshot.settings.aiGuesserEnabled, true);
+  assert.equal(lobby.snapshot.settings.aiRefereeEnabled, true);
+  if (switches) {
+    const { mode, seats, teamCount, seatsPerTeam, rounds } = lobby.snapshot.settings;
+    const legacySettings = { mode, seats, teamCount, seatsPerTeam, rounds };
+    const settings = { ...legacySettings, ...switches };
+    const denied = await engine.command("guest", "room:settings", {
+      requestId: randomUUID(), expectedRevision: lobby.snapshot.revision, payload: settings,
+    });
+    assert.equal(denied.code, "forbidden");
+    await send("host", "room:settings", { expectedRevision: lobby.snapshot.revision, payload: settings });
+    lobby = await resume(host.resumeToken);
+    await send("host", "room:settings", { expectedRevision: lobby.snapshot.revision, payload: legacySettings });
+    lobby = await resume(host.resumeToken);
+    assert.equal(lobby.snapshot.settings.aiGuesserEnabled, switches.aiGuesserEnabled);
+    assert.equal(lobby.snapshot.settings.aiRefereeEnabled, switches.aiRefereeEnabled);
+  }
   await send("host", "room:start", { expectedRevision: lobby.snapshot.revision });
   const choice = await resume(host.resumeToken);
   const game = choice.snapshot.game!;
@@ -61,7 +85,7 @@ async function fixture(submit: Inference["submit"], render: Inference["render"])
     } });
   };
   return {
-    engine, target, ink,
+    engine, code, target, ink, events,
     advance: (ms: number) => { now = initial + ms; },
     finish: async () => {
       await send("guest", "room:guess", { generation, payload: { text: target } });
@@ -71,13 +95,13 @@ async function fixture(submit: Inference["submit"], render: Inference["render"])
   };
 }
 
-test("Guesser paces dispatch, caps five observations and reveals each accepted candidate once", async () => {
+test("Guesser paces dispatch, caps at 24 attempts and reveals repeated guesses", async () => {
   const jobs: Job[] = [];
   let renders = 0;
   let wrongAnswer = "";
   const room = await fixture(async (_role, job) => {
     jobs.push(job);
-    return { status: "answer", answer: wrongAnswer };
+    return { status: "answer", answer: wrongAnswer, confidence: 0.8 };
   }, async (_key, operations) => {
     renders++;
     // First prefix is blank, then two prefixes render the same visible pixels.
@@ -87,35 +111,39 @@ test("Guesser paces dispatch, caps five observations and reveals each accepted c
   wrongAnswer = PROMPTS.find(word => word !== room.target)!;
   try {
     await room.ink();
-    room.advance(4999);
+    room.advance(1499);
     await delay(260);
     assert.equal(renders, 0);
-    room.advance(5000);
+    room.advance(1500);
     await waitFor(() => renders === 1);
     assert.equal(jobs.length, 0);
     await room.ink();
     await waitFor(() => jobs.length === 1);
     await delay(20);
     await room.ink();
-    room.advance(12999);
+    room.advance(3499);
     await delay(260);
     assert.equal(renders, 2);
-    room.advance(13000);
+    room.advance(3500);
     await waitFor(() => renders === 3);
     assert.equal(jobs.length, 1);
-    for (let attempt = 2; attempt <= 5; attempt++) {
-      room.advance(5000 + (attempt - 1) * 8000);
+    for (let attempt = 2; attempt <= 24; attempt++) {
+      room.advance(1500 + (attempt - 1) * 2000);
       await room.ink();
       await waitFor(() => jobs.length === attempt);
       await delay(20);
     }
-    room.advance(45000);
+    room.advance(49500);
     await room.ink();
     await delay(260);
-    assert.equal(jobs.length, 5);
+    assert.equal(jobs.length, 24);
     assert.equal((await room.guest()).snapshot.game!.result, undefined);
     const result = await room.finish();
-    assert.deepEqual(result.aiAnswers, [wrongAnswer]);
+    assert.deepEqual(result.aiAnswers, Array(24).fill(wrongAnswer));
+    assert.deepEqual(result.aiGuesses, Array(24).fill({ answer: wrongAnswer, confidence: 0.8 }));
+    const pulseJobs = room.events.filter(event => event.type === "ai-guess").map(event => event.jobId);
+    assert.equal(pulseJobs.length, 48);
+    assert.equal(new Set(pulseJobs).size, 24);
     assert.equal(result.aiBenchmark?.points, 0);
   } finally { await room.engine.shutdown(); }
 });
@@ -135,7 +163,7 @@ test("Guesser drops cleared work and marks timed-out evaluation unscored", async
     room.advance(5000);
     await waitFor(() => jobs.length === 1);
     await room.ink(true);
-    complete!({ status: "answer", answer: room.target });
+    complete!({ status: "answer", answer: room.target, confidence: 0.8 });
     room.advance(14000);
     await room.ink();
     await waitFor(() => jobs.length === 2);
@@ -164,7 +192,7 @@ test("live Guesser status hides answers and retains an accepted answer after a l
     assert.equal(during.aiStatus, "guessing");
     assert.equal(during.result, undefined);
     assert.equal(JSON.stringify(during).includes(answer), false);
-    settle!({ status: "answer", answer });
+    settle!({ status: "answer", answer, confidence: 0.8 });
     await waitFor(() => calls === 1 && settle !== undefined);
     await delay(30);
     assert.equal((await room.guest()).snapshot.game!.aiStatus, "waiting");
@@ -177,4 +205,75 @@ test("live Guesser status hides answers and retains an accepted answer after a l
     assert.deepEqual(result.aiAnswers, [answer]);
     assert.equal(result.aiBenchmark?.points, null);
   } finally { await room.engine.shutdown(); }
+});
+
+
+test("co-due roles share one prefix and referee continues after the Guesser solves", async () => {
+  const jobs: { role: string; job: Job; png: Buffer }[] = [];
+  let renders = 0;
+  let answer = "";
+  const room = await fixture(async (role, job, png) => {
+    jobs.push({ role, job, png });
+    return role === "guesser" ? { status: "answer", answer, confidence: 0.6 } : { status: "evidence", scores: [0.8, 0.1] };
+  }, async () => { renders++; return Buffer.from("pixels"); }, true);
+  answer = room.target;
+  try {
+    await room.ink();
+    room.advance(5000);
+    await waitFor(() => jobs.length === 2);
+    assert.equal(renders, 1);
+    assert.equal(jobs[0].job.sequence, jobs[1].job.sequence);
+    assert.strictEqual(jobs[0].png, jobs[1].png);
+    await waitFor(() => room.events.some(value => value.type === "ai-guess"));
+    const event = room.events.find(value => value.type === "ai-guess");
+    assert.ok(event);
+    assert.equal(JSON.stringify(event).includes(answer), false);
+    assert.equal(event.correct, true);
+    await room.ink();
+    room.advance(7000);
+    await waitFor(() => jobs.length >= 3);
+    assert.deepEqual(jobs.map(entry => entry.role).sort(), ["guesser", "referee", "referee"]);
+  } finally { await room.engine.shutdown(); }
+});
+
+
+test("referee warning requires consecutive text evidence and clears on clear", async () => {
+  let refereeCalls = 0;
+  const room = await fixture(async role => {
+    if (role === "referee") { refereeCalls++; return { status: "evidence", scores: [0.8, 0.9] }; }
+    return { status: "pass" };
+  }, async () => Buffer.from("pixels"), true);
+  try {
+    await room.ink();
+    room.advance(1000);
+    await waitFor(() => refereeCalls === 1);
+    assert.equal((await room.guest()).snapshot.game!.refereeWarning, undefined);
+    room.advance(2000);
+    await waitFor(() => refereeCalls === 2);
+    await waitFor(() => room.events.some(event => event.type === "snapshot" && !!event.snapshot.game?.refereeWarning));
+    const warning = (await room.guest()).snapshot.game!.refereeWarning;
+    assert.equal(warning?.confidence, 0.8);
+    await room.ink(true);
+    assert.equal((await room.guest()).snapshot.game!.refereeWarning, undefined);
+  } finally { await room.engine.shutdown(); }
+});
+
+test("host settings independently gate each ready role and survive legacy updates", async () => {
+  for (const [aiGuesserEnabled, aiRefereeEnabled] of [[true, true], [true, false], [false, true], [false, false]]) {
+    const submitted: string[] = [];
+    const room = await fixture(async role => {
+      submitted.push(role);
+      return role === "guesser" ? { status: "pass" } : { status: "evidence", scores: [0.1, 0.9] };
+    }, async () => Buffer.from("pixels"), true, { aiGuesserEnabled, aiRefereeEnabled });
+    try {
+      await room.ink();
+      room.advance(2000);
+      if (!aiGuesserEnabled) await assert.rejects(room.engine.reserveGuesserObservation(room.code), /AI observation is unavailable/);
+      const expected = [...(aiGuesserEnabled ? ["guesser"] : []), ...(aiRefereeEnabled ? ["referee"] : [])];
+      if (expected.length) await waitFor(() => submitted.length >= expected.length);
+      await delay(260);
+      assert.deepEqual(submitted.sort(), expected);
+      assert.equal((await room.guest()).snapshot.game!.refereeWarning, undefined);
+    } finally { await room.engine.shutdown(); }
+  }
 });

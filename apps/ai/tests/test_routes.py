@@ -98,7 +98,7 @@ def test_guesser_prediction_logs_only_safe_correlation_fields(tmp_path, monkeypa
 
     class AnswerAdapter:
         def predict(self, image):
-            return {"status": "answer", "answer": "private-answer"}
+            return {"status": "answer", "answer": "private-answer", "confidence": 0.75}
 
     guesser = Bundle("test-guesser", "revision-1", adapter=AnswerAdapter())
     monkeypatch.setattr(
@@ -131,6 +131,7 @@ def test_guesser_prediction_logs_only_safe_correlation_fields(tmp_path, monkeypa
 
     assert response.status_code == 200
     assert response.json()["answer"] == "private-answer"
+    assert response.json()["confidence"] == 0.75
     records = [record for record in caplog.records if record.name == "uvicorn.error"]
     assert len(records) == 1
     event = json.loads(records[0].message)
@@ -146,3 +147,26 @@ def test_guesser_prediction_logs_only_safe_correlation_fields(tmp_path, monkeypa
     assert "private-answer" not in records[0].message
     assert "private-hint" not in records[0].message
     assert "fixture-secret-for-tests" not in records[0].message
+
+
+def test_quickdraw_dequantizes_probability():
+    from models.guesser.inference.quickdraw import QuickDraw
+
+    class Interpreter:
+        def set_tensor(self, index, pixels):
+            pass
+
+        def invoke(self):
+            pass
+
+        def get_tensor(self, index):
+            return np.array([[-128, 64]], dtype=np.int8)
+
+    adapter = QuickDraw.__new__(QuickDraw)
+    adapter.interpreter = Interpreter()
+    adapter.labels = ["first", "second"]
+    adapter.input = {"dtype": np.float32, "index": 0}
+    adapter.output = {"dtype": np.int8, "index": 1, "quantization": (1 / 256, -128)}
+    answer, confidence = adapter.classify(np.zeros((1, 28, 28, 1), dtype=np.float32))
+    assert answer == "second"
+    assert confidence == 0.75

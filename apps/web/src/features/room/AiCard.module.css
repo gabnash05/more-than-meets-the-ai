@@ -1,4 +1,5 @@
 .card {
+  position: relative;
   height: 224px;
   min-height: 224px;
   max-height: 224px;
@@ -13,6 +14,10 @@
   border-radius: 22px;
 }
 .card.solved { background: #dcf8e4; border-color: #188245; }
+.pulse { position:absolute; inset:0; border-radius:inherit; pointer-events:none; animation:accepted-pulse .6s ease-out; }
+.pulseCorrect { --pulse-color:#23b85a; }
+.pulseWrong { --pulse-color:#e33e3e; }
+@keyframes accepted-pulse { 0%,100% { box-shadow:none; } 35% { box-shadow:inset 0 0 0 4px var(--pulse-color), inset 0 0 20px var(--pulse-color); } }
 .heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .heading > div { min-width: 0; }
 .heading h2 { font-size: 20px; line-height: 1.12; }
@@ -35,7 +40,8 @@
 .wrong .dots i { background: #a52626; }
 .statusLabel { text-align: center; font-weight: 800; font-size: 13px; line-height: 18px; }
 .resultStack { height: 148px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr); gap: 8px; }
-.finalStrip { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; padding: 5px 9px; gap: 8px; border: 2px solid var(--color-ink); border-radius: 10px 14px 12px 9px; text-align: center; }
+.finalStrip { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; padding: 5px 9px; gap: 8px; border: 2px solid var(--color-ink); border-radius: 10px 14px 12px 9px; text-align: center; }
+.confidence { font-size:10px; font-weight:800; white-space:nowrap; }
 .finalCorrect { background: var(--color-green); }
 .finalWrong { background: var(--color-red); }
 .finalLabel { font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
@@ -46,10 +52,11 @@
 .previousLabel { display: flex; align-items: center; justify-content: space-between; font-size: 9px; font-weight: 800; line-height: 14px; letter-spacing: .04em; text-transform: uppercase; color: #514b5b; }
 .previousList { height: 76px; min-height: 76px; max-height: 76px; min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #18132166 transparent; }
 .previousWord { display: flex; align-items: center; gap: 7px; height: 19px; min-height: 19px; font-size: 12px; font-weight: 700; line-height: 18px; padding: 0 3px; border-bottom: 1px solid #18132118; opacity: 1; }
-.previousWord > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.previousWord > span:last-of-type { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.previousWord small { flex:none; font-size:10px; color:#625b6e; }
 .attemptNumber { font-size: 9px; color: #625b6e; width: 12px; flex: none; text-align: right; }
 .previousEmpty { font-size: 11px; line-height: 18px; color: #625b6e; }
 @keyframes dot-tumble { 0%, 42%, 100% { transform: translate(0, 0) scale(1); } 9% { transform: translate(4px, -9px) scale(.9); } 19% { transform: translate(8px, 0) scale(1); } 29% { transform: translate(3px, 6px) scale(.9); } 38% { transform: translate(0, 0) scale(1); } }
 @keyframes guess-ring { 0% { transform: translate(-50%, -50%) scale(.15); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(3.3); opacity: 0; } }
 @keyframes guess-center { 0%, 100% { transform: scale(1); } 25% { transform: scale(.65); } 55% { transform: scale(1.25); } }
-@media (prefers-reduced-motion: reduce) { .waiting .dots i, .guessing::before, .guessing::after, .guessing .dots { animation: none; } .guessing::before, .guessing::after { display: none; } }
+@media (prefers-reduced-motion: reduce) { .waiting .dots i, .guessing::before, .guessing::after, .guessing .dots, .pulse { animation: none; } .guessing::before, .guessing::after { display: none; } .pulse { box-shadow:inset 0 0 0 3px var(--pulse-color); } }

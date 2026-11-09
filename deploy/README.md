@@ -46,6 +46,8 @@ PostgreSQL keeps interrupted drawing prefixes and committed results across API r
 
 ## Optional AI
 
+New rooms default both the AI Guesser and Referee to on. Hosts can switch either role off in the lobby. Actual inference also requires a ready worker for that role. The Guesser starts after 1.5 seconds of active drawing and tries a changed frame two seconds after the previous attempt settles, up to 24 attempts. It pulses the card when an answer is accepted and shows confidence in the round recap.
+
 Use Linux x86-64 containers for inference. Generate a shared bearer token with `openssl rand -hex 32` and save it as `ai-token` in a private directory outside the checkout. Set `AI_SECRETS_DIR` to that directory's absolute path. Give the operator and container UID 1000 read access.
 
 ### AI on the game host
@@ -105,7 +107,7 @@ COMPOSE_PROJECT_NAME=mmtai-ai-smoke ROOM_TEST_AI_SMOKE=1 ROOM_TEST_BASE_URL=http
   npx playwright test --config playwright.multiplayer.config.ts ai-smoke.spec.ts
 ```
 
-The test uses two browser sessions in one Individual match. It verifies the accepted canvas sequence and matches the worker's `guesser_prediction` to the API's `guesser_accepted` before submitting the human answer. The guess appears in the committed recap. The Playwright report attaches the matching job and the revealed answer. During round two the test stops only the worker, verifies the unavailable state and human final standings, and restores the worker at cleanup. Use `docker compose --profile ai logs --tail 100 ai api` from `deploy/` in the same project to investigate a failure.
+The test uses two browser sessions in one Individual match. It matches the accepted canvas sequence, the worker's `guesser_prediction`, and the API's `guesser_accepted` to a live pulse. The answer and confidence appear in the committed recap. The Playwright report attaches the matching job and the revealed prediction. During round two the test stops only the worker, verifies the unavailable state and human final standings, and restores the worker at cleanup. Use `docker compose --profile ai logs --tail 100 ai api` from `deploy/` in the same project to investigate a failure.
 
 ### Model bundles
 
@@ -115,4 +117,4 @@ The downloaded INT8 bundle is for private smoke tests. Its hashes verify the mod
 
 For the later ViT-Tiny swap, set `AI_RUNTIME=vit`, select the bundle's `GUESSER_MODEL_ID`, and set `AI_SMOKE_TEST=0`. The bundle uses `weights.safetensors`, ordered `labels.txt` and `checkpoint-selection.json`. Its version 1 manifest sets role `guesser`, adapter `vit-tiny`, `modelId`, `artifactRevision`, input `[1,3,224,224]`, output `[1,345]`, the selected `preprocessing`, `preprocessingConfigHash` and a filename-to-SHA-256 map in `files`. Confirm evaluation parity with trusted weights before enabling it.
 
-For a private Referee fixture test, set `AI_TEST_FIXTURES=1`, `REFEREE_MODEL_ID=referee-fixture-v1` and `REFEREE_PROVIDER=http`. Its text and number evidence stays internal.
+For the private Referee smoke test, add `AI_TEST_FIXTURES=1`, `REFEREE_MODEL_ID=referee-fixture-v1`, and `REFEREE_PROVIDER=http` to the dedicated stack. Run the browser acceptance command with `ROOM_TEST_AI_REFEREE=1` as well. It draws controlled colors to check that both players see the text warning and that a digits-only response clears it. The fixture is synthetic. Normal stacks leave the Referee model unconfigured until trained weights are available.

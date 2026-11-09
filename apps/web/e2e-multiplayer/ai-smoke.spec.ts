@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, test, type Page } from "@playwright/test";
-import type { RoomEvent } from "../../../packages/game-contracts/src/room";
+import type { AiGuessEvent, RoomEvent } from "../../../packages/game-contracts/src/room";
 
 const exec = promisify(execFile);
 const origin = "http://127.0.0.1:8080";
@@ -114,6 +114,12 @@ async function draw(page: Page, strokes: number[][][]) {
   }
 }
 
+async function fillFixtureBackground(page: Page, color: string) {
+  await page.getByRole("button", { name: "fill", exact: true }).click();
+  await page.getByLabel("Custom color").fill(color);
+  await page.getByLabel("Drawing canvas").click({ position: { x: 8, y: 8 } });
+}
+
 async function solve(guesser: Session, target: string) {
   const input = guesser.page.getByLabel("Your guess");
   await input.fill(target);
@@ -146,12 +152,33 @@ test("real Guesser reveals a mapped prediction through Nginx and humans finish a
     const firstCard = first.guesser.page.getByTestId("ai-card");
     await expect(firstCard.getByRole("status", { name: "AI waiting" })).toBeVisible();
     await first.drawer.page.getByRole("slider", { name: /Size/ }).fill("22");
-    await draw(first.drawer.page, catStrokes);
+    await Promise.all([
+      expect(firstCard.getByRole("status", { name: /^AI (wrong|correct)$/ })).toBeVisible({ timeout: 25_000 }),
+      draw(first.drawer.page, catStrokes),
+    ]);
     let evidence: InferenceEvent | undefined;
     await expect.poll(async () => {
       evidence = await acceptedPrediction(first.guesser, first.canvas);
       return evidence?.jobId;
     }, { timeout: 25_000 }).toBeTruthy();
+    const pulses = (player: Session) => player.events.filter((event): event is AiGuessEvent =>
+      event.type === "ai-guess" && sameCanvas(event, first.canvas));
+    for (const player of players) {
+      await expect.poll(() => pulses(player).some(event => event.jobId === evidence?.jobId)).toBe(true);
+    }
+
+    const warning = (page: Page) => page.locator(".room-board").getByRole("status")
+      .filter({ hasText: "Writing detected by referee" });
+    if (process.env.ROOM_TEST_AI_REFEREE === "1") {
+      // The private fixture reads the red and green channels at the top-left pixel.
+      await fillFixtureBackground(first.drawer.page, "#cc0000");
+      await Promise.all(players.map(({ page }) => expect(warning(page)).toContainText("80%")));
+      await Promise.all(players.map(({ page }) => expect(page.locator(".room-board")).toHaveClass(/room-board-warning/)));
+      await fillFixtureBackground(first.drawer.page, "#00cc00");
+      await Promise.all(players.map(({ page }) => expect(warning(page)).toHaveCount(0)));
+    } else {
+      await Promise.all(players.map(({ page }) => expect(warning(page)).toHaveCount(0)));
+    }
     const beforeReveal = (player: Session) => snapshots(player).filter(({ snapshot }) =>
       snapshot.phase === "drawing" && snapshot.game && sameCanvas(snapshot.game, first.canvas));
     expect(beforeReveal(first.guesser).some(({ snapshot }) => snapshot.game?.aiStatus === "guessing")).toBe(true);
@@ -170,15 +197,30 @@ test("real Guesser reveals a mapped prediction through Nginx and humans finish a
       snapshot.phase === "result" && snapshot.game && sameCanvas(snapshot.game, first.canvas))?.snapshot.game?.result;
     await expect.poll(firstResult).toBeDefined();
     const result = firstResult()!;
-    expect(result.aiAnswers).toHaveLength(1);
+    const guesses = result.aiGuesses!;
+    expect(guesses.length).toBeGreaterThan(0);
+    expect(result.aiAnswers).toEqual(guesses.map(guess => guess.answer));
     expect(result.aiBenchmark?.points).toEqual(expect.any(Number));
-    const [answer] = result.aiAnswers;
+    const { answer, confidence } = guesses.at(-1)!;
+    if (confidence === undefined) throw new Error("Expected confidence from the pinned Guesser");
     await Promise.all(players.map(async player => {
-      await expect(player.page.getByTestId("ai-final-answer").locator("strong")).toHaveText(answer);
-      for (const event of beforeReveal(player)) expect(containsValue(event.snapshot, answer)).toBe(false);
+      const final = player.page.getByTestId("ai-final-answer");
+      await expect(final).toContainText(answer);
+      await expect(final).toContainText(`${Math.round(confidence * 100)}%`);
+      expect(pulses(player)).toHaveLength(guesses.length);
+      for (const [index, pulse] of pulses(player).entries()) {
+        const guess = guesses[index];
+        expect(guess.confidence).toBeGreaterThanOrEqual(0);
+        expect(guess.confidence).toBeLessThanOrEqual(1);
+        expect(pulse).toEqual({
+          type: "ai-guess", jobId: expect.any(String), ...first.canvas,
+          correct: guess.answer.toLowerCase() === first.target.toLowerCase(),
+        });
+        for (const event of beforeReveal(player)) expect(containsValue(event.snapshot, guess.answer)).toBe(false);
+      }
     }));
     await testInfo.attach("model-to-recap", {
-      body: JSON.stringify({ ...evidence, revealedAnswer: answer }),
+      body: JSON.stringify({ ...evidence, ...guesses[pulses(first.guesser).findIndex(pulse => pulse.jobId === evidence?.jobId)] }),
       contentType: "application/json",
     });
 
@@ -189,6 +231,7 @@ test("real Guesser reveals a mapped prediction through Nginx and humans finish a
     await expect(second.guesser.page.getByTestId("ai-card").getByText("AI unavailable", { exact: true })).toBeVisible();
     await solve(second.guesser, second.target);
     await Promise.all(players.map(async ({ page }) => {
+      await expect(warning(page)).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "Final standings" })).toBeVisible();
       await expect(page.getByLabel("Final results")).toContainText("1 / 2 rounds scored");
     }));

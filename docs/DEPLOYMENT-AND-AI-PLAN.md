@@ -69,13 +69,13 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml --profile ai up -d 
 
 | Server setting | Initial value | Purpose |
 | --- | ---: | --- |
-| `AI_FIRST_GUESS_MS` | 5,000 | Wait this much active drawing time before the first attempt |
-| `AI_GUESS_COOLDOWN_MS` | 8,000 | Wait this long after the previous attempt settles before dispatching another |
-| `AI_MAX_GUESSES_PER_TURN` | 5 | Cap dispatched attempts, including timed-out attempts |
+| `AI_FIRST_GUESS_MS` | 1,500 | Wait this much active drawing time before the first attempt |
+| `AI_GUESS_COOLDOWN_MS` | 2,000 | Wait this long after the previous attempt settles before dispatching another |
+| `AI_MAX_GUESSES_PER_TURN` | 24 | Cap dispatched attempts, including timed-out attempts |
 | `AI_REQUEST_TIMEOUT_MS` | 2,500 | Cap one request further by the remaining turn time |
-| `AI_MAX_CONCURRENT_JOBS` | 1 | Bound total in-flight work on the VM |
+| `AI_MAX_CONCURRENT_JOBS` | 1 | Bound in-flight work per model role |
 
-4. Permit one in-flight job per turn. Skip dispatch when the global slot is busy instead of accumulating a queue. Count cooldown in active drawing time. Dedupe guesses, close the AI's guessing after a correct answer, and never display its candidate text to unsolved humans. When a turn pauses, closes, changes generation or is interrupted, cancel and invalidate the reserved job even if the HTTP request later returns. Accept only a still-eligible result that matches the reserved observation and deadline. A later ink sequence alone does not invalidate a result for the recorded prefix.
+4. Permit one in-flight job per role. When both roles are due for the same room, reserve one canvas prefix and pass the rendered PNG to both. The Referee can also check between guesses. Count the Guesser cooldown in active drawing time, record each accepted attempt, and stop Guesser work on a correct answer. Reveal guess text and confidence with the committed recap. When a canvas clears or a turn pauses, closes, or changes generation, invalidate pending jobs. A later ink sequence alone does not invalidate a result for the recorded prefix.
 5. Keep a normal pass, a cancelled job and a provider fault distinct. An eligible wrong answer can yield a scored zero; a round with no eligible answer remains unscored. A qualifying service failure leaves that evaluation unavailable. Preserve human scoring, including drawer recognition and winner selection. Log model revision, latency, skips, timeouts and job outcomes with no raw image, answer or credentials. Provide an operator switch `GUESSER_PROVIDER=unavailable` for immediate human-only recovery on a normal service update.
 
 ## 3. Delivery order and acceptance

@@ -12,17 +12,13 @@ dependencies = [
     "torchmetrics>=1.9.0",
 ]
 
-[tool.uv.workspace]
-members = [
-    "data",
-]
-
 [[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
-guesser-data = { workspace = true, editable = true }
+# Reuse the loader without sharing the CPU-only data project's environment.
+guesser-data = { path = "data", editable = true }
 torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'win32'" }]
 torchvision = [{ index = "pytorch-cu126", marker = "sys_platform == 'win32'" }]

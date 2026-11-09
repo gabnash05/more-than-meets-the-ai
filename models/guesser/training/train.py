@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import lightning as L
@@ -34,9 +35,15 @@ DEFAULT_PREPARED = (
     / "prepared"
 )
 DEFAULT_CHECKPOINT_ROOT = Path(__file__).resolve().parents[1] / "checkpoints"
+DEFAULT_RENDER_CACHE = (
+    Path(__file__).resolve().parents[1] / ".local" / "cache" / "rendered-views"
+)
+DEFAULT_MANIFEST_CACHE = (
+    Path(__file__).resolve().parents[1] / ".local" / "cache" / "manifests"
+)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Fine-tune Guesser ViT-Tiny with equal A/B update budgets."
     )
@@ -59,6 +66,18 @@ def parse_args() -> argparse.Namespace:
         help="Directory for Lightning checkpoints and CSV logs.",
     )
     parser.add_argument("--max-epochs", type=int, default=6)
+    parser.add_argument(
+        "--training-view-cache",
+        type=Path,
+        default=None,
+        help="Immutable prebuilt training views; never built automatically.",
+    )
+    parser.add_argument(
+        "--augment-device",
+        choices=("cpu", "cuda"),
+        default="cpu",
+        help="Per-image affine execution device; sampling stays in CPU workers.",
+    )
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument(
         "--accumulate-grad-batches",
@@ -73,6 +92,34 @@ def parse_args() -> argparse.Namespace:
         help="DataLoader workers for on-demand render/prefetch (0=debug; 2-4 typical on Windows).",
     )
     parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument(
+        "--manifest-cache-dir",
+        type=Path,
+        default=DEFAULT_MANIFEST_CACHE,
+        help="Shared memory-mapped manifest cache for train/validation workers.",
+    )
+    parser.add_argument(
+        "--no-manifest-cache",
+        action="store_true",
+        help="Use process-local Arrow manifests instead of shared disk mappings.",
+    )
+    parser.add_argument(
+        "--render-cache-dir",
+        type=Path,
+        default=DEFAULT_RENDER_CACHE,
+        help="Shared validation render cache (training views remain epoch-dependent).",
+    )
+    parser.add_argument(
+        "--no-render-cache",
+        action="store_true",
+        help="Disable validation render caching for an uncached benchmark.",
+    )
+    parser.add_argument(
+        "--render-cache-max-bytes",
+        type=int,
+        default=2 * 1024**3,
+        help="Maximum compressed cache payload bytes (SQLite overhead is additional).",
+    )
     parser.add_argument("--num-classes", type=int, default=345)
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument(
@@ -114,7 +161,7 @@ def parse_args() -> argparse.Namespace:
         default=1000,
         help="Also refresh last.ckpt every N train steps so mid-epoch stops are resumable.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _run_name(complete_only: bool) -> str:
@@ -157,6 +204,9 @@ def _resolve_ckpt_path(
 
 
 def train_one(args: argparse.Namespace, complete_only: bool) -> dict:
+    """Fit one arm with framework callbacks and explicit input-device provenance."""
+    if args.augment_device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA augmentation was requested but CUDA is unavailable")
     run_name = _run_name(complete_only)
     run_dir = args.checkpoint_root / run_name
     weights_dir = run_dir / "weights"
@@ -175,7 +225,26 @@ def train_one(args: argparse.Namespace, complete_only: bool) -> dict:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         complete_only=complete_only,
+        cache_dir=None if args.no_render_cache else args.render_cache_dir,
+        cache_max_bytes=args.render_cache_max_bytes,
+        manifest_cache_dir=None if args.no_manifest_cache else args.manifest_cache_dir,
+        training_view_cache=args.training_view_cache,
+        augment_device=args.augment_device,
     )
+    # Check cache identity and requested arm before loading pretrained weights.
+    # Epoch coverage remains iterator-time so resume-only bundles need no epoch 0.
+    bundle_provenance = None
+    if args.training_view_cache is not None:
+        datamodule.setup("fit")
+        assert datamodule.train_dataset is not None
+        reader = datamodule.train_dataset.training_cache
+        assert reader is not None and reader.descriptor is not None
+        if ("a" if complete_only else "b") not in reader.descriptor["arms"]:
+            raise ValueError("Training-view bundle lacks the requested arm")
+        bundle_provenance = {
+            "path": str(args.training_view_cache.resolve()),
+            **reader.descriptor,
+        }
     model = GuesserViTModule(num_classes=args.num_classes)
 
     # Keep best-val and periodic-last as separate callbacks. Combining
@@ -220,9 +289,12 @@ def train_one(args: argparse.Namespace, complete_only: bool) -> dict:
         log_every_n_steps=10,
     )
 
-    started = datetime.now(timezone.utc).isoformat()
+    started = datetime.now(UTC).isoformat()
     trainer.fit(model, datamodule=datamodule, ckpt_path=ckpt_path)
-    finished = datetime.now(timezone.utc).isoformat()
+    finished = datetime.now(UTC).isoformat()
+    # Lightning tears model parameters back down to CPU after fit. Record the
+    # execution strategy's actual device rather than that post-fit location.
+    execution_device = trainer.strategy.root_device
 
     labels_meta = _labels_sidecar(args.prepared_dir)
     selection = {
@@ -239,8 +311,30 @@ def train_one(args: argparse.Namespace, complete_only: bool) -> dict:
         "accumulate_grad_batches": args.accumulate_grad_batches,
         "effective_batch_size": args.batch_size * args.accumulate_grad_batches,
         "num_workers": args.num_workers,
+        "manifest_cache_dir": (
+            None if args.no_manifest_cache else str(args.manifest_cache_dir.resolve())
+        ),
+        "render_cache_dir": (
+            None if args.no_render_cache else str(args.render_cache_dir.resolve())
+        ),
+        "render_cache_max_bytes": args.render_cache_max_bytes,
         "patience": args.patience,
         "precision": args.precision,
+        "requested_model_device": "auto",
+        "actual_model_device": str(execution_device),
+        "augment_device": args.augment_device,
+        "input_backend": "epoch-bundle"
+        if args.training_view_cache is not None
+        else "reference",
+        "training_view_cache": bundle_provenance,
+        "device_runtime": {
+            "torch": str(torch.__version__),
+            "torchvision": importlib.metadata.version("torchvision"),
+            "cuda": torch.version.cuda,
+            "gpu": torch.cuda.get_device_name(execution_device)
+            if execution_device.type == "cuda"
+            else None,
+        },
         "num_classes": args.num_classes,
         "monitor": "val_acc",
         "best_model_path": best_checkpoint.best_model_path,
@@ -264,6 +358,8 @@ def train_one(args: argparse.Namespace, complete_only: bool) -> dict:
 
 def main() -> None:
     args = parse_args()
+    if args.augment_device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA augmentation was requested but CUDA is unavailable")
     if not args.prepared_dir.exists():
         raise FileNotFoundError(f"Prepared data not found: {args.prepared_dir}")
 
@@ -279,7 +375,7 @@ def main() -> None:
     summary_path.write_text(
         json.dumps(
             {
-                "created_utc": datetime.now(timezone.utc).isoformat(),
+                "created_utc": datetime.now(UTC).isoformat(),
                 "runs": results,
             },
             indent=2,

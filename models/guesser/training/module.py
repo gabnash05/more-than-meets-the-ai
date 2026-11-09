@@ -1,4 +1,4 @@
-"""LightningModule wrapping the agreed timm ViT-Tiny backbone for Referee multi-label classification."""
+"""LightningModule wrapping the agreed timm ViT-Tiny backbone."""
 
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ import lightning as L
 import timm
 import torch
 import torch.nn.functional as F
-from torchmetrics.classification import BinaryAveragePrecision
+from torchmetrics.classification import Accuracy
 
 
-class RefereeViTModule(L.LightningModule):
+class GuesserViTModule(L.LightningModule):
     def __init__(
         self,
-        num_classes: int = 4,  # Matches the 4 elements of encoded_presence
+        num_classes: int = 345,
         head_lr: float = 1e-3,
         backbone_lr: float = 1e-4,
         weight_decay: float = 0.01,
@@ -29,9 +29,7 @@ class RefereeViTModule(L.LightningModule):
             num_classes=num_classes,
         )
 
-        # Track Average Precision across multi-label outputs
-        self.val_ap_text = BinaryAveragePrecision()
-        self.val_ap_number = BinaryAveragePrecision()
+        self.val_accuracy = Accuracy(task="multiclass", num_classes=num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -43,48 +41,21 @@ class RefereeViTModule(L.LightningModule):
             train_dataset.set_epoch(self.current_epoch)
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        images, targets = batch["image"], batch["target"]
+        images, targets = batch["image"], batch["class_id"]
         logits = self(images)
-        
-        # Use BCEWithLogitsLoss for multi-label binary presence vectors
-        loss = F.binary_cross_entropy_with_logits(logits, targets)
+        loss = F.cross_entropy(logits, targets)
         self.log("train_loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        images, targets = batch["image"], batch["target"]
+        images, targets = batch["image"], batch["class_id"]
         logits = self(images)
-        loss = F.binary_cross_entropy_with_logits(logits, targets)
-        
-        probs = torch.sigmoid(logits)
-        
-        # Update metrics using multi-label indices (e.g., column 0 and column 1)
-        if probs.shape[1] >= 2 and targets.shape[1] >= 2:
-            self.val_ap_text.update(probs[:, 0], targets[:, 0].long())
-            self.val_ap_number.update(probs[:, 1], targets[:, 1].long())
-
+        loss = F.cross_entropy(logits, targets)
+        preds = torch.argmax(logits, dim=1)
+        self.val_accuracy.update(preds, targets)
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+        self.log("val_acc", self.val_accuracy, prog_bar=True, on_step=False, on_epoch=True)
         return loss
-
-    def on_validation_epoch_end(self) -> None:
-        try:
-            ap_text = self.val_ap_text.compute()
-        except ValueError:
-            ap_text = torch.tensor(0.0, device=self.device)
-
-        try:
-            ap_number = self.val_ap_number.compute()
-        except ValueError:
-            ap_number = torch.tensor(0.0, device=self.device)
-
-        mean_ap = (ap_text + ap_number) / 2.0
-
-        self.log("val_ap_text", ap_text, prog_bar=True, sync_dist=True)
-        self.log("val_ap_number", ap_number, prog_bar=True, sync_dist=True)
-        self.log("val_mean_ap", mean_ap, prog_bar=True, sync_dist=True)
-
-        self.val_ap_text.reset()
-        self.val_ap_number.reset()
 
     def configure_optimizers(self):
         head_params: list[torch.nn.Parameter] = []

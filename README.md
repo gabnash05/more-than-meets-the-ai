@@ -28,7 +28,7 @@ Deploy the web and room API with Compose in memory mode or with an external Post
 
 The agreed [models layout](models/README.md) separates Guesser data, training, inference, evaluation and checkpoints from Referee work. The [data package](models/guesser/data/README.md) uses Python 3.13 and uv: numbered stages download/clean/sample, prepare splits, optionally preview and export with one data audit. Timed image creation uses the shared foreground/edges preprocessors; no approvals or freeze step are required. See the [runbook](models/guesser/data/RUNBOOK.md).
 
-The [evaluation workspace](models/guesser/evaluation/README.md) now contains the incoming Python 3.12/uv notebook scaffold. It has environment-check code, not an evaluator, inference service, trained checkpoint or accuracy result. Training/batching and serving remain their owners' next work. No full dataset download was run for this refactor.
+The [training guide](models/guesser/training/README.md) covers Windows/Linux setup, the required prepared data, GPU checks, A/B runs, resume and comparison. Lightning/timm training and PyTorch batching are implemented; the initial pipeline was run on Windows according to the training owner, while Linux GPU training still requires validation. The [evaluation workspace](models/guesser/evaluation/README.md) is a separate Python 3.12/uv notebook scaffold. Stage-wise evaluation, the inference service and published model performance remain future work.
 
 ## Game modes
 

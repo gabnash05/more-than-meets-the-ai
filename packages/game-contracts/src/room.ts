@@ -7,6 +7,8 @@ export interface RoomSettings {
   teamCount: number;
   seatsPerTeam: number;
   rounds: number;
+  aiGuesserEnabled?: boolean;
+  aiRefereeEnabled?: boolean;
 }
 export interface RoomPlayer {
   id: string;
@@ -42,6 +44,21 @@ export interface AiBenchmarkSummary {
   solvedRounds: number;
   completedRounds: number;
 }
+export interface AiGuess {
+  answer: string;
+  confidence?: number;
+}
+export interface AiGuessEvent {
+  type: "ai-guess";
+  jobId: string;
+  canvasId: string;
+  generation: number;
+  correct: boolean;
+}
+export interface RefereeWarning {
+  confidence: number;
+  expiresAt: number;
+}
 export interface RoomGame {
   choosingPlayerId?: string;
   teamProgress?: { teamId: string; drawerId: string; status: "choosing" | "drawing" | "solved" | "finished"; solvedBy?: string; score?: number }[];
@@ -59,10 +76,12 @@ export interface RoomGame {
   scores: Record<string, number>;
   round?: number;
   aiStatus?: "waiting" | "guessing" | "correct" | "wrong" | "unavailable";
+  refereeWarning?: RefereeWarning;
   result?: {
     aiBenchmark?: AiRoundResult;
     word: string;
     aiAnswers: string[];
+    aiGuesses?: AiGuess[];
     aiCorrect: boolean;
     deltas: Record<string, number>;
     nextDrawerId?: string;
@@ -111,6 +130,7 @@ export interface RoomSession {
   demo: boolean;
 }
 export type RoomEvent =
+  | AiGuessEvent
   | {
       type: "snapshot";
       snapshot: RoomSnapshot;
@@ -172,4 +192,6 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   teamCount: 2,
   seatsPerTeam: 6,
   rounds: 6,
+  aiGuesserEnabled: true,
+  aiRefereeEnabled: true,
 };
