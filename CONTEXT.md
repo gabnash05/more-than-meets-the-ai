@@ -1,9 +1,27 @@
 # Domain glossary
 
-Default-mode terminology updated 4 November 2026. Team-specific terms below apply only to the separate optional mode.
+Milestone terminology updated 6 November 2026. Individual is the current remote milestone. Team-specific terms below are preserved for the separate later Team plan; they do not authorize Team starts now. Actual AI inference is unavailable, and human AI modifiers remain zero.
+
+## AI benchmark round result
+A separate versioned ai-benchmark-v1 result for the AI's own raw speed points. A first valid eligible correct answer uses the human raw speed formula; eligible no-solve is zero, while unavailable/ineligible is unscored with null points. This is not human or drawer recognition credit.
+
+## AI benchmark summary
+The committed AI total plus scored, solved and completed prompt counts. The total is null until at least one eligible result commits. Interrupted unfinished generations do not contribute; older committed results remain after restart. Render this comparison alongside human standings; human totals determine human winners. Humans rotate roles while AI is a guesser, so game points are not a controlled model-performance result.
+
+## Provider boundary
+The typed internal job/observation/result interface reserved for a later AI service or server. It excludes the private target, binds identity/generation/sequence/deadline, and returns guesses or unavailable status rather than scores. The game authority validates and scores. The production adapter currently reports unavailable.
 
 ## Individual mode
 The default free-for-all format: one rotating drawer, one shared canvas, independently competing human guessers, a shared AI benchmark and personal scores. Drawer and guessers are not teammates.
+
+## Selected prompt history
+For newly started matches, private persisted `selectedPrompts` records targets selected manually or automatically, including interrupted attempts. Later drawers receive three unused choices; unselected alternatives remain eligible. History survives refresh/restart/retry and resets for another game. Older matches without this field retain their legacy behavior because earlier chosen targets were not recorded. The history is never included in public snapshots.
+
+## Ranking
+Human standings preserve authoritative score order. Equal scores share competition ranks (for example 1, 1, 3), and every tied winner is shown. AI remains a separate benchmark comparison. Relative score bars are visual aids; they do not compute winners or additional points.
+
+## Round recap
+The committed round reveal shows the target, earned points and relevant components, round gains, upcoming drawer and authoritative countdown. A confirmed correct chat message is green and labelled; it does not reveal the target to remaining unsolved humans.
 
 ## Drawing turn
 One drawer's opportunity to depict one secret target while other eligible humans and the AI guess. It continues after the first human solve and ends when all eligible humans have solved or the deadline expires, subject to explicit abandonment rules.
@@ -48,7 +66,7 @@ Visible solve/AI status without disclosing the hidden answer. Default individual
 A human's first correct accepted guess for a drawing turn. In individual mode it creates that player's personal result; it never solves the turn for everyone else.
 
 ## Speed points
-Turn points based on how quickly an individual human solves. The personal before/after-AI adjustment changes that turn reward. Optional team mode instead credits one team speed result at its first human solve.
+Current `human-v1` points depend on how quickly an individual human solves, measured from the start of drawing with paused time excluded. Human AI modifiers stay zero. Before/after-AI weighting is future design context; optional Team scoring is deferred.
 
 ## Beat-the-AI bonus
 An AI-related positive score component when a human solves before the AI's accepted correct answer. Default guesser credit is personal; the drawer's separate bonus is smaller and capped. Optional team mode retains one team bonus. Required AI-service failure neutralizes default-turn AI bonuses and reductions while retaining human-only scoring.
@@ -84,7 +102,7 @@ A disagreement about whether flagged content is a prohibited written answer clue
 In optional team mode, one team's race ending at its first correct human solve, forfeit or timeout. It is not the default individual turn-completion rule.
 
 ## Round
-A grouping of drawing turns in the match schedule; its exact UI/counting convention must be made explicit during backend planning. Optional parallel team mode uses a round for its simultaneous shared-prompt challenges. A drawing turn has its own identity and completion rule.
+One configured prompt position: one drawing turn in individual mode, or simultaneous private team challenges in optional team mode. The lobby count is total prompt rounds, not complete player rotations. A voided/interrupted generation does not consume this position.
 
 ## Role rotation
 In individual mode, drawer duty passes through the room players after a completed drawing turn. Optional team mode rotates drawers within each team. An individual solve alone never advances rotation.
@@ -135,7 +153,7 @@ An explicitly selected optional-mode arrangement such as 2v2 or 3v2v4. It is nev
 The first teammate correct guess in optional team mode, closing that team's challenge and creating one team result. This concept must not replace per-player solves in individual mode.
 
 ## Reconnect grace
-A bounded chance for a disconnected participant to return and synchronize. Individual solves remain personal; exact no-guesser/unresolved-player rules need an explicit default-mode policy. Optional team-mode no-guesser grace can forfeit only the affected team challenge.
+A 30-second chance for a disconnected drawer, or all remaining unsolved human guessers, to return while the affected drawing clock is paused. Accepted individual solves remain personal. On expiry close the affected turn/challenge with human outcomes retained. Host recovery also lasts 30 seconds; explicit host departure transfers authority immediately.
 
 ## Team forfeit
 An optional team-mode outcome when an active challenge has no recovered eligible human guesser before grace expires. It does not apply to all individual players when one person disconnects.

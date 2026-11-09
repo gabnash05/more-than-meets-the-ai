@@ -1,91 +1,37 @@
-import { expect, test } from "@playwright/test";
-import type { DrawingBatch } from "../src/contracts/drawing";
+import { expect, test, type Page } from "@playwright/test";
 
-test("batches a held stroke, flushes its tail, and stays silent while idle", async ({
-  browser,
-}) => {
-  const context = await browser.newContext();
-  try {
-    await context.addInitScript(() =>
-      localStorage.setItem(
-        "mtmai.player.v1",
-        JSON.stringify({
-          name: "Zork",
-          avatar: { shape: "pebble", expression: "smile", color: "cyan" },
-        }),
-      ),
-    );
-    const page = await context.newPage();
-    const batches: DrawingBatch[] = [];
-    const pending: Promise<void>[] = [];
-    page.on("console", (message) => {
-      if (
-        message.type() !== "info" ||
-        !message.text().startsWith("[drawing:batch]")
-      )
-        return;
-      pending.push(
-        message
-          .args()[1]
-          .jsonValue()
-          .then((value) => {
-            batches.push(value as DrawingBatch);
-          }),
-      );
-    });
-    await page.goto("/room/?code=EVENTS");
-    const canvas = page.locator("canvas[aria-label='Drawing canvas']");
-    await expect(canvas).toBeVisible();
-    const box = await canvas.boundingBox();
-    expect(box).not.toBeNull();
-    await page.waitForTimeout(500);
-    expect(batches).toHaveLength(0);
-    await page.mouse.move(box!.x + 30, box!.y + 30);
-    await page.mouse.down();
-    for (let i = 1; i <= 8; i++) {
-      await page.mouse.move(box!.x + 30 + i * 10, box!.y + 30 + i * 5);
-      await page.waitForTimeout(25);
-    }
-    await expect.poll(() => batches.length).toBeGreaterThan(0);
-    expect(batches.some((batch) => batch.flushReason === "interval")).toBe(
-      true,
-    );
-    await page.mouse.up();
-    await expect
-      .poll(() => batches.some((batch) => batch.flushReason === "stroke-end"))
-      .toBe(true);
-    await Promise.all(pending);
-    let expectedSeq = 1;
-    for (const batch of batches) {
-      expect(batch.clientSeq[0]).toBe(expectedSeq);
-      expect(batch.operationCount).toBe(batch.operations.length);
-      expect(batch.clientSeq[1]).toBe(expectedSeq + batch.operationCount - 1);
-      expect(batch.operations.map((op) => op.clientSeq)).toEqual(
-        Array.from({ length: batch.operationCount }, (_, i) => expectedSeq + i),
-      );
-      expect(batch.byteCount).toBe(
-        Buffer.byteLength(JSON.stringify(batch), "utf8"),
-      );
-      expect(batch.pointCount).toBe(
-        batch.operations.reduce(
-          (n, op) =>
-            n +
-            (op.type === "stroke.append"
-              ? op.points.length
-              : op.type === "stroke.start" ||
-                  op.type === "stroke.end" ||
-                  op.type === "fill"
-                ? 1
-                : 0),
-          0,
-        ),
-      );
-      expectedSeq = batch.clientSeq[1] + 1;
-    }
-    const count = batches.length;
-    await page.waitForTimeout(150);
-    expect(batches).toHaveLength(count);
-  } finally {
-    await context.close();
+async function journal(page: Page) {
+  return page.evaluate(() => new Promise<{ type: string; clientSeq?: number }[]>((resolve, reject) => {
+    const open = indexedDB.open("more-than-meets-drawing-journal", 1);
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      const read = db.transaction("journals", "readonly").objectStore("journals").getAll();
+      read.onerror = () => reject(read.error);
+      read.onsuccess = () => { resolve(read.result.flat()); db.close(); };
+    };
+  }));
+}
+
+test("persists a held stroke before release, flushes its tail, and stays idle", async ({ page }) => {
+  await page.goto("/review/");
+  await page.getByRole("button", { name: "Drawing · drawer" }).click();
+  const canvas = page.getByLabel("Drawing canvas");
+  await expect(canvas).toHaveAttribute("data-readonly", "false");
+  const box = (await canvas.boundingBox())!;
+  expect(await journal(page)).toHaveLength(0);
+  await page.mouse.move(box.x + 30, box.y + 30);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(box.x + 30 + i * 10, box.y + 30 + i * 5);
+    await page.waitForTimeout(25);
   }
+  await expect.poll(async () => (await journal(page)).length).toBeGreaterThan(0);
+  expect((await journal(page)).some(op => op.type === "stroke.append")).toBe(true);
+  await page.mouse.up();
+  await expect.poll(async () => (await journal(page)).at(-1)?.type).toBe("stroke.end");
+  const operations = await journal(page);
+  expect(operations.map(op => op.clientSeq)).toEqual(operations.map((_, i) => i + 1));
+  await page.waitForTimeout(150);
+  expect(await journal(page)).toEqual(operations);
 });

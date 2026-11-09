@@ -2,6 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type Atrament from "atrament";
+import { createUuid as uid } from "@/lib/uuid";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -12,8 +13,6 @@ import {
 } from "../../contracts/drawing";
 import { BitmapHistory, type Snapshot } from "./history";
 import styles from "./DrawingCanvas.module.css";
-
-const uid = () => crypto.randomUUID();
 
 type Engine = { undo(): void; redo(): void; clear(): void; finish(): void; hydrate(operations: CanvasOperation[]): Promise<void>; applyOperations(operations: CanvasOperation[]): Promise<void> };
 const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
@@ -53,6 +52,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       let worker: Worker | undefined;
       let cancelFill: (() => void) | undefined;
       let queue: (() => void)[] = [];
+      const pendingFillWaiters = new Set<(error: Error) => void>();
       let active:
         | {
             pointerId: number;
@@ -126,10 +126,8 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           pressure: e.pressure || 0.5,
         };
       };
-      const external = (p: CanvasPoint) => ({
-        x: (p.x * canvas.offsetWidth) / CANVAS_WIDTH,
-        y: (p.y * canvas.offsetHeight) / CANVAS_HEIGHT,
-      });
+      // Atrament receives a logical-size view so replay is independent of CSS sizing.
+      const external = (p: CanvasPoint) => ({ x: p.x, y: p.y });
       const finish = () => {
         if (!active || !artist) return;
         const s = active;
@@ -263,7 +261,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           ext = external(p);
         artist.mode = settings.tool === "eraser" ? "erase" : "draw";
         artist.color = settings.color;
-        artist.weight = (settings.size * canvas.offsetWidth) / CANVAS_WIDTH;
+        artist.weight = settings.size;
         artist.adaptiveStroke = false;
         artist.pressureLow = 1;
         artist.pressureHigh = 1;
@@ -340,7 +338,12 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       let replayStroke: { actionId: string; before: Snapshot; last: CanvasPoint; previousX: number; previousY: number } | undefined;
       const replay = async (operations: CanvasOperation[], reset: boolean) => {
         await ready;
-        if (busy) await new Promise<void>(resolve => queue.push(resolve));
+        if (busy) await new Promise<void>((resolve, reject) => {
+          pendingFillWaiters.add(reject);
+          queue.push(() => { pendingFillWaiters.delete(reject); resolve(); });
+        });
+        // An echo of our own operations must not interrupt a pointer still drawing.
+        if (!reset && operations.every(operation => seen.has(operation.opId))) return;
         if (active) finish();
         if (!alive) throw new Error("Canvas was disposed");
         replaying = true;
@@ -359,7 +362,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
               const ext = external(op.point);
               artist.mode = op.settings.tool === "eraser" ? "erase" : "draw";
               artist.color = op.settings.color;
-              artist.weight = (op.settings.size * canvas.offsetWidth) / CANVAS_WIDTH;
+              artist.weight = op.settings.size;
               artist.adaptiveStroke = false; artist.pressureLow = 1; artist.pressureHigh = 1;
               const before = snapshot();
               artist.beginStroke(ext.x, ext.y);
@@ -454,7 +457,16 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       import("atrament")
         .then(({ default: Constructor }) => {
           if (!alive) return;
-          artist = new Constructor(canvas, {
+          const logicalCanvas = new Proxy(canvas, {
+            get(target, key) {
+              if (key === "offsetWidth") return CANVAS_WIDTH;
+              if (key === "offsetHeight") return CANVAS_HEIGHT;
+              const value: unknown = Reflect.get(target, key, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+            set(target, key, value) { return Reflect.set(target, key, value, target); },
+          });
+          artist = new Constructor(logicalCanvas, {
             width: CANVAS_WIDTH,
             height: CANVAS_HEIGHT,
           });
@@ -470,6 +482,8 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         finish();
         alive = false;
         cancelFill?.();
+        for (const reject of pendingFillWaiters) reject(new Error("Canvas was disposed"));
+        pendingFillWaiters.clear();
         readyReject(new Error("Canvas was disposed"));
         engineRef.current = null;
         queue = [];

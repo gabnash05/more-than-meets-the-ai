@@ -4,6 +4,10 @@ The workflow is `.github/workflows/frontend-ci.yml`. It runs on pull requests,
 pushes to `main`, and manual dispatch. It uses Node.js 24.22.2 and npm's lockfile.
 It does not deploy anything or repair collaborator-owned application code.
 
+## Individual multiplayer milestone
+
+The existing workflow checks the local-demo frontend production export. The real API/PostgreSQL suite and remote multiplayer browser suite are additional local validation gates described in [backend validation](BACKEND-VALIDATION.md); this milestone does not claim a hosted pass for them. No hosted run, deployment, workflow coverage reduction, cache change or timeout change is part of the current implementation.
+
 ## Parallel execution and failure reporting
 
 Two independent jobs start together:

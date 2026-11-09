@@ -1,3 +1,4 @@
+import { createUuid } from "@/lib/uuid";
 import type {
   CanvasOperation,
   DrawingBatch,
@@ -30,9 +31,7 @@ export function createDrawingBatcher(
   const intervalMs = options.intervalMs ?? 33;
   const now = options.now ?? (() => performance.now());
   const send = options.send ?? sendDrawingBatch;
-  const instanceId =
-    globalThis.crypto?.randomUUID?.() ??
-    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const instanceId = createUuid();
   let sequence = 0;
   let batchNumber = 0;
   let pending: SequencedOperation[] = [];
@@ -52,6 +51,7 @@ export function createDrawingBatcher(
     const batch: DrawingBatch = {
       transport: options.transport ?? "console",
       ...(options.streamId ? { streamId: options.streamId } : {}),
+      ...(options.generation !== undefined ? { generation: options.generation } : {}),
       batchId: `${instanceId}-${++batchNumber}`,
       roomCode: options.roomCode,
       canvasId: options.canvasId,

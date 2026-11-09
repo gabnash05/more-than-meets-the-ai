@@ -11,6 +11,7 @@ import {
   type CrayonColor,
 } from "../../contracts/player";
 import { Avatar } from "./Avatar";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { readPlayerProfile, savePlayerProfile } from "./profile";
 import { createRoomClient, saveRoomSession } from "@/features/room-client";
 import "./player.css";
@@ -41,6 +42,8 @@ export default function LoginScreen() {
   const [room, setRoom] = useState(params.get("code") ?? "");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [editDestination, setEditDestination] = useState(false);
+  const invited = Boolean(params.get("code")) && !editDestination;
   const [motion, setMotion] = useState<BobStyle[]>([]);
   useEffect(() => {
     const profile = readPlayerProfile();
@@ -52,7 +55,7 @@ export default function LoginScreen() {
     }
     // Randomize only after hydration to keep server and client markup consistent.
     setMotion(
-      [0, 1, 2, 3].map((i) => ({
+      [0, 1, 2].map((i) => ({
         "--bob-duration": `${2.5 + i * 0.5 + Math.random() * 0.4}s`,
         "--bob-delay": `${[-1.3, -2.1, -0.7, -1.8][i]}s`,
         "--bob-lift": `${[-6, -10, -8, -7][i]}px`,
@@ -115,190 +118,63 @@ export default function LoginScreen() {
     <main className="player-login">
       <header className="player-header">
         <img src="/design/assets/more-than-meets-the-ai-icon.png" alt="" />
-        <strong>
-          More Than
-          <br />
-          Meets the AI
-        </strong>
+        <strong>More Than<br />Meets the AI</strong>
       </header>
       <div className="player-login-content">
         <section className="player-art">
-          <p className="player-eyebrow">Bring your best bad drawing.</p>
-          <h1>Your imagination wasn’t in its training data.</h1>
-          <div className="player-stage">
-            <div
-              className="player-bob player-decor player-star"
-              style={motion[0]}
-            >
-              <svg viewBox="0 0 80 80" aria-hidden="true">
-                <path
-                  d="m40 5 9 24 26 9-25 11-9 26-11-25L5 40l24-10Z"
-                  fill="#FF57B5"
-                  stroke="#181321"
-                  strokeWidth="3"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="m29 33 6 4m14 5 5-1"
-                  fill="none"
-                  stroke="#181321"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>
-            <div
-              className="player-bob player-decor player-brush"
-              style={motion[1]}
-            >
-              <img
-                src="/design/assets/more-than-meets-the-ai-icon.png"
-                alt=""
-              />
-            </div>
-            <div className="player-bob player-hero" style={motion[2]}>
-              <Avatar avatar={avatar} label="Your paint character preview" />
-            </div>
-            <div
-              className="player-bob player-decor player-splash"
-              style={motion[3]}
-            >
-              <svg viewBox="0 0 80 80" aria-hidden="true">
-                <path
-                  d="M40 15C44-4 63 4 58 22c17-10 30 8 12 18 18 7 10 28-9 20 3 20-20 24-22 4-13 16-30 1-17-13C2 50 1 28 23 30 10 14 29 0 40 15Z"
-                  fill="#37D66B"
-                  stroke="#181321"
-                  strokeWidth="3"
-                />
-                <circle
-                  cx="42"
-                  cy="39"
-                  r="10"
-                  fill="#FFE83D"
-                  stroke="#181321"
-                  strokeWidth="3"
-                />
-              </svg>
-            </div>
-            <span className="player-name-tag">
-              {name.trim() || "Your name"}
-            </span>
+          <div className="player-crew" aria-hidden="true">
+            <div className="player-bob" style={motion[0]}><Avatar avatar={{ shape: "spark", expression: "wink", color: "pink" }} /></div>
+            <div className="player-bob" style={motion[1]}><Avatar avatar={{ shape: "pebble", expression: "smile", color: "cyan" }} /></div>
+            <div className="player-bob" style={motion[2]}><Avatar avatar={{ shape: "droplet", expression: "wow", color: "green" }} /></div>
           </div>
-          <p>
-            A shape. A face. A splash of color.
-            <br />
-            Make a little creature that&apos;s all you.
-          </p>
+          <h1>Your imagination wasn’t in its training data.</h1>
+          <span className="player-pill">Draw together. Outsmart the AI.</span>
         </section>
         <form className="player-form" onSubmit={enter} noValidate>
           <div>
-            <p className="player-eyebrow">Meet your paint pal.</p>
-            <h2>Make your mark.</h2>
+            <p className="player-eyebrow">{invited ? "You’re invited" : "Who’s playing?"}</p>
+            <h2>{invited ? "Your crew is waiting." : "Make yourself at home."}</h2>
           </div>
+          {invited && <p className="player-invite">Join room <strong>{room}</strong></p>}
           <label className="player-field">
             Your name
-            <input
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                setError("");
-              }}
-              maxLength={24}
-              autoComplete="nickname"
-              placeholder="What should we call you?"
-            />
+            <input value={name} onChange={(e) => { setName(e.target.value); setError(""); }} maxLength={24} autoComplete="nickname" placeholder="What should we call you?" />
           </label>
-          <fieldset>
-            <legend>Pick a shape</legend>
-            <div className="player-options">
-              {shapes.map((shape) => (
-                <button
-                  key={shape}
-                  type="button"
-                  aria-pressed={avatar.shape === shape}
-                  onClick={() => setAvatar({ ...avatar, shape })}
-                >
-                  <Avatar avatar={{ ...avatar, shape }} />
-                  {title(shape)}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-          <fieldset>
-            <legend>Make a face</legend>
-            <div className="player-options">
-              {expressions.map((expression) => (
-                <button
-                  key={expression}
-                  type="button"
-                  aria-pressed={avatar.expression === expression}
-                  onClick={() => setAvatar({ ...avatar, expression })}
-                >
-                  {title(expression)}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-          <fieldset>
-            <legend>Add your color</legend>
-            <div className="player-colors">
-              {colors.map((color) => (
-                <button
-                  key={color}
-                  type="button"
-                  className="player-color"
-                  style={{ background: CRAYON_COLORS[color] }}
-                  aria-label={`${title(color)} character`}
-                  aria-pressed={avatar.color === color}
-                  onClick={() => setAvatar({ ...avatar, color })}
-                />
-              ))}
-            </div>
-          </fieldset>
-          <button
-            type="button"
-            className="player-button player-random"
-            onClick={randomize}
-          >
-            ✦ Surprise me
-          </button>
-          <div className="player-room">
-            <button
-              className="player-button player-create"
-              type="submit"
-              value="create"
-              disabled={pending}
-            >
-              {pending ? "Entering room…" : "Create a room →"}
-            </button>
-            <div className="player-join">
-              <label className="player-field">
-                Already got a code?
-                <input
-                  value={room}
-                  onChange={(e) => {
-                    setRoom(e.target.value);
-                    setError("");
-                  }}
-                  placeholder="Room code"
-                  maxLength={32}
-                />
+          <div className="player-editor">
+            <Avatar avatar={avatar} label="Your paint character preview" />
+            <div className="player-editor-controls">
+              <label className="player-field">Shape
+                <Select value={avatar.shape} onValueChange={(shape) => setAvatar({ ...avatar, shape: shape as AvatarShape })}>
+                  <SelectTrigger aria-label="Shape"><SelectValue /></SelectTrigger>
+                  <SelectContent>{shapes.map(shape => <SelectItem key={shape} value={shape}>{title(shape)}</SelectItem>)}</SelectContent>
+                </Select>
               </label>
-              <button
-                className="player-button player-join-button"
-                type="submit"
-                value="join"
-                disabled={pending}
-              >
-                Join room
-              </button>
+              <label className="player-field">Face
+                <Select value={avatar.expression} onValueChange={(expression) => setAvatar({ ...avatar, expression: expression as AvatarExpression })}>
+                  <SelectTrigger aria-label="Face"><SelectValue /></SelectTrigger>
+                  <SelectContent>{expressions.map(expression => <SelectItem key={expression} value={expression}>{title(expression)}</SelectItem>)}</SelectContent>
+                </Select>
+              </label>
+              <div className="player-colors" aria-label="Character color">
+                {colors.map(color => <button key={color} type="button" className="player-color" style={{ background: CRAYON_COLORS[color] }} aria-label={`${title(color)} character`} aria-pressed={avatar.color === color} onClick={() => setAvatar({ ...avatar, color })} />)}
+              </div>
+              <button type="button" className="player-mix" onClick={randomize}>Mix it up ↻</button>
             </div>
-            {error && (
-              <p className="player-error" role="alert">
-                {error}
-              </p>
-            )}
           </div>
+          {error && <p className="player-error" role="alert">{error}</p>}
+          {invited ? <>
+            <button className="player-button player-create" type="submit" value="join" disabled={pending}>{pending ? "Entering room…" : "Join room →"}</button>
+            <button className="player-mix" type="button" onClick={() => setEditDestination(true)}>Use a different code</button>
+          </> : <>
+            <button className="player-button player-create" type="submit" value="create" disabled={pending}>{pending ? "Entering room…" : "Create a room →"}</button>
+            <div className="player-divider" />
+            <div className="player-join">
+              <label className="player-field">Already got a code?
+                <input value={room} onChange={(e) => { setRoom(e.target.value); setError(""); }} placeholder="ABC234" maxLength={32} autoCapitalize="characters" autoComplete="off" />
+              </label>
+              <button className="player-button player-join-button" type="submit" value="join" disabled={pending}>Join room</button>
+            </div>
+          </>}
         </form>
       </div>
     </main>

@@ -13,20 +13,15 @@ const viewports = [
 for (const [width, height] of viewports) {
   test(`login and room fit ${width}x${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height });
-    await page.addInitScript(() =>
-      localStorage.setItem(
-        "mtmai.player.v1",
-        JSON.stringify({
-          name: "Zork",
-          avatar: { shape: "pebble", expression: "smile", color: "cyan" },
-        }),
-      ),
-    );
-    for (const path of ["/", "/room/?code=VIEWPORT"]) {
-      await page.goto(path);
-      if (path === "/")
+    for (const path of ["entry", "drawing"]) {
+      if (path === "entry") {
+        await page.goto("/");
         await expect(page.getByLabel("Your name")).toBeVisible();
-      else await expect(page.getByLabel("Drawing canvas")).toBeVisible();
+      } else {
+        await page.goto("/review/");
+        await page.getByRole("button", { name: "Drawing · drawer" }).click();
+        await expect(page.getByLabel("Drawing canvas")).toHaveAttribute("data-readonly", "false");
+      }
       await page.evaluate(() => document.fonts.ready);
       const layout = await page.evaluate(() => ({
         width: innerWidth,
@@ -56,12 +51,36 @@ for (const [width, height] of viewports) {
       );
       expect(layout.overflow, `${path}: clipped nested content`).toEqual([]);
       expect(layout.fonts).toBe(true);
-      if (path !== "/" && width >= 1100) {
+      if (path === "drawing" && width >= 1100) {
         const toolbar = await page.locator(".room-tools").boundingBox();
         expect(
           toolbar!.y + toolbar!.height,
           "canvas tools should fit with the canvas",
         ).toBeLessThanOrEqual(height);
+      }
+      if (path === "drawing" && width <= 820) {
+        const positions = await page.evaluate(() => {
+          const bottom = (selector: string) => {
+            const element = document.querySelector(selector);
+            return element?.getBoundingClientRect().bottom ?? null;
+          };
+          const top = (selector: string) => {
+            const element = document.querySelector(selector);
+            return element?.getBoundingClientRect().top ?? null;
+          };
+          return {
+            drawingBottom: bottom(".room-drawing"),
+            chatTop: top("[data-testid='room-chat']"),
+            chatBottom: bottom("[data-testid='room-chat']"),
+            teamsTop: top(".room-teams"),
+            aiTop: top(".room-ai"),
+          };
+        });
+        expect(positions.chatTop, "chat should follow the drawing").toBeGreaterThanOrEqual(positions.drawingBottom!);
+        expect(positions.teamsTop, "roster should follow chat").toBeGreaterThanOrEqual(positions.chatBottom!);
+        if (positions.aiTop !== null) {
+          expect(positions.aiTop, "AI card should follow chat").toBeGreaterThanOrEqual(positions.chatBottom!);
+        }
       }
     }
   });

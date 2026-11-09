@@ -1,0 +1,37 @@
+[
+  {
+    "path": "DrawMon-ACMMM22_Dataset/README.md",
+    "bytes": 1290,
+    "compressed_bytes": 1290,
+    "crc32": "5637857f",
+    "offset": 0
+  },
+  {
+    "path": "DrawMon-ACMMM22_Dataset/multiclass/test.zip",
+    "bytes": 92752897,
+    "compressed_bytes": 92752897,
+    "crc32": "850d4b8b",
+    "offset": 1369
+  },
+  {
+    "path": "DrawMon-ACMMM22_Dataset/multiclass/train.zip",
+    "bytes": 171861581,
+    "compressed_bytes": 171861581,
+    "crc32": "eb71675b",
+    "offset": 92754355
+  },
+  {
+    "path": "DrawMon-ACMMM22_Dataset/only_text/test.zip",
+    "bytes": 10293370,
+    "compressed_bytes": 10293370,
+    "crc32": "285b4c75",
+    "offset": 264616026
+  },
+  {
+    "path": "DrawMon-ACMMM22_Dataset/only_text/train.zip",
+    "bytes": 122674174,
+    "compressed_bytes": 122674174,
+    "crc32": "8cabc31d",
+    "offset": 274909484
+  }
+]

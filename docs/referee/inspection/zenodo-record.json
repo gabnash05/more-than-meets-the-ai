@@ -1,0 +1,126 @@
+{
+  "created": "2022-11-17T10:52:10.567076+00:00",
+  "modified": "2022-11-17T14:26:42.216919+00:00",
+  "id": 7330402,
+  "conceptrecid": "7330401",
+  "doi": "10.5281/zenodo.7330402",
+  "conceptdoi": "10.5281/zenodo.7330401",
+  "doi_url": "https://doi.org/10.5281/zenodo.7330402",
+  "metadata": {
+    "title": "DrawMon: A Distributed System for Detection of Atypical Sketch Content in Concurrent Pictionary Games",
+    "doi": "10.5281/zenodo.7330402",
+    "publication_date": "2022-11-17",
+    "description": "<p>Dataset for training CanvasNet, a&nbsp;model for detecting atypical sketch instances.&nbsp;CanvasNet processes the rendered image as input and outputs a list of atypical activities (if any) along with associated meta-information (atypical content category, 2-D spatial location).</p>\n\n<p>For more details, visit our page&nbsp;https://drawm0n.github.io/.</p>",
+    "access_right": "open",
+    "creators": [
+      {
+        "name": "Nikhil Bansal",
+        "affiliation": "IIIT-H"
+      },
+      {
+        "name": "Kartik Gupta",
+        "affiliation": "IIIT-H"
+      },
+      {
+        "name": "Kiruthika Kannan",
+        "affiliation": "IIIT-H"
+      },
+      {
+        "name": "Sivani Pentapati",
+        "affiliation": "IIIT-H"
+      },
+      {
+        "name": "Ravi Kiran Sarvadevabhatla",
+        "affiliation": "IIIT-H"
+      }
+    ],
+    "keywords": [
+      "computer-vision deep-learning dataset sketch-recognition pictionary text-detection-recognition tensorflow2 separable-convolution acmmm2022"
+    ],
+    "resource_type": {
+      "title": "Dataset",
+      "type": "dataset"
+    },
+    "license": {
+      "id": "cc-by-4.0"
+    },
+    "relations": {
+      "version": [
+        {
+          "index": 0,
+          "is_last": true,
+          "parent": {
+            "pid_type": "recid",
+            "pid_value": "7330401"
+          }
+        }
+      ]
+    }
+  },
+  "title": "DrawMon: A Distributed System for Detection of Atypical Sketch Content in Concurrent Pictionary Games",
+  "links": {
+    "self": "https://zenodo.org/api/records/7330402",
+    "self_html": "https://zenodo.org/records/7330402",
+    "preview_html": "https://zenodo.org/records/7330402?preview=1",
+    "doi": "https://doi.org/10.5281/zenodo.7330402",
+    "self_doi": "https://doi.org/10.5281/zenodo.7330402",
+    "self_doi_html": "https://zenodo.org/doi/10.5281/zenodo.7330402",
+    "reserve_doi": "https://zenodo.org/api/records/7330402/draft/pids/doi",
+    "parent": "https://zenodo.org/api/records/7330401",
+    "parent_html": "https://zenodo.org/records/7330401",
+    "parent_doi": "https://doi.org/10.5281/zenodo.7330401",
+    "parent_doi_html": "https://zenodo.org/doi/10.5281/zenodo.7330401",
+    "self_iiif_manifest": "https://zenodo.org/api/iiif/record:7330402/manifest",
+    "self_iiif_sequence": "https://zenodo.org/api/iiif/record:7330402/sequence/default",
+    "files": "https://zenodo.org/api/records/7330402/files",
+    "media_files": "https://zenodo.org/api/records/7330402/media-files",
+    "latest": "https://zenodo.org/api/records/7330402/versions/latest",
+    "latest_html": "https://zenodo.org/records/7330402/latest",
+    "versions": "https://zenodo.org/api/records/7330402/versions",
+    "draft": "https://zenodo.org/api/records/7330402/draft",
+    "access_links": "https://zenodo.org/api/records/7330402/access/links",
+    "access_grants": "https://zenodo.org/api/records/7330402/access/grants",
+    "access_users": "https://zenodo.org/api/records/7330402/access/users",
+    "access_request": "https://zenodo.org/api/records/7330402/access/request",
+    "access": "https://zenodo.org/api/records/7330402/access",
+    "communities": "https://zenodo.org/api/records/7330402/communities",
+    "communities-suggestions": "https://zenodo.org/api/records/7330402/communities-suggestions",
+    "request_deletion": "https://zenodo.org/api/records/7330402/request-deletion",
+    "file_modification": "https://zenodo.org/api/records/7330402/file-modification",
+    "quota_increase": "https://zenodo.org/api/records/7330402/quota-increase",
+    "requests": "https://zenodo.org/api/records/7330402/requests"
+  },
+  "updated": "2022-11-17T14:26:42.216919+00:00",
+  "recid": "7330402",
+  "revision": 2,
+  "files": [
+    {
+      "id": "1940d4a9-fa6d-44c0-8229-edd63bdd1222",
+      "key": "DrawMon-ACMMM22_Dataset.zip",
+      "size": 397584204,
+      "checksum": "md5:c199d21b6121819c81cfcda68cd440bd",
+      "links": {
+        "self": "https://zenodo.org/api/records/7330402/files/DrawMon-ACMMM22_Dataset.zip/content"
+      }
+    }
+  ],
+  "swh": {},
+  "owners": [
+    {
+      "id": "439754"
+    }
+  ],
+  "status": "published",
+  "stats": {
+    "downloads": 72,
+    "unique_downloads": 67,
+    "views": 354,
+    "unique_views": 339,
+    "version_downloads": 72,
+    "version_unique_downloads": 67,
+    "version_unique_views": 339,
+    "version_views": 354
+  },
+  "state": "done",
+  "submitted": true
+}

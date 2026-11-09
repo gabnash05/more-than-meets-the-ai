@@ -63,6 +63,29 @@ test("restores identical pixels and does not echo replay operations", async ({ p
   await expect(canvas).toHaveAttribute("aria-busy", "false");
   await expect.poll(() => pixels(page)).toEqual(before);
   expect((await journal(page)).count).toBe(beforeCount);
+  const prefix = await page.evaluate(() => new Promise<import("../src/contracts/drawing").CanvasOperation[]>((resolve, reject) => {
+    const request = indexedDB.open("more-than-meets-drawing-journal", 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      const read = db.transaction("journals").objectStore("journals").getAll();
+      read.onerror = () => reject(read.error);
+      read.onsuccess = () => { resolve(read.result.flat()); db.close(); };
+    };
+  }));
+  const expectedPng = await canvas.evaluate((element: HTMLCanvasElement) => {
+    const flat = document.createElement("canvas");
+    flat.width = element.width;
+    flat.height = element.height;
+    const context = flat.getContext("2d")!;
+    context.fillStyle = "white";
+    context.fillRect(0, 0, flat.width, flat.height);
+    context.drawImage(element, 0, 0);
+    return flat.toDataURL("image/png");
+  });
+  await page.goto("/review/canvas/");
+  await expect(page.getByLabel("Drawing canvas")).toHaveAttribute("data-ready", "true");
+  expect(await page.evaluate(operations => window.canvasReview!.renderPng(operations), prefix)).toBe(expectedPng);
 });
 
 test("guest cannot paint on the shared canvas", async ({ page }) => {
@@ -102,9 +125,70 @@ test("local recovery closes an interrupted stored stroke", async ({ page }) => {
   await page.reload();
   await expect(canvas).toHaveAttribute("data-readonly", "false");
   await expect.poll(async () => (await journal(page)).lastType).toBe("stroke.end");
-  const pixel = await canvas.evaluate((element: HTMLCanvasElement) => Array.from(element.getContext("2d")!.getImageData(350, 300, 1, 1).data));
+  // Atrament smooths a single 300->400 sample, so the rendered segment ends near 315.
+  const pixel = await canvas.evaluate((element: HTMLCanvasElement) => Array.from(element.getContext("2d")!.getImageData(308, 300, 1, 1).data));
   expect(pixel[3]).toBeGreaterThan(0);
   const count = (await journal(page)).count;
   await clickAt(page, 500, 500);
   await expect.poll(async () => (await journal(page)).count).toBeGreaterThan(count);
+});
+
+
+test("an echo during a held pointer does not end the local stroke", async ({ page }) => {
+  await page.goto("/review/canvas/");
+  const canvas = page.getByLabel("Drawing canvas");
+  await expect(canvas).toHaveAttribute("data-ready", "true");
+  const start = await position(page, 150, 150), middle = await position(page, 300, 150), end = await position(page, 450, 150);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(middle.x, middle.y, { steps: 5 });
+  await page.evaluate(() => window.canvasReview!.echo());
+  expect(await page.evaluate(() => window.canvasReview!.operations().filter(op => op.type === "stroke.end").length)).toBe(0);
+  await page.mouse.move(end.x, end.y, { steps: 5 });
+  await page.mouse.up();
+  const operations = await page.evaluate(() => window.canvasReview!.operations());
+  expect(operations.filter(op => op.type === "stroke.start")).toHaveLength(1);
+  expect(operations.filter(op => op.type === "stroke.end")).toHaveLength(1);
+  expect(operations.some(op => op.type === "stroke.append" && op.points.some(point => point.x > 400))).toBe(true);
+});
+
+test("unmount rejects replay queued behind a pending fill", async ({ page }) => {
+  await page.addInitScript(() => {
+    class PausedWorker {
+      onmessage = null;
+      onerror = null;
+      postMessage() {}
+      terminate() {}
+    }
+    window.Worker = PausedWorker as unknown as typeof Worker;
+  });
+  await page.goto("/review/canvas/");
+  const canvas = page.getByLabel("Drawing canvas");
+  await expect(canvas).toHaveAttribute("data-ready", "true");
+  await page.getByRole("button", { name: "Fill" }).click();
+  await clickAt(page, 100, 100);
+  await expect(canvas).toHaveAttribute("aria-busy", "true");
+  await page.evaluate(() => window.canvasReview!.replayAndUnmount());
+  await expect(page.getByTestId("replay-outcome")).toHaveText("Canvas was disposed");
+});
+
+test("saved drawing viewer replays identical pixels at its own size", async ({ page }) => {
+  await page.goto("/review/canvas/");
+  const live = page.locator("main").getByLabel("Drawing canvas");
+  await expect(live).toHaveAttribute("data-ready", "true");
+  const box = (await live.boundingBox())!;
+  await page.mouse.move(box.x + box.width * .2, box.y + box.height * .2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * .6, box.y + box.height * .5, { steps: 15 });
+  await page.mouse.up();
+  const hash = (canvas: typeof live) => canvas.evaluate(async (element: HTMLCanvasElement) => {
+    const data = element.getContext("2d")!.getImageData(0, 0, element.width, element.height).data;
+    return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
+  });
+  const original = await hash(live);
+  await page.getByRole("button", { name: "View saved drawings" }).click();
+  const saved = page.getByRole("dialog").getByLabel("Drawing canvas");
+  await expect(saved).toHaveAttribute("data-readonly", "true");
+  await expect.poll(() => hash(saved)).toEqual(original);
+  await expect.poll(() => hash(live)).toEqual(original);
 });

@@ -1,4 +1,6 @@
 "use client";
+
+import { createUuid } from "@/lib/uuid";
 import {
   useCallback,
   useEffect,
@@ -39,6 +41,8 @@ import DrawingCanvas from "@/features/canvas/DrawingCanvas";
 import { createDrawingBatcher } from "@/features/drawing-events";
 import { Avatar } from "@/features/player/Avatar";
 import { AiCard } from "./AiCard";
+import { SavedSketch } from "./SavedSketch";
+import { FinalResults, RoundRecap } from "./Results";
 import "./room.css";
 
 const emptyStatus: CanvasStatus = {
@@ -52,28 +56,52 @@ function Choice({
   value,
   options,
   onChange,
+  disabled = false,
 }: {
   label: string;
   value: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; disabled?: boolean }[];
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <label className="room-setting">
       <span>{label}</span>
-      <Select value={value} onValueChange={onChange}>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
         <SelectTrigger aria-label={label}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {options.map((o) => (
-            <SelectItem key={o.value} value={o.value}>
+            <SelectItem key={o.value} value={o.value} disabled={o.disabled}>
               {o.label}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
     </label>
+  );
+}
+function ChatMessages({ snapshot }: { snapshot: RoomSession["snapshot"] }) {
+  const list = useRef<HTMLDivElement>(null);
+  const latestId = snapshot.chat.at(-1)?.id;
+  useEffect(() => {
+    if (list.current) list.current.scrollTop = list.current.scrollHeight;
+  }, [latestId]);
+
+  return (
+    <div ref={list} className="room-messages" aria-live="polite">
+      {snapshot.chat.length ? snapshot.chat.map(message => {
+        const playerName = snapshot.players.find(player => player.id === message.playerId)?.profile.name ?? "Room";
+        const correct = message.kind === "correct";
+        return (
+          <p key={message.id} className={correct ? "room-message-correct" : undefined}>
+            <strong>{playerName}: </strong>
+            {correct ? <><span aria-hidden="true">✓ </span>Correct!</> : message.text}
+          </p>
+        );
+      }) : <p>Say hello to the room!</p>}
+    </div>
   );
 }
 const numbers = (from: number, to: number, suffix: string) =>
@@ -92,12 +120,20 @@ export default function RoomScreen() {
     [copyStatus, setCopyStatus] = useState(""),
     [settings, setSettings] = useState(DEFAULT_DRAWING_SETTINGS),
     [canvasStatus, setCanvasStatus] = useState(emptyStatus),
-    [caughtUp, setCaughtUp] = useState(false);
+    [caughtUp, setCaughtUp] = useState(false),
+    [clock, setClock] = useState(() => Date.now()),
+    [clockOffset, setClockOffset] = useState(0),
+    [streamVersion, setStreamVersion] = useState(0),
+    [pendingDrawing, setPendingDrawing] = useState(0),
+    [settingsPending, setSettingsPending] = useState(false),
+    [settingsFailed, setSettingsFailed] = useState(false);
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 250); return () => clearInterval(timer); }, []);
   const client = useRef<RoomClient | null>(null),
     canvas = useRef<DrawingCanvasHandle>(null),
     batcher = useRef<DrawingBatcher | null>(null);
   const activeCanvas = useRef<{ id: string; generation: number } | null>(null);
-  activeCanvas.current = session?.snapshot.game ? { id: session.snapshot.game.canvasId, generation: session.snapshot.game.generation } : null;
+  const inviteCodeInput = useRef<HTMLInputElement>(null);
+  const inviteLinkInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const saved = loadRoomSession();
     if (!code || !saved || saved.code !== code) {
@@ -109,7 +145,15 @@ export default function RoomScreen() {
     let alive = true;
     const unsubscribe = c.subscribe((event) => {
       if (!alive) return;
-      if (event.type === "snapshot")
+      if (event.type === "snapshot") {
+        if (event.snapshot.serverTime !== undefined) setClockOffset(event.snapshot.serverTime - Date.now());
+        const game = event.snapshot.game;
+        const next = game ? { id: game.canvasId, generation: game.generation } : null;
+        if (activeCanvas.current?.id !== next?.id || activeCanvas.current?.generation !== next?.generation) {
+          activeCanvas.current = next;
+          setPendingDrawing(0);
+          setCaughtUp(false);
+        }
         setSession((old) =>
           old
             ? {
@@ -119,13 +163,23 @@ export default function RoomScreen() {
               }
             : old,
         );
+      }
+      if (event.type === "drawing-queue") setPendingDrawing(event.pending);
+      if (event.type === "gameplay" && event.name === "drawing-tail-discarded") { setError("Some drawing changes were not confirmed saved and could not be restored."); setStreamVersion(version => version + 1); }
       if (event.type === "connection") {
         setConnection(event.status);
+        if (event.message === "Room session ended") {
+          const current = loadRoomSession();
+          if (current?.code === code && current.resumeToken === saved.resumeToken) clearRoomSession();
+          setSession(null);
+          setError(event.message);
+        }
         if (event.status !== "connected") setCaughtUp(false);
       }
       if (event.type === "drawing") {
+        if (c.getSession()?.snapshot.phase === "interrupted") return;
         if (activeCanvas.current?.id !== event.canvasId || activeCanvas.current.generation !== event.generation) return;
-        setCaughtUp(false);
+        if (event.reset) setCaughtUp(false);
         const replay = event.reset
           ? canvas.current?.hydrate(event.operations)
           : canvas.current?.applyOperations(event.operations);
@@ -141,6 +195,9 @@ export default function RoomScreen() {
     c.resume(code, saved.resumeToken)
       .then((s) => {
         if (alive) {
+          if (s.snapshot.serverTime !== undefined) setClockOffset(s.snapshot.serverTime - Date.now());
+          const game = s.snapshot.game;
+          activeCanvas.current = game ? { id: game.canvasId, generation: game.generation } : null;
           setSession(s);
           if (!s.snapshot.game) void c.resync().catch(e => setError(e instanceof Error ? e.message : "Could not restore this room."));
         }
@@ -166,12 +223,20 @@ export default function RoomScreen() {
     host = snap?.hostId === session?.playerId,
     role = session?.privateState?.role,
     drawing = snap?.phase === "drawing",
-    result = snap?.phase === "result";
+    result = snap?.phase === "result",
+    choosing = snap?.phase === "choosing",
+    paused = !!game?.pause,
+    promptsExhausted = snap?.startBlockers?.includes("Not enough unused prompts remain.") ?? false,
+    teamDone = snap?.settings.mode === "team" && game?.teamProgress?.some(progress => progress.teamId === me?.teamId && (progress.status === "solved" || progress.status === "finished"));
+  const seconds = game?.pause ? Math.ceil(game.pause.remainingMs / 1000) : game?.deadlineAt ? Math.max(0, Math.ceil((game.deadlineAt - clock - clockOffset) / 1000)) : null;
+  const displayTime = seconds === null ? game?.time ?? "--:--" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   useEffect(() => {
     if (!code || !game?.canvasId) return;
     const b = createDrawingBatcher({
       roomCode: code,
+      streamId: createUuid(),
       canvasId: game.canvasId,
+      generation: game.generation,
       transport: "room-client",
       send: (batch) => {
         void client.current
@@ -184,24 +249,24 @@ export default function RoomScreen() {
       b.dispose();
       batcher.current = null;
     };
-  }, [code, game?.canvasId, game?.generation]);
+  }, [code, game?.canvasId, game?.generation, streamVersion]);
   useEffect(() => {
     if (!game?.canvasId) return;
-    void client.current
-      ?.resync()
-      .catch((e) =>
-        setError(
-          e instanceof Error ? e.message : "Could not restore the drawing.",
-        ),
-      );
-  }, [game?.canvasId, game?.generation]);
+    if (snap?.phase === "interrupted") {
+      void client.current?.getInterruptedSketch(game.canvasId, game.generation)
+        .then(sketch => canvas.current?.hydrate(sketch.operations))
+        .catch(() => setError("Could not load the saved drawing."));
+    } else {
+      void client.current?.resync().catch((e) => setError(e instanceof Error ? e.message : "Could not restore the drawing."));
+    }
+  }, [game?.canvasId, game?.generation, snap?.phase]);
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable=true]"))
         return;
       if (
-        !drawing ||
+        !drawing || paused || teamDone ||
         role !== "drawer" ||
         !caughtUp ||
         connection !== "connected" ||
@@ -232,7 +297,8 @@ export default function RoomScreen() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [drawing, role, caughtUp, connection, canvasStatus.busy]);
+  }, [drawing, paused, teamDone, role, caughtUp, connection, canvasStatus.busy]);
+  const getClient = useCallback(() => client.current, []);
   const action = useCallback(async (fn: () => Promise<void>) => {
     setError("");
     try {
@@ -258,17 +324,37 @@ export default function RoomScreen() {
   }
   function change(next: Partial<RoomSettings>) {
     if (!snap) return;
-    void action(() =>
-      client.current!.updateSettings({ ...snap.settings, ...next }),
-    );
+    setSettingsPending(true);
+    setError("");
+    void client.current!.updateSettings({ ...snap.settings, ...next })
+      .then(() => setSettingsFailed(false))
+      .catch((e: unknown) => {
+        setSettingsFailed(true);
+        setError(e instanceof Error ? e.message : "Could not update settings. Please try again.");
+      })
+      .finally(() => setSettingsPending(false));
   }
-  async function copy(value: string) {
+  async function copy(input: HTMLInputElement | null) {
+    if (!input) return;
+    let copied = false;
     try {
-      await navigator.clipboard.writeText(value);
-      setCopyStatus("Copied!");
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(input.value);
+        copied = true;
+      }
     } catch {
-      setCopyStatus("Copy unavailable. Select the text and copy it manually.");
+      // Clipboard permission can be denied even on HTTPS.
     }
+    if (!copied) {
+      input.focus();
+      input.select();
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        // Leave the selected text available for manual copying.
+      }
+    }
+    setCopyStatus(copied ? "Copied!" : "Text selected. Copy it manually.");
   }
   if (!session || !snap || !me)
     return (
@@ -308,7 +394,7 @@ export default function RoomScreen() {
       .filter((p) => snap.settings.mode === "individual" || p.teamId === teamId)
       .map((p) => (
         <div
-          className={`room-person ${p.solved ? "is-solved" : ""}`}
+          className={`room-person ${drawing && p.solved ? "is-solved" : ""}`}
           key={p.id}
         >
           <Avatar avatar={p.profile.avatar} />
@@ -321,9 +407,9 @@ export default function RoomScreen() {
               {p.id === snap.hostId ? "Host · " : ""}
               {!p.connected
                 ? "Disconnected"
-                : p.solved
+                : drawing && p.solved
                   ? "Solved"
-                  : game?.drawerId === p.id
+                  : drawing && game?.drawerId === p.id
                     ? "Drawing"
                     : "Connected"}
             </small>
@@ -358,37 +444,51 @@ export default function RoomScreen() {
               Room <strong>{code}</strong> ↗
             </button>
           </DialogTrigger>
-          <DialogContent>
-            <DialogTitle>Invite your crew</DialogTitle>
-            <DialogDescription>
-              Share this code or link to invite someone.
-            </DialogDescription>
-            <label className="room-setting">
-              Room code
-              <input
-                readOnly
-                value={code}
-                onFocus={(e) => e.currentTarget.select()}
-              />
-            </label>
-            <button className="room-button" onClick={() => void copy(code)}>
-              Copy code
-            </button>
-            <label className="room-setting">
-              Room link
-              <input
-                readOnly
-                value={link}
-                onFocus={(e) => e.currentTarget.select()}
-              />
-            </label>
-            <button className="room-button" onClick={() => void copy(link)}>
-              Copy link
-            </button>
-            <p aria-live="polite">{copyStatus}</p>
-            <DialogClose asChild>
-              <button className="room-button">Done</button>
-            </DialogClose>
+          <DialogContent className="room-invite-dialog">
+            <div className="room-invite-header">
+              <DialogTitle>Invite your crew</DialogTitle>
+              <DialogDescription>
+                Share this code or link to invite someone.
+              </DialogDescription>
+            </div>
+            <div className="room-invite-fields">
+              <div className="room-invite-field">
+                <label htmlFor="room-invite-code">Room code</label>
+                <div className="room-invite-row">
+                  <input
+                    id="room-invite-code"
+                    ref={inviteCodeInput}
+                    readOnly
+                    value={code}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <button className="room-button" onClick={() => void copy(inviteCodeInput.current)}>
+                    Copy code
+                  </button>
+                </div>
+              </div>
+              <div className="room-invite-field">
+                <label htmlFor="room-invite-link">Room link</label>
+                <div className="room-invite-row">
+                  <input
+                    id="room-invite-link"
+                    ref={inviteLinkInput}
+                    readOnly
+                    value={link}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <button className="room-button" onClick={() => void copy(inviteLinkInput.current)}>
+                    Copy link
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="room-invite-footer">
+              <p aria-live="polite">{copyStatus}</p>
+              <DialogClose asChild>
+                <button className="room-button room-invite-done">Done</button>
+              </DialogClose>
+            </div>
           </DialogContent>
         </Dialog>
         <div className="room-current">
@@ -401,13 +501,13 @@ export default function RoomScreen() {
                 ↪
               </button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="room-action-dialog">
               <DialogTitle>Leave this room?</DialogTitle>
               <DialogDescription>
                 Your seat will be released. If you are host, hosting transfers
                 to another connected player; an empty room closes.
               </DialogDescription>
-              <button
+              <div className="room-modal-actions"><button
                 className="room-button"
                 onClick={() =>
                   void action(async () => {
@@ -421,17 +521,28 @@ export default function RoomScreen() {
               </button>
               <DialogClose asChild>
                 <button className="room-button">Stay</button>
-              </DialogClose>
+              </DialogClose></div>
             </DialogContent>
           </Dialog>
         </div>
       </header>
+      {!!snap.interruptedSketches?.length && <Dialog>
+        <DialogTrigger asChild><button className="room-button">View saved drawings</button></DialogTrigger>
+        <DialogContent>
+          <DialogTitle>Saved drawings</DialogTitle>
+          <DialogDescription>These drawings show the saved portion of interrupted rounds.</DialogDescription>
+          {snap.interruptedSketches.map(sketch => <section key={`${sketch.canvasId}:${sketch.generation}`}><h3>Interrupted drawing</h3><SavedSketch getClient={getClient} canvasId={sketch.canvasId} generation={sketch.generation} /></section>)}
+        </DialogContent>
+      </Dialog>}
       {error && (
         <p className="room-error" role="alert">
           {error}
         </p>
       )}
       {!!snap.hostDisconnectedUntil && <p className="room-error" role="status">Host reconnecting. Hosting is reserved briefly before transfer.</p>}
+      {drawing && teamDone && <p className="room-error" role="status">Your team has finished. Waiting for the other teams.</p>}
+      {paused && <p className="room-error" role="status">Turn paused while {game?.pause?.reason === "drawer-disconnected" ? "the drawer reconnects" : "guessers reconnect"}.</p>}
+      {game?.saving === "blocked" && <p className="room-error" role="status">Saving is delayed. Waiting for the room service.</p>}
       {drawing && game && !snap.players.find(p => p.id === game.drawerId)?.connected && <p className="room-error" role="status">The drawer disconnected. Their drawing remains visible.</p>}
       {(connection !== "connected" || (drawing && !caughtUp)) && (
         <p className="room-error" role="status">
@@ -460,7 +571,7 @@ export default function RoomScreen() {
                 </p>
               </div>
             </div>
-            <section className="room-panel">
+            <section className="room-panel room-roster">
               <h2>
                 {snap.settings.mode === "individual"
                   ? "Everyone vs AI"
@@ -485,24 +596,9 @@ export default function RoomScreen() {
                     </div>
                   ))}
             </section>
-            <section className="room-panel room-chat">
+            <section className="room-panel room-chat room-lobby-chat">
               <h2>Room chat</h2>
-              <div className="room-messages" aria-live="polite">
-                {snap.chat.length ? (
-                  snap.chat.map((m) => (
-                    <p key={m.id}>
-                      <strong>
-                        {snap.players.find((p) => p.id === m.playerId)?.profile
-                          .name ?? "Room"}
-                        :{" "}
-                      </strong>
-                      {m.text}
-                    </p>
-                  ))
-                ) : (
-                  <p>Say hello to the room!</p>
-                )}
-              </div>
+              <ChatMessages snapshot={snap} />
               <form onSubmit={send}>
                 <input
                   aria-label="Message the room"
@@ -521,11 +617,12 @@ export default function RoomScreen() {
               {host ? (
                 <>
                   <Choice
+                    disabled={settingsPending}
                     label="Mode"
                     value={snap.settings.mode}
                     options={[
                       { value: "individual", label: "Individual" },
-                      { value: "team", label: "Team" },
+                      { value: "team", label: session.demo ? "Team" : "Team (coming later)", disabled: !session.demo },
                     ]}
                     onChange={(v) =>
                       change({ mode: v as RoomSettings["mode"] })
@@ -533,6 +630,7 @@ export default function RoomScreen() {
                   />
                   {snap.settings.mode === "individual" ? (
                     <Choice
+                      disabled={settingsPending}
                       label="Player seats"
                       value={String(snap.settings.seats)}
                       options={numbers(2, 8, "seats")}
@@ -541,12 +639,14 @@ export default function RoomScreen() {
                   ) : (
                     <>
                       <Choice
+                        disabled={settingsPending}
                         label="Teams"
                         value={String(snap.settings.teamCount)}
                         options={numbers(2, 4, "teams")}
                         onChange={(v) => change({ teamCount: Number(v) })}
                       />
                       <Choice
+                        disabled={settingsPending}
                         label="Seats per team"
                         value={String(snap.settings.seatsPerTeam)}
                         options={numbers(2, 8, "seats")}
@@ -555,6 +655,7 @@ export default function RoomScreen() {
                     </>
                   )}
                   <Choice
+                    disabled={settingsPending}
                     label="Prompt rounds"
                     value={String(snap.settings.rounds)}
                     options={numbers(1, 20, "rounds")}
@@ -576,9 +677,9 @@ export default function RoomScreen() {
                 </p>
               ))}
               <button
-                className="room-primary"
+                className="room-primary room-desktop-start"
                 disabled={
-                  !host || blockers.length > 0 || connection !== "connected"
+                  !host || settingsPending || settingsFailed || blockers.length > 0 || connection !== "connected"
                 }
                 onClick={() => void action(() => client.current!.start())}
               >
@@ -589,12 +690,19 @@ export default function RoomScreen() {
               <h2>How this room plays</h2>
               <p>
                 {snap.settings.mode === "individual"
-                  ? "Each guesser earns personal points. Solve before the AI for a stronger result; the drawer earns recognition and may earn a smaller AI bonus."
+                  ? "Each guesser earns personal speed points. The drawer earns recognition when people solve the drawing."
                   : "Work together for shared team points. Teams draw on separate canvases."}
               </p>
+              {!session.demo && <p>AI guesses are scored separately from human points.</p>}
               <p>Drawers rotate each prompt round. No written answer clues.</p>
             </section>
           </aside>
+          <div className="room-mobile-start">
+            {blockers.map((blocker) => <p key={blocker}>{blocker}</p>)}
+            <button className="room-primary" disabled={!host || settingsPending || settingsFailed || blockers.length > 0 || connection !== "connected"} onClick={() => void action(() => client.current!.start())}>
+              {host ? "Start match →" : `Waiting for ${snap.players.find(p => p.id === snap.hostId)?.profile.name ?? "host"}`}
+            </button>
+          </div>
         </div>
       ) : (
         <div className="room-layout">
@@ -607,36 +715,24 @@ export default function RoomScreen() {
               </h2>
               {roster(me.teamId)}
             </section>
-            {snap.settings.mode === "team" && snap.teams.filter(t => t.id !== me.teamId).map(t => <section className="room-panel" key={t.id}><h2>{t.name}</h2><p>{snap.players.some(p => p.teamId === t.id && p.solved) ? "Solved" : "Still guessing"}</p></section>)}
+            {snap.settings.mode === "team" && snap.teams.filter(t => t.id !== me.teamId).map(t => <section className="room-panel" key={t.id}><h2>{t.name}</h2><p>{game?.teamProgress?.find(progress => progress.teamId === t.id)?.status ?? (snap.players.some(p => p.teamId === t.id && p.solved) ? "Solved" : "Still guessing")}</p></section>)}
           </aside>
           <section className="room-drawing">
+            {!result && snap.phase !== "finished" && <><div className="room-round"><h2>Round {game?.round ?? "–"} / {snap.settings.rounds}</h2><span>{snap.settings.mode === "individual" ? "Everyone vs AI" : "Team play"}</span></div>
             <div className="room-prompt">
               <div>
-                <span className="room-eyebrow">
-                  {result
-                    ? "Round complete"
-                    : role === "drawer"
-                      ? "You are drawing"
-                      : "Guess the drawing"}
-                </span>
-                <strong>
-                  {result
-                    ? game?.result?.word
-                    : role === "drawer"
-                      ? session.privateState?.target
-                      : game?.hint}
-                </strong>
+                <span className="room-eyebrow">{choosing ? "Choosing a word" : role === "drawer" ? "You are drawing" : "Guess the drawing"}</span>
+                <strong>{choosing ? (session.privateState?.promptOptions?.length ? "Pick a word below" : `${snap.players.find(p => p.id === (game?.choosingPlayerId ?? game?.drawerId))?.profile.name ?? "The drawer"} is choosing`) : role === "drawer" ? session.privateState?.target : game?.hint}</strong>
               </div>
-              <div className="room-time">
-                <span>Time</span>
-                <strong>{game?.time ?? "--:--"}</strong>
-              </div>
-            </div>
-            <div className="room-board">
+              <div className="room-time"><span>Time</span><strong>{displayTime}</strong></div>
+            </div></>}
+            {snap.phase === "finished" && <FinalResults snapshot={snap} playerId={session.playerId} host={!!host} onReturn={() => void action(() => client.current!.returnToLobby())} />}
+            {result && game?.result && <RoundRecap snapshot={snap} playerId={session.playerId} seconds={seconds} onReturn={() => void action(() => client.current!.returnToLobby())} />}
+            <div className="room-board" hidden={snap.phase === "finished"}>
               <DrawingCanvas
                 ref={canvas}
                 readOnly={
-                  !drawing ||
+                  !drawing || paused || teamDone ||
                   role !== "drawer" ||
                   connection !== "connected" ||
                   !caughtUp
@@ -646,12 +742,15 @@ export default function RoomScreen() {
                 onStatusChange={setCanvasStatus}
                 onError={setError}
               />
+            {choosing && <section className="room-panel room-result-overlay"><h2>{session.privateState?.promptOptions?.length ? "Choose a word" : "Waiting for the drawer"}</h2><div className="room-modal-actions">{session.privateState?.promptOptions?.map(option => <button className="room-button" key={option.id} onClick={() => void action(() => client.current!.choosePrompt(option.id))}>{option.label}</button>)}</div></section>}
+            {snap.phase === "interrupted" && <section className="room-panel room-result-overlay"><h2>Round interrupted</h2><p>The drawing saved for this session is available to review.</p>{promptsExhausted ? <p>Not enough unused prompts remain.</p> : <p>Retry this round with a fresh word.</p>}{host ? <><div className="room-modal-actions">{!promptsExhausted && <button className="room-button" onClick={() => void action(() => client.current!.retryInterrupted())}>Retry round</button>}{snap.canReturnToLobby && <><p>Returning ends this match; prior results are saved for this session.</p><button className="room-button" onClick={() => void action(() => client.current!.returnToLobby())}>Return to lobby</button></>}</div></> : <p>Waiting for the host to retry or return to the lobby.</p>}</section>}
             </div>
+            {game?.sync && !result && snap.phase !== "finished" && <p role="status">{pendingDrawing > 0 ? "Drawing changes queued on this device; waiting for the room service. " : ""}{game.sync.sequence === 0 ? "Canvas ready" : game.sync.durableSequence < game.sync.sequence ? "Server received drawing; saving…" : "Server-received drawing saved for this session"}</p>}
             {drawing && role === "drawer" && (
               <fieldset
                 className="room-tools"
                 disabled={
-                  !caughtUp || connection !== "connected" || canvasStatus.busy
+                  !caughtUp || paused || teamDone || connection !== "connected" || canvasStatus.busy
                 }
               >
                 <div className="room-tool-row">
@@ -727,49 +826,18 @@ export default function RoomScreen() {
                 </div>
               </fieldset>
             )}
-            {result && game?.result && (
-              <section className="room-panel room-result-overlay">
-                <h2>{me.solved ? "You got it!" : "Round complete"}</h2>
-                <p>Your round: {game.result.deltas[me.id] ?? 0} points</p>
-                {game.result.components?.[me.id] &&
-                  Object.entries(game.result.components[me.id]).map(
-                    ([key, value]) => (
-                      <p key={key}>
-                        {key.replace(/([A-Z])/g, " $1")}: {value}
-                      </p>
-                    ),
-                  )}
-                <p>
-                  Next drawer:{" "}
-                  {snap.players.find((p) => p.id === game.result?.nextDrawerId)
-                    ?.profile.name ?? "Waiting"}
-                  {game.result.countdown !== undefined
-                    ? ` · ${game.result.countdown}s`
-                    : ""}
-                </p>
-              </section>
-            )}
           </section>
           <aside className="room-chat-column">
+            {snap.phase !== "finished" && <AiCard game={game} result={result} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
             <div className="room-chat-order">
               <section
+                data-testid="room-chat"
                 className={`room-panel room-chat ${me.solved ? "is-solved" : ""}`}
               >
                 <h2>
                   {drawing && role === "guesser" ? "Your guesses" : "Room chat"}
                 </h2>
-                <div className="room-messages" aria-live="polite">
-                  {snap.chat.map((m) => (
-                    <p key={m.id}>
-                      <strong>
-                        {snap.players.find((p) => p.id === m.playerId)?.profile
-                          .name ?? "Room"}
-                        :{" "}
-                      </strong>
-                      {m.text}
-                    </p>
-                  ))}
-                </div>
+                <ChatMessages snapshot={snap} />
                 <form onSubmit={send}>
                   <input
                     aria-label={
@@ -780,7 +848,7 @@ export default function RoomScreen() {
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     disabled={
-                      result || connection !== "connected" || !!me.solved
+                      snap.phase !== "drawing" || paused || teamDone || connection !== "connected" || !!me.solved || role !== "guesser"
                     }
                     placeholder={
                       drawing && role === "guesser"
@@ -791,7 +859,7 @@ export default function RoomScreen() {
                   <button
                     className="room-button"
                     disabled={
-                      result || connection !== "connected" || !!me.solved
+                      snap.phase !== "drawing" || paused || teamDone || connection !== "connected" || !!me.solved || role !== "guesser"
                     }
                   >
                     Send
@@ -799,7 +867,6 @@ export default function RoomScreen() {
                 </form>
               </section>
             </div>
-            <AiCard game={game} result={result} />
           </aside>
         </div>
       )}

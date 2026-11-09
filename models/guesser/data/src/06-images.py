@@ -157,7 +157,8 @@ def _background_mask(
     border[-border_width:] = True
     border[:, :border_width] = True
     border[:, -border_width:] = True
-    quantized = pixels[border].astype(np.int16) // settings["quantization"]
+    border_pixels = pixels[border]
+    quantized = border_pixels.astype(np.int16) // settings["quantization"]
     bins, counts = np.unique(quantized, axis=0, return_counts=True)
     dominant_index = int(np.argmax(counts))
     support = float(counts[dominant_index] / len(quantized))
@@ -165,7 +166,7 @@ def _background_mask(
     if support < settings["uniformity"]:
         return None
     dominant_bin = bins[dominant_index]
-    background_pixels = pixels[border][np.all(quantized == dominant_bin, axis=1)]
+    background_pixels = border_pixels[np.all(quantized == dominant_bin, axis=1)]
     background = np.median(background_pixels, axis=0)
     diagnostics["background"] = background.tolist()
     return (

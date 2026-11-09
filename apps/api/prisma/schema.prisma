@@ -1,0 +1,27 @@
+generator client {
+  provider = "prisma-client"
+  output = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+datasource db {
+  provider = "postgresql"
+}
+model Room {
+  code String @id
+  state Json
+}
+model Drawing {
+  roomCode String
+  canvasId String
+  generation Int
+  sequence Int
+  operations Json
+  @@id([roomCode, canvasId, generation, sequence])
+}
+model TurnResult {
+  turnId String
+  generation Int
+  roomCode String
+  results Json
+  @@id([turnId, generation])
+}

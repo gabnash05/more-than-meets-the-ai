@@ -17,8 +17,6 @@ from .common import (
     acquisition_recipe,
     atomic_json,
     candidate_path,
-    file_hash,
-    iter_jsonl,
     object_hash,
     priority,
     progress,
@@ -74,7 +72,8 @@ def clean_record(record: dict, expected_word: str) -> tuple[dict, dict[str, int]
             repairs["empty_strokes"] += 1
             continue
 
-        cleaned_stroke = [[], [], []]
+        cleaned_x, cleaned_y, cleaned_times = [], [], []
+        previous = None
         for x, y, time_ms in zip(x_values, y_values, times):
             x = _coordinate(x)
             y = _coordinate(y)
@@ -87,14 +86,14 @@ def clean_record(record: dict, expected_word: str) -> tuple[dict, dict[str, int]
                 raise DataError("Invalid chronology", "invalid_time")
             last_time = time_ms
             point = (x, y, time_ms)
-            if cleaned_stroke[0] and point == tuple(
-                axis[-1] for axis in cleaned_stroke
-            ):
+            if point == previous:
                 repairs["duplicate_points"] += 1
                 continue
-            for axis, value in zip(cleaned_stroke, point):
-                axis.append(value)
-        strokes.append(cleaned_stroke)
+            cleaned_x.append(x)
+            cleaned_y.append(y)
+            cleaned_times.append(time_ms)
+            previous = point
+        strokes.append([cleaned_x, cleaned_y, cleaned_times])
 
     if not strokes:
         raise DataError("No visible extent", "no_extent")
@@ -352,21 +351,31 @@ def verify_receipt(settings: Settings, meta: dict) -> dict:
             or not isinstance(keep, int)
             or isinstance(keep, bool)
             or keep < 1
-            or receipt.get("candidate_sha256") != file_hash(path)
         ):
             raise ValueError("Receipt identity mismatch")
-        rows = list(iter_jsonl(path))
-        if len(rows) != receipt.get("candidate_count") or len(rows) > keep:
+
+        digest = hashlib.sha256()
+        count = 0
+        with path.open("rb") as source:
+            for line in source:
+                digest.update(line)
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if (
+                    not isinstance(row, dict)
+                    or not isinstance(row.get("drawing_id"), str)
+                    or row.get("class_id") != meta["class_id"]
+                    or not isinstance(row.get("record"), dict)
+                    or not isinstance(row.get("trajectory_hash"), str)
+                    or not isinstance(row.get("priority_hex"), str)
+                ):
+                    raise ValueError("Invalid candidate")
+                count += 1
+        if receipt.get("candidate_sha256") != digest.hexdigest():
+            raise ValueError("Receipt identity mismatch")
+        if count != receipt.get("candidate_count") or count > keep:
             raise ValueError("Candidate count mismatch")
-        if any(
-            not isinstance(row.get("drawing_id"), str)
-            or row.get("class_id") != meta["class_id"]
-            or not isinstance(row.get("record"), dict)
-            or not isinstance(row.get("trajectory_hash"), str)
-            or not isinstance(row.get("priority_hex"), str)
-            for row in rows
-        ):
-            raise ValueError("Invalid candidate")
         if receipt.get("source_kind") == "quickdraw" and receipt.get("complete"):
             if (
                 not receipt.get("full_source_verified")
@@ -374,7 +383,7 @@ def verify_receipt(settings: Settings, meta: dict) -> dict:
                 or receipt.get("source_bytes") != int(meta["size"])
                 or not meta.get("md5Hash")
                 or receipt.get("source_md5") != meta["md5Hash"]
-                or len(rows) != keep
+                or count != keep
             ):
                 raise ValueError("Source evidence mismatch")
         elif receipt.get("source_kind") == "quickdraw_partial":
@@ -390,7 +399,7 @@ def verify_receipt(settings: Settings, meta: dict) -> dict:
                 or receipt["source_bytes"] < 1
                 or receipt["source_bytes"] > int(meta["size"])
                 or receipt.get("source_md5") is not None
-                or len(rows) != keep
+                or count != keep
             ):
                 raise ValueError("Partial source evidence mismatch")
         elif receipt.get("full_source_verified"):

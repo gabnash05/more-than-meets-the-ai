@@ -1,0 +1,105 @@
+{
+  "cross_variant_train_eval_pair": {
+    "paths": [
+      "multiclass/test/val/sample_879.png",
+      "only_text/train/train/sample_2859.png"
+    ],
+    "sha256": {
+      "multiclass/test/val/sample_879.png": "8bd84dfa8848adca9bfc421806aeab969c39787d9ce5881dcd2eb1e27dfcc2f6",
+      "only_text/train/train/sample_2859.png": "8bd84dfa8848adca9bfc421806aeab969c39787d9ce5881dcd2eb1e27dfcc2f6"
+    },
+    "byte_equal": true
+  },
+  "visible_writing_zero_label_counterpart": {
+    "paths": [
+      "only_text/train/train/sample_5906.png",
+      "only_text/train/train/sample_4378.png"
+    ],
+    "byte_equal": true,
+    "sha256": "71e230ec78a5188d9349933799b9310a784181383dc7e692bac57a1e187043c8",
+    "sample_5906_positive_text_anchors": 0,
+    "sample_4378_positive_text_anchors": 0,
+    "counterpart_label_shape": [
+      19110,
+      6
+    ]
+  },
+  "network_bytes_this_run": 20049,
+  "range_receipts": [
+    {
+      "start": 397584182,
+      "end": 397584203,
+      "bytes": 22
+    },
+    {
+      "start": 397584162,
+      "end": 397584181,
+      "bytes": 20
+    },
+    {
+      "start": 397583747,
+      "end": 397584181,
+      "bytes": 435
+    },
+    {
+      "start": 1369,
+      "end": 1398,
+      "bytes": 30
+    },
+    {
+      "start": 92754317,
+      "end": 92754338,
+      "bytes": 22
+    },
+    {
+      "start": 92754297,
+      "end": 92754316,
+      "bytes": 20
+    },
+    {
+      "start": 91464165,
+      "end": 92754316,
+      "bytes": 1290152
+    },
+    {
+      "start": 41342,
+      "end": 47657,
+      "bytes": 6316
+    },
+    {
+      "start": 274909484,
+      "end": 274909513,
+      "bytes": 30
+    },
+    {
+      "start": 397583709,
+      "end": 397583730,
+      "bytes": 22
+    },
+    {
+      "start": 397583689,
+      "end": 397583708,
+      "bytes": 20
+    },
+    {
+      "start": 394843035,
+      "end": 397583708,
+      "bytes": 2740674
+    },
+    {
+      "start": 293352107,
+      "end": 293358422,
+      "bytes": 6316
+    },
+    {
+      "start": 365087329,
+      "end": 365092501,
+      "bytes": 5173
+    },
+    {
+      "start": 311475421,
+      "end": 311477664,
+      "bytes": 2244
+    }
+  ]
+}

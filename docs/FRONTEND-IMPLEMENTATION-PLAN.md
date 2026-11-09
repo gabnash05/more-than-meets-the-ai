@@ -1,5 +1,7 @@
 # Approved base frontend implementation plan
 
+Current scope: the approved V10 flow and real Individual backend supersede the temporary canvas-shell boundaries below. This file preserves the earlier base design; use [the Individual milestone](BACKEND-IMPLEMENTATION-PLAN.md), [integration contract](FRONTEND-ROOM-INTEGRATION.md) and [validation report](FRONTEND-VALIDATION.md) for current behavior. Team gameplay and real inference remain separate later milestones.
+
 Approved 4 November 2026, Asia/Manila, through the V2 Lavish review. The user's final feedback was "this all looks good" and they ended the review session. The preview-approval prerequisite is satisfied. The base frontend is now implemented in `apps/web`; see [FRONTEND-VALIDATION.md](FRONTEND-VALIDATION.md) for the verified result.
 
 Execution plan updated 4 November 2026: use one coordinator and three parallel implementation workers. At the user's request, all three bulk-work agents use `gpt-6.1-terra`, including their subsequent verification assignments. The coordinator retains its current model.

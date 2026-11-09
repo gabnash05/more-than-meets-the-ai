@@ -215,14 +215,24 @@ def train_one(args: argparse.Namespace, complete_only: bool) -> dict:
     )
     model = GuesserViTModule(num_classes=args.num_classes)
 
-    checkpoint = ModelCheckpoint(
+    # Keep best-val and periodic-last as separate callbacks. Combining
+    # monitor=val_acc with every_n_train_steps can skip all saves on a fresh run.
+    best_checkpoint = ModelCheckpoint(
         dirpath=weights_dir,
         filename=f"{run_name}-{{epoch:02d}}-{{val_acc:.4f}}",
         monitor="val_acc",
         mode="max",
         save_top_k=1,
+        save_last=False,
+        every_n_epochs=1,
+    )
+    last_checkpoint = ModelCheckpoint(
+        dirpath=weights_dir,
+        filename=f"{run_name}-last-{{step}}",
+        save_top_k=0,
         save_last=True,
         every_n_train_steps=max(0, args.save_every_n_steps) or None,
+        enable_version_counter=False,
     )
     early_stopping = EarlyStopping(
         monitor="val_acc",
@@ -239,7 +249,7 @@ def train_one(args: argparse.Namespace, complete_only: bool) -> dict:
         devices=1,
         precision=args.precision,
         accumulate_grad_batches=args.accumulate_grad_batches,
-        callbacks=[checkpoint, early_stopping, lr_monitor],
+        callbacks=[best_checkpoint, last_checkpoint, early_stopping, lr_monitor],
         logger=logger,
         default_root_dir=str(run_dir),
         limit_train_batches=limit_train,
@@ -277,13 +287,13 @@ def train_one(args: argparse.Namespace, complete_only: bool) -> dict:
         "precision": args.precision,
         "num_classes": args.num_classes,
         "monitor": "val_acc",
-        "best_model_path": checkpoint.best_model_path,
+        "best_model_path": best_checkpoint.best_model_path,
         "best_model_score": (
-            float(checkpoint.best_model_score)
-            if checkpoint.best_model_score is not None
+            float(best_checkpoint.best_model_score)
+            if best_checkpoint.best_model_score is not None
             else None
         ),
-        "last_model_path": checkpoint.last_model_path,
+        "last_model_path": last_checkpoint.last_model_path,
         "resumed_from": ckpt_path,
         "fast_dev": bool(args.fast),
         **labels_meta,
@@ -291,7 +301,8 @@ def train_one(args: argparse.Namespace, complete_only: bool) -> dict:
     selection_path = run_dir / "checkpoint-selection.json"
     selection_path.write_text(json.dumps(selection, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote selection record: {selection_path}")
-    print(f"Best checkpoint: {checkpoint.best_model_path}")
+    print(f"Best checkpoint: {best_checkpoint.best_model_path}")
+    print(f"Last checkpoint: {last_checkpoint.last_model_path}")
     return selection
 
 

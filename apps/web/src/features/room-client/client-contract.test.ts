@@ -62,7 +62,7 @@ describe("room client contract", () => {
     await persistLocalRoomSession(seeded);
     await local.resume(seeded.snapshot.code, seeded.resumeToken);
     const batch = (id: string, seq: number): DrawingBatch => ({
-      transport: "room-client", batchId: id, roomCode: seeded.snapshot.code, canvasId: seeded.snapshot.game!.canvasId,
+      transport: "room-client", batchId: id, roomCode: seeded.snapshot.code, canvasId: seeded.snapshot.game!.canvasId, generation: seeded.snapshot.game!.generation,
       clientSeq: [seq, seq], flushReason: "command", targetIntervalMs: 33, elapsedMs: 0,
       operationCount: 1, pointCount: 0, byteCount: 0, operations: [{ ...operation(id), clientSeq: seq }],
     });
@@ -117,6 +117,23 @@ describe("room client contract", () => {
     expect(resumed.playerId).toBe(room.playerId);
     expect(resumed.snapshot.players).toHaveLength(2);
   });
+  it("accepts current drawing batches and rejects stale generations or result-phase edits", async () => {
+    const seeded = await seedReviewScenario("drawer");
+    const client = new LocalRoomClient();
+    await client.resume(seeded.snapshot.code, seeded.resumeToken);
+    const batch: DrawingBatch = {
+      transport: "room-client", batchId: crypto.randomUUID(), roomCode: seeded.snapshot.code,
+      canvasId: seeded.snapshot.game!.canvasId, generation: seeded.snapshot.game!.generation,
+      clientSeq: [1, 1], flushReason: "command", targetIntervalMs: 33, elapsedMs: 0,
+      operationCount: 1, pointCount: 0, byteCount: 0,
+      operations: [{ ...operation(crypto.randomUUID()), clientSeq: 1 }],
+    };
+    await expect(client.submitDrawing(batch)).resolves.toBeUndefined();
+    await expect(client.submitDrawing({ ...batch, generation: batch.generation! + 1 })).rejects.toMatchObject({ code: "forbidden" });
+    const result = await seedReviewScenario("result-correct"), resultClient = new LocalRoomClient();
+    await resultClient.resume(result.snapshot.code, result.resumeToken);
+    await expect(resultClient.submitDrawing(batch)).rejects.toMatchObject({ code: "forbidden" });
+  });
   it("remote bootstraps with injected fetch and reports typed failures", async () => {
     const { client, fetcher } = remote();
     await client.resume("ABC123", "token");
@@ -146,7 +163,7 @@ describe("room client contract", () => {
     socket.receive("room:event", drawing(2, [operation("old")], false, 0));
     socket.receive("room:event", drawing(3, [operation("gap")]));
     expect(events.filter(e => e.type === "drawing")).toHaveLength(1);
-    expect(events.some(e => e.type === "connection" && e.status === "connected")).toBe(true);
+    await vi.waitFor(() => expect(events.some(e => e.type === "connection" && e.status === "connected")).toBe(true));
     expect(socket.requests.at(-1)?.name).toBe("room:resync");
     socket.requests.at(-1)!.ack(null, { ok: true });
     const next = session().snapshot;

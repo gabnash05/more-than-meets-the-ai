@@ -1,37 +1,43 @@
-# More Than Meets the AI - canvas base
+# More Than Meets the AI — web frontend
 
-A local frontend for testing the drawing canvas and outgoing event batches. Built from the approved Lemon Crayon preview.
+The frontend provides the approved room flow: create or join a private room, invite friends, configure the lobby, and view drawing and result states. It uses the Lemon Crayon design system.
 
 ## Run locally
 
-Use Node.js 24 and npm. The browser tests also require an installed Google Chrome.
+Use Node.js 24 and npm. Browser tests require installed Google Chrome.
 
 ```sh
 npm ci
 npm run dev -- --hostname 127.0.0.1 --port 3000
 ```
 
-Open http://localhost:3000. Choose a name and character, then create or join a room. Room entry is local to your browser; codes do not connect players yet.
+Open http://localhost:3000, choose a name and character, and create or join a room. The default transport is a **local demo**: rooms and drawing journals are stored in this browser's IndexedDB, and a refresh can restore the local room, role, and drawing. Room codes do not connect separate browsers. Gameplay and result examples in this adapter are labelled fixtures. This demo does not provide cross-browser multiplayer. Use the remote transport with the separately running NestJS API for real rooms and authoritative scores; actual AI inference remains unavailable.
 
-## Static build and preview
+The separate `/review/` and `/review/canvas/` routes provide room-state and canvas review harnesses.
+
+## Static build and transport configuration
 
 ```sh
 npm run build
 npm run preview
 ```
 
-Open http://127.0.0.1:3100. The `out/` directory contains the portable site. A static host must serve directory index files (including `room/index.html`) and worker assets from the same origin. Set the host's project root to `apps/web`, build command to `npm run build`, and output directory to `out`. Hosting-provider setup is separate work.
+Open http://127.0.0.1:3100. The portable static site is written to `out/`; a host must serve directory index files and worker assets from the same origin. Configure a static host with project root `apps/web`, build command `npm run build`, and output directory `out`.
+
+`.env.example` lists `NEXT_PUBLIC_ROOM_TRANSPORT`, `NEXT_PUBLIC_ROOM_API_URL`, and `NEXT_PUBLIC_ROOM_SOCKET_URL`. Transport defaults to `local`; `remote` selects the implemented HTTP/Socket.IO adapter, whose URLs default to the same origin. These `NEXT_PUBLIC_` values are embedded at build time: rebuild the static site after changing them. The compatible NestJS service is in `apps/api`. Start it separately against configured PostgreSQL; the static export does not start the API. See [the integration contract](../../docs/FRONTEND-ROOM-INTEGRATION.md).
 
 ## Drawing controls
 
-- Brush, pixel eraser, and region-fill bucket; palette/custom colors and brush size 2-40.
+- Brush, pixel eraser, and region-fill bucket; palette/custom colors and brush size 2–40.
 - Undo/redo applies to strokes, erasing, fills, and Clear; history retains up to 20 actions within a 64 MiB bitmap budget.
-- B / E / F select a tool. Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redoes. Text fields keep ordinary editing behavior.
-- Drawing uses fixed 1024 x 768 logical coordinates and scales to your viewport without resetting its bitmap.
+- B / E / F select a tool. Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redoes. Text fields retain ordinary editing behavior.
+- The canvas uses fixed 1024 × 768 logical coordinates and scales with the viewport.
 
-Open browser DevTools Console to inspect `[drawing:batch]` objects while drawing. Nonempty batches target 33 ms, with immediate final stroke and edit-command flushes. Logs include actual intervals, IDs, sequence ranges, counts, UTF-8 bytes, and operation payloads. These are console-only outgoing operations; no backend acceptance is simulated.
+## Results, chat and modal behavior
 
-The local profile is remembered. Refreshing this base starts a blank drawing. Final-game persistence is a separate backend requirement.
+Final standings use winner avatars and rank cards with prominent totals, tied competition ranks and a labelled current-player highlight. AI status/total/coverage stays separate from human winners. Recap emphasizes the revealed word, your points and relevant components, round gains and upcoming drawer/countdown. Recaps and final standings share the drawing board's width and center alignment across phone, tablet and desktop layouts. Result content stacks on phones and grows vertically in ordinary page flow.
+
+Correct-message confirmations use dark green text and a checkmark; unsolved players still cannot see the answer. Both chat views follow the latest message, including restored history and arrivals at the 100-message cap, without moving the page or keyboard focus. Modal action groups use 12px gaps and wrap/stack on phones while preserving the invitation flow.
 
 ## Verification
 
@@ -43,11 +49,14 @@ npm run build
 npm run test:e2e
 ```
 
-Browser checks use installed Google Chrome through Playwright and test the exported production build. If Chrome is unavailable, install it or install Playwright Chromium and adjust the test project channel.
+Playwright browser checks use the exported production build and installed Google Chrome. See [frontend validation](../../docs/FRONTEND-VALIDATION.md) for the checks actually performed and their limits.
 
-The game panels and local chat are fixtures. After canvas validation, the user will replace or substantially revise the UI. The scope and motion contracts live in the game repository's `docs/FRONTEND-BASE-SCOPE.md`, `docs/FRONTEND-IMPLEMENTATION-PLAN.md`, and `docs/design-system/LOGIN_MOTION.md`.
+## Individual remote milestone
 
-## Room transport
+Remote mode supports Individual play only: Team selection is disabled and the authority rejects new Team settings/starts. Existing Team fixtures/code and deferred tests remain for a later plan. The corrected invite dialog and approved V10 presentation are preserved.
 
-Room flow defaults to a browser-local demo. Set the variables in `.env.example` to configure the proposed remote adapter. See [the room integration contract](../../docs/FRONTEND-ROOM-INTEGRATION.md) for boundaries and recovery behavior.
+AI round points/status appear in recap and its committed total/coverage alongside final human standings. The AI does not enter human winners/deltas. The production provider remains unavailable; missing or unavailable AI data renders unavailable rather than a fake incorrect/zero result. An eligible unsolved result is zero, while unavailable is null. Positive AI examples are explicit fixtures, not model results.
 
+Drawing status distinguishes locally queued unaccepted batches from the server-accepted sequence and contiguous durable prefix. Accepted but undurable envelopes remain stored until the watermark covers them. Replay/hydration does not emit drawing again. An unsendable tail is retired with a visible notice and a new client stream.
+
+For remote verification, set `NEXT_PUBLIC_ROOM_TRANSPORT=remote`, `NEXT_PUBLIC_ROOM_API_URL=http://127.0.0.1:3001` and `NEXT_PUBLIC_ROOM_SOCKET_URL=http://127.0.0.1:3001` before `npm run build`. Start the API and `npm run preview` separately, then run `npx playwright test --config playwright.multiplayer.config.ts`. This config uses one Chrome worker and does not start either server. Build local-demo production separately before running the default local browser suite. The isolated database test target is documented in the API README; never print its credentials.

@@ -7,6 +7,8 @@ export default defineConfig([
   { rules: { "@next/next/no-img-element": "off" } },
   globalIgnores([
     ".next/**",
+    ".cache/**",
+    ".npm-cache/**",
     "out/**",
     "node_modules/**",
     "playwright-report/**",

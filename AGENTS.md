@@ -4,14 +4,33 @@
 
 More Than Meets the AI is a CSC173 multiplayer drawing game where humans race a transformer AI to recognize sketches. Research focuses on recognition through shared semantic and cultural visual references.
 
-- `apps/web/`: implemented Next.js/TypeScript canvas frontend; room entry, chat, scores, and AI panels are local fixtures.
+- `apps/web/`: approved Next.js/TypeScript room/game UI; local demo by default, prepared remote mode now connects to the real room backend. AI fixtures remain confined to review/local demo.
 - `models/guesser/evaluation/`: uv-managed Python/Jupyter evaluation environment; model metrics and serving remain future work.
-- Planned backend: NestJS + Socket.IO, FastAPI inference, PostgreSQL/Prisma. One authoritative game process holds active matches in memory; no Redis.
+- `apps/api/`: NestJS + Socket.IO room/game authority with PostgreSQL/Prisma. One process holds live matches in memory; no Redis or load balancer. AI/FastAPI integration remains future work. Shared TypeScript contracts live in `packages/game-contracts/src/`.
+
+## Current Individual milestone — 6 November 2026
+
+The accepted Individual-first implementation plan supersedes older Team-completion and AI-marker-only notes. Continue the existing uncommitted draft; preserve unrelated work, the V10 UI and corrected invitation modal.
+
+The Individual milestone is implemented and locally verified as of 7 November. See `docs/BACKEND-VALIDATION.md` and `docs/FRONTEND-VALIDATION.md` for actual checks and limits; Team and inference follow-up scopes are separate documents. Preserve the current implementation rather than restarting it.
+
+- Complete and verify Individual play end to end. Remote Team settings/starts are unavailable; retain Team code/types and explicitly deferred tests for a later plan.
+- Prepare the separate `ai-benchmark-v1` round scorer, committed match total and coverage. An eligible unsolved evaluation is zero; unavailable/ineligible is unscored (`null`). The real provider remains unavailable. Positive AI examples are labelled test/review/local-demo fixtures.
+- Human AI modifiers stay zero. AI points are a comparison ledger; human totals determine human winners. Never count an AI answer toward drawer recognition.
+- Preserve the existing RoomClient, authenticated transport, ordered drawing outbox, contiguous durable watermark, saving holds and interrupted-prefix recovery. Restart retries the same drawer/position with a new generation and fresh choices.
+- Use the coordinator plus up to three `gpt-6.1-terra` workers with `fork_turns: "none"`, disjoint ownership and no nested delegation. The coordinator owns documentation and final integrated checks.
+- Do not reopen the ended Lavish review or commit, push, deploy, train models or claim measured capacity/model performance without separate authorization.
+
+## Results/chat/prompt correction rules — 7 November 2026
+
+Keep `human-v1` unchanged. Use the existing authoritative result/message fields for the redesigned recap, standings and green correct confirmations. Preserve answer privacy, canvas recovery and the corrected invitation layout. Chat follows new message IDs, including at its history cap, without moving page/focus.
+
+The private optional `selectedPrompts` field is initialized for new matches and excludes chosen targets across prompt positions/retries, including interrupted targets. Missing legacy history must not be fabricated or silently treated as a tracked fresh match. Preserve the 348-word API-owned catalogue and keep model files/runtime separate. Exhaustion permits host return only from interrupted/committed states, never an active uncommitted drawing.
 
 ## Read first
 
 - `README.md`, `CONTEXT.md`, `SYSTEM-DESIGN.md`: overview, vocabulary, and current rules.
-- `docs/BACKEND-SCORING-PLAN.md`: required before scoring or turn-lifecycle changes.
+- `docs/BACKEND-SCORING-PLAN.md`: required before scoring or turn-lifecycle changes. Also read `docs/BACKEND-IMPLEMENTATION-PLAN.md`, `docs/FRONTEND-ROOM-INTEGRATION.md`, and `apps/api/README.md` for the implemented transport, persistence and agreed team selection rule.
 - `docs/FRONTEND-BASE-SCOPE.md` and `docs/FRONTEND-IMPLEMENTATION-PLAN.md`: frontend scope and design. Reuse existing drawing libraries and assets in `docs/design-system/`.
 
 ## Working rules
@@ -38,6 +57,8 @@ npm run dev
 ```
 
 For frontend code changes, run the relevant checks: `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`. Use `npm run test:e2e` for affected browser flows; it requires a production build and installed Google Chrome. Report what ran and any validation limits.
+
+Backend commands run from `apps/api`: `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`. Generate Prisma and migrate the configured database first. PostgreSQL integration tests use the explicitly guarded isolated test database described in `apps/api/README.md`; never point destructive test setup at another database. The remote browser suite is `npx playwright test --config playwright.multiplayer.config.ts` from `apps/web`, with a remote production export and a running API.
 
 ## Guesser deep learning libraries
 

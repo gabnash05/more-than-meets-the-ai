@@ -1,5 +1,33 @@
 # Backend scoring implementation plan
 
+## Current milestone precedence — 6 November 2026
+
+Complete Individual play first. Team implementation/acceptance is deferred to its own later plan. Human scoring is `human-v1` below; all human AI modifiers stay zero for this milestone. The older before/after-AI tuning sections describe later inference integration and do not enable those modifiers now.
+
+The implementation adds a separate `ai-benchmark-v1` round result and committed match ledger. First eligible correct AI answers use the same raw speed formula as human solves. Eligible unsolved evaluations earn zero; unavailable/ineligible evaluations have null points. Total points stay null until at least one eligible round commits; scored/solved/completed prompt counts distinguish partial coverage. Void unfinished generations contribute nothing. AI scores never increase drawer recognition or enter human winner selection.
+
+The production provider is unavailable. The versioned provider observation/result port is ready for a later AI service/server adapter; synthetic positive examples are labelled fixtures, not model results. The authority checks bound job identity, accepted time, generation/deadline and deduplication. Keep AI guesses hidden from unsolved humans until reveal. Exact inference scheduling, eligibility/readiness policy and hosting belong to the later AI plan.
+
+## Correction decision — 7 November 2026
+
+Keep `human-v1` unchanged while improving the recap's explanation and hierarchy. For a 60-second drawing, a valid solve at 10 seconds earns 88 points and one at 50 seconds earns 42, even when it is the first solve. Drawer recognition also falls as human solves become later. Green confirmations and ranking bars are presentation changes, not scoring changes. Time scoring encourages clear communication but does not eliminate deliberate point denial based on relative standings, especially in two-player rooms. No unverified skribbl scoring constants are introduced.
+
+## Human scoring baseline - 6 November 2026
+
+The backend implements an initial, unvalidated balance configuration `human-v1`. A first valid human solve earns `round(100 - 70 * clamp(elapsed / duration, 0, 1))` raw speed points. No solve earns zero. The drawer receives `round(60 * sum(raw human solve points) / (100 * eligible guesser count))`, or zero for an empty/no-solve roster. The denominator is frozen for the drawing turn. This avoids scaling the drawer's reward directly with room size or counting an AI answer as human recognition.
+
+No live AI inference provider is connected. Guesser AI adjustments and drawer AI bonuses are therefore zero, and the UI explicitly reports AI unavailable. Earlier proposals for before/after-AI weights of 1.25/0.75 and a 15-point drawer AI cap remain disabled, unvalidated future tuning. The historical AI timing/readiness acceptance scenarios below remain future integration work.
+
+Configured rounds mean total prompt positions. Drawers choose privately from three options before drawing begins. Defaults are a 15-second choice window, 60-second drawing clock and 8-second recap. Authoritative event order resolves accepted guesses; duplicate requests cannot create another solve. Equal final totals produce joint winners.
+
+A missing drawer or all remaining unsolved guessers pauses the affected clock for up to 30 seconds. On expiry retain accepted human solves and close that turn/challenge; no missing person is counted as solved. A restart voids the unfinished generation and its provisional score while retaining committed prior results and the saved interrupted sketch. Required records commit before another prompt begins. The host can reopen the lobby from an interrupted or committed waiting state, preserving already committed records.
+
+Remote Team selection/settings/starts are disabled in this milestone. The preserved shared-target/private-canvas Team design has its [own follow-up plan](TEAM-GAMEPLAY-NEXT-PLAN.md); real inference and any later human AI adjustments have a [separate integration plan](AI-INTEGRATION-NEXT-PLAN.md).
+
+## Retained earlier AI tuning design
+
+The following 4 November proposal preserves design history. Its unimplemented AI weights, readiness checkpoints and unresolved-policy notes do not override the current baseline above.
+
 Confirmed direction: **4 November 2026, Asia/Manila**. This records the user's default-mode clarification and the agreed role-specific AI scoring direction. It is a backend implementation handoff, not an implemented scoring engine or a validated balance formula.
 
 ## Default mode is individual
@@ -10,13 +38,13 @@ Drawer duty rotates through the room's players. Each drawing turn has its own ta
 
 Earlier flexible-team formats remain a separate optional mode requiring explicit selection. Their private parallel canvases, first-human-solve challenge closure and shared team totals apply only there. Implementing team mode is not a prerequisite to the individual backend.
 
-## Required scoring behavior by role
+## Earlier proposed role adjustments — future integration
 
 | Role | Ordinary reward | Effect of the AI |
 | --- | --- | --- |
 | Each human guesser | Personal speed-based points for their first accepted correct answer in the turn | Stronger before/after-AI adjustment to that person's turn earnings: higher before the AI, lower afterward |
 | Drawer | Personal recognition points based on humans correctly identifying the drawing | Smaller, capped bonus reflecting how many eligible humans beat the AI; normalize for eligible guesser count |
-| AI guesser | A comparison marker and replay participant | Its correct answer never counts as a human solve or earns ordinary drawer recognition points |
+| AI guesser | Separate raw-speed benchmark points, committed total and scoring coverage when eligible | Its correct answer never counts as a human solve, drawer recognition or human winner |
 
 Keep the ordinary drawer reward based on human communication. Do not reward an unreadable/blank drawing just because neither humans nor AI solved it. At least one valid human solve is required for a positive drawer AI bonus.
 
@@ -82,7 +110,7 @@ Clients send guesses and drawing actions; they cannot submit authoritative score
 - A game restart/unverifiable turn voids that turn's provisional outcomes and retries the same drawer/position with a fresh target/generation. Preserve prior committed personal results; reject old-generation jobs.
 - Commit required records and personal results before advancing. A PostgreSQL saving hold keeps results provisional. Referee flags remain advisory and never directly deduct scores.
 
-## Backend acceptance scenarios
+## Earlier inference acceptance scenarios — future integration
 
 These are future executable verification cases, not claims that backend tests already exist.
 
@@ -102,4 +130,4 @@ These are future executable verification cases, not claims that backend tests al
 | Solved human or AI produces answer text | Unsolved humans do not receive the secret through chat/status payloads |
 | Explicit optional team mode selected later | Its separate team policy runs; neither mode silently uses the other's scoring/termination rules |
 
-Before shipping, tune the relative rewards through actual mixed-ability gameplay. The numeric scores used in discussion were illustrations and are not finalized constants. Backend implementation and changes to the temporary frontend fixture UI remain separate tasks.
+Before enabling the future AI weights, tune the relative rewards through actual mixed-ability gameplay. The numeric scores used in discussion were illustrations and are not finalized constants. Backend implementation and changes to the temporary frontend fixture UI remain separate tasks.

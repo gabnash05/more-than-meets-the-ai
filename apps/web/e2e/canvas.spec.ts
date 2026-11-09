@@ -3,18 +3,11 @@ import { expect, test, type Page } from "@playwright/test";
 test.use({ hasTouch: true });
 
 async function setup(page: Page) {
-  await page.addInitScript(() =>
-    localStorage.setItem(
-      "mtmai.player.v1",
-      JSON.stringify({
-        name: "Canvas Tester",
-        avatar: { shape: "pebble", expression: "smile", color: "cyan" },
-      }),
-    ),
-  );
-  await page.goto("/room/?code=CANVAS");
+  await page.goto("/review/");
+  await page.getByRole("button", { name: "Drawing · drawer" }).click();
   const canvas = page.getByLabel("Drawing canvas");
   await expect(canvas).toHaveAttribute("data-ready", "true");
+  await expect(canvas).toHaveAttribute("data-readonly", "false");
   return canvas;
 }
 async function position(page: Page, x: number, y: number) {
@@ -70,7 +63,7 @@ test("brush, size, eraser, undo and resize preserve pixels", async ({
   expect(ink(await pixel(page, 360, 300))).toBe(true);
   await page.setViewportSize({ width: 900, height: 700 });
   expect(ink(await pixel(page, 360, 300))).toBe(true);
-  await page.getByRole("button", { name: "Eraser" }).click();
+  await page.getByRole("button", { name: "eraser" }).click();
   await clickAt(page, 360, 300);
   expect((await pixel(page, 360, 300))[3]).toBe(0);
   await page.getByRole("button", { name: /Undo/ }).click();
@@ -91,7 +84,7 @@ test("worker fill respects boundaries and history, clear, and new branches", asy
     [400, 200],
   ]);
   await page.getByRole("button", { name: "Color #FF4343" }).click();
-  await page.getByRole("button", { name: "Fill" }).click();
+  await page.getByRole("button", { name: "fill" }).click();
   await clickAt(page, 500, 350);
   await expect(canvas).toHaveAttribute("aria-busy", "false");
   await expect
@@ -106,7 +99,7 @@ test("worker fill respects boundaries and history, clear, and new branches", asy
   expect(ink(await pixel(page, 500, 350))).toBe(false);
   await page.getByRole("button", { name: /Undo/ }).click();
   expect((await pixel(page, 500, 350)).slice(0, 3)).toEqual([255, 67, 67]);
-  await page.getByRole("button", { name: "Brush" }).click();
+  await page.getByRole("button", { name: "brush" }).click();
   await clickAt(page, 100, 100);
   await expect(page.getByRole("button", { name: /Redo/ })).toBeDisabled();
 });
@@ -116,13 +109,13 @@ test("touch fill without prior move and pointer cancellation", async ({
 }) => {
   const canvas = await setup(page);
   await page.getByRole("button", { name: "Color #3455FF" }).click();
-  await page.getByRole("button", { name: "Fill" }).click();
+  await page.getByRole("button", { name: "fill" }).click();
   const p = await position(page, 500, 350);
   await page.touchscreen.tap(p.x, p.y);
   await expect
     .poll(async () => (await pixel(page, 500, 350)).slice(0, 3))
     .toEqual([52, 85, 255]);
-  await page.getByRole("button", { name: "Brush" }).click();
+  await page.getByRole("button", { name: "brush" }).click();
   const start = await position(page, 200, 200);
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
@@ -137,4 +130,21 @@ test("touch fill without prior move and pointer cancellation", async ({
   );
   await page.mouse.up();
   await expect(page.getByRole("button", { name: /Undo/ })).toBeEnabled();
+});
+
+
+test("keyboard tools, custom color, and undo shortcut work", async ({ page }) => {
+  await setup(page);
+  await page.getByLabel("Custom color").fill("#123456");
+  await page.getByLabel("Custom color").blur();
+  await page.keyboard.press("b");
+  await expect(page.getByRole("button", { name: "brush", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await clickAt(page, 250, 250);
+  expect((await pixel(page, 250, 250)).slice(0, 3)).toEqual([18, 52, 86]);
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await pixel(page, 250, 250))[3]).toBe(0);
+  await page.keyboard.press("e");
+  await expect(page.getByRole("button", { name: "eraser", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("f");
+  await expect(page.getByRole("button", { name: "fill", exact: true })).toHaveAttribute("aria-pressed", "true");
 });

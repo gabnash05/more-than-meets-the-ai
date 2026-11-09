@@ -7,6 +7,7 @@ declare module "atrament" {
     adaptiveStroke: boolean;
     pressureLow: number;
     pressureHigh: number;
+    getSmoothingFactor(distance: number): number;
     beginStroke(x: number, y: number): void;
     draw(
       x: number,

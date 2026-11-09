@@ -93,7 +93,7 @@ When using a custom checkpoint root, pass that same `--checkpoint-root` to resum
 
 ## Pause and resume
 
-`last.ckpt` is refreshed every 1000 train steps (new runs) and at epoch end. Resume with the same flags plus `--resume`:
+`last.ckpt` is refreshed every 1000 train steps; the best `val_acc` checkpoint is saved after each validation epoch (separate callbacks). Resume with the same flags plus `--resume`:
 
 ```sh
 uv run python -m training.train --run a --num-workers 2 --resume

@@ -1,5 +1,7 @@
 # Base frontend scope and replacement plan
 
+Current scope: the approved V10 flow and real Individual backend supersede the temporary canvas-shell boundaries below. This file preserves the earlier base design; use [the Individual milestone](BACKEND-IMPLEMENTATION-PLAN.md), [integration contract](FRONTEND-ROOM-INTEGRATION.md) and [validation report](FRONTEND-VALIDATION.md) for current behavior. Team gameplay and real inference remain separate later milestones.
+
 Updated 4 November 2026, Asia/Manila, from the user's Lavish review.
 
 ## Purpose and approval gate
