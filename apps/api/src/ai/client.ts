@@ -15,7 +15,7 @@ export interface Job extends ModelIdentity {
   hint?: string;
 }
 export type Outcome =
-  | { status: "answer"; answer: string }
+  | { status: "answer"; answer: string; confidence: number }
   | { status: "pass"; reason?: string }
   | { status: "evidence"; scores: [number, number] }
   | { status: "unavailable"; reason: string };
@@ -108,8 +108,8 @@ export class InferenceClient implements Inference {
     }
     if (result.status === "unavailable") return { status: "unavailable", reason: "provider-unavailable" };
     if (role === "guesser" && result.status === "pass") return { status: "pass", reason: result.reason === "no-evidence" ? "no-evidence" : undefined };
-    if (role === "guesser" && result.status === "answer" && typeof result.answer === "string" && result.answer.length <= 100) {
-      return { status: "answer", answer: result.answer };
+    if (role === "guesser" && result.status === "answer" && typeof result.answer === "string" && result.answer.length <= 100 && typeof result.confidence === "number" && Number.isFinite(result.confidence) && result.confidence >= 0 && result.confidence <= 1) {
+      return { status: "answer", answer: result.answer, confidence: result.confidence };
     }
     if (role === "referee" && result.status === "evidence" && Array.isArray(result.scores) && result.scores.length === 2 && result.scores.every(score => typeof score === "number" && Number.isFinite(score) && score >= 0 && score <= 1)) {
       return { status: "evidence", scores: [result.scores[0], result.scores[1]] };
@@ -135,9 +135,9 @@ export function configuredInference(): Inference | undefined {
   if (process.env.REFEREE_PROVIDER === "http" && process.env.AI_TEST_FIXTURES === "1") ids.referee = process.env.REFEREE_MODEL_ID;
   if (!ids.guesser && !ids.referee) return;
   const options = {
-    firstGuessMs: positiveSetting("AI_FIRST_GUESS_MS", 5000, 60000),
-    guessCooldownMs: positiveSetting("AI_GUESS_COOLDOWN_MS", 8000, 60000),
-    maxGuesses: positiveSetting("AI_MAX_GUESSES_PER_TURN", 5, 5),
+    firstGuessMs: positiveSetting("AI_FIRST_GUESS_MS", 1500, 60000),
+    guessCooldownMs: positiveSetting("AI_GUESS_COOLDOWN_MS", 2000, 60000),
+    maxGuesses: positiveSetting("AI_MAX_GUESSES_PER_TURN", 24, 24),
     requestTimeoutMs: positiveSetting("AI_REQUEST_TIMEOUT_MS", 2500, 2500),
   };
   positiveSetting("AI_MAX_CONCURRENT_JOBS", 1, 1);

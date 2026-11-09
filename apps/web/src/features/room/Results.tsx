@@ -50,7 +50,7 @@ export function RoundRecap({ snapshot, playerId, seconds, onReturn }: ResultProp
           <li key={row.id}><span>{row.name}</span><strong>+{result.deltas[row.id] ?? 0}</strong></li>
         ))}
       </ul>
-      <p className="room-recap-ai">AI benchmark: {aiLabel}</p>
+      {snapshot.settings.aiGuesserEnabled !== false && <p className="room-recap-ai">AI benchmark: {aiLabel}</p>}
       <div className="room-recap-next">
         {nextDrawer && <Avatar avatar={nextDrawer.profile.avatar} />}
         <p>
@@ -104,10 +104,10 @@ export function FinalResults({ snapshot, playerId, host, onReturn }: ResultProps
           );
         })}
       </ol>
-      <p>Humans rotate between drawing and guessing; AI is a guesser.</p>
-      <p className="room-ai-benchmark">
+      <p>Humans rotate between drawing and guessing{snapshot.settings.aiGuesserEnabled !== false ? "; AI is a guesser." : "."}</p>
+      {snapshot.settings.aiGuesserEnabled !== false && <p className="room-ai-benchmark">
         AI benchmark: {snapshot.aiBenchmark?.totalPoints == null ? "Unavailable" : `${snapshot.aiBenchmark.totalPoints} points`} · {snapshot.aiBenchmark?.scoredRounds ?? 0} / {snapshot.aiBenchmark?.completedRounds ?? 0} rounds scored · {snapshot.aiBenchmark?.solvedRounds ?? 0} solved
-      </p>
+      </p>}
       {host ? <button className="room-button" onClick={onReturn}>Return to lobby</button> : <p>Waiting for the host to return to the lobby.</p>}
     </section>
   );

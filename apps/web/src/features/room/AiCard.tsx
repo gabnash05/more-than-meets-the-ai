@@ -1,24 +1,28 @@
-import type { RoomGame } from "@/contracts/room";
+import type { AiGuess, AiGuessEvent, RoomGame } from "@/contracts/room";
 import styles from "./AiCard.module.css";
 
 const labels = { waiting: "", guessing: "Guessing", correct: "Guessed it", wrong: "Missed", unavailable: "Unavailable" } as const;
 
-export function AiCard({ game, result, unavailable = false }: { game?: RoomGame; result: boolean; unavailable?: boolean }) {
+export function AiCard({ game, result, unavailable = false, pulse }: { game?: RoomGame; result: boolean; unavailable?: boolean; pulse?: AiGuessEvent }) {
   const answer = result ? game?.result : undefined;
   const benchmarkStatus = answer?.aiBenchmark?.status;
-  let status = game?.aiStatus ?? "waiting";
+  let status = pulse ? (pulse.correct ? "correct" : "wrong") : game?.aiStatus ?? "waiting";
   if (unavailable || benchmarkStatus === "unavailable") {
     status = "unavailable";
   } else if (answer) {
     const correct = benchmarkStatus ? benchmarkStatus === "solved" : answer.aiCorrect;
     status = correct ? "correct" : "wrong";
   }
-  const showAnswers = answer && (status !== "unavailable" || (benchmarkStatus === "unavailable" && answer.aiAnswers.length > 0));
-  const finalAnswer = answer?.finalAnswer ?? answer?.aiAnswers.at(-1) ?? "—";
-  const previous = answer?.aiAnswers.slice(0, -1) ?? [];
+  const history: AiGuess[] = answer?.aiGuesses ?? answer?.aiAnswers.map(word => ({ answer: word })) ?? [];
+  const showAnswers = answer && (status !== "unavailable" || (benchmarkStatus === "unavailable" && history.length > 0));
+  const finalGuess = history.at(-1);
+  const finalAnswer = answer?.finalAnswer ?? finalGuess?.answer ?? "—";
+  const finalConfidence = finalGuess?.answer === finalAnswer ? finalGuess.confidence : undefined;
+  const previous = history.slice(0, -1);
 
   return (
     <section className={`room-ai ${styles.card} ${status === "correct" ? styles.solved : ""}`} data-testid="ai-card">
+      {pulse && <span key={pulse.jobId} className={`${styles.pulse} ${pulse.correct ? styles.pulseCorrect : styles.pulseWrong}`} aria-hidden="true" />}
       <div className={styles.heading}>
         <svg className={styles.robot} viewBox="0 0 50 50" aria-hidden="true">
           <path d="M25 5V12M20 5h10" fill="none" stroke="#181321" strokeWidth="3" strokeLinecap="round" />
@@ -37,12 +41,18 @@ export function AiCard({ game, result, unavailable = false }: { game?: RoomGame;
             <div className={`${styles.finalStrip} ${status === "correct" ? styles.finalCorrect : styles.finalWrong}`} data-testid="ai-final-answer">
               <span className={styles.finalLabel}>Final</span>
               <strong className={finalAnswer.length > 7 ? styles.longWord : ""}>{finalAnswer}</strong>
+              {finalConfidence !== undefined && <span className={styles.confidence}>{Math.round(finalConfidence * 100)}%</span>}
               <span className={styles.finalIcon} aria-label={status === "correct" ? "Correct" : "Incorrect"}>{status === "correct" ? "✓" : "×"}</span>
             </div>
             <div className={styles.previousSection}>
               <span className={styles.previousLabel}>Earlier guesses <span>{previous.length}</span></span>
               <div className={styles.previousList} role="list" tabIndex={0} aria-label="Earlier AI guesses" data-testid="ai-previous-guesses">
-                {previous.length ? previous.map((word, index) => <div className={styles.previousWord} role="listitem" key={`${index}-${word}`}><span className={styles.attemptNumber}>{index + 1}</span><span>{word}</span></div>) : <div className={styles.previousEmpty}>No earlier guesses</div>}
+                {previous.length ? previous.map((guess, index) => (
+                  <div className={styles.previousWord} role="listitem" key={`${index}-${guess.answer}`}>
+                    <span className={styles.attemptNumber}>{index + 1}</span><span>{guess.answer}</span>
+                    {guess.confidence !== undefined && <small>{Math.round(guess.confidence * 100)}%</small>}
+                  </div>
+                )) : <div className={styles.previousEmpty}>No earlier guesses</div>}
               </div>
             </div>
           </div>

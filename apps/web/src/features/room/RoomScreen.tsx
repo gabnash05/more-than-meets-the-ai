@@ -29,7 +29,7 @@ import {
   loadRoomSession,
   clearRoomSession,
 } from "@/features/room-client";
-import type { RoomClient, RoomSession, RoomSettings } from "@/contracts/room";
+import type { AiGuessEvent, RoomClient, RoomSession, RoomSettings } from "@/contracts/room";
 import { CRAYON_COLORS } from "@/contracts/player";
 import {
   DEFAULT_DRAWING_SETTINGS,
@@ -127,11 +127,14 @@ export default function RoomScreen() {
     [pendingDrawing, setPendingDrawing] = useState(0),
     [settingsPending, setSettingsPending] = useState(false),
     [settingsFailed, setSettingsFailed] = useState(false);
+  const [aiPulse, setAiPulse] = useState<AiGuessEvent>();
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 250); return () => clearInterval(timer); }, []);
   const client = useRef<RoomClient | null>(null),
     canvas = useRef<DrawingCanvasHandle>(null),
     batcher = useRef<DrawingBatcher | null>(null);
   const activeCanvas = useRef<{ id: string; generation: number } | null>(null);
+  const seenAiJobs = useRef(new Set<string>());
+  const aiPulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inviteCodeInput = useRef<HTMLInputElement>(null);
   const inviteLinkInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -145,12 +148,25 @@ export default function RoomScreen() {
     let alive = true;
     const unsubscribe = c.subscribe((event) => {
       if (!alive) return;
+      if (event.type === "ai-guess") {
+        const current = c.getSession()?.snapshot;
+        if (seenAiJobs.current.has(event.jobId)) return;
+        if (current?.phase !== "drawing" || current.game?.canvasId !== event.canvasId || current.game.generation !== event.generation || current.game.pause) return;
+        if (current.settings.aiGuesserEnabled === false) return;
+        seenAiJobs.current.add(event.jobId);
+        setAiPulse(event);
+        if (aiPulseTimer.current) clearTimeout(aiPulseTimer.current);
+        aiPulseTimer.current = setTimeout(() => setAiPulse(undefined), 600);
+      }
       if (event.type === "snapshot") {
         if (event.snapshot.serverTime !== undefined) setClockOffset(event.snapshot.serverTime - Date.now());
         const game = event.snapshot.game;
         const next = game ? { id: game.canvasId, generation: game.generation } : null;
         if (activeCanvas.current?.id !== next?.id || activeCanvas.current?.generation !== next?.generation) {
           activeCanvas.current = next;
+          seenAiJobs.current.clear();
+          if (aiPulseTimer.current) clearTimeout(aiPulseTimer.current);
+          setAiPulse(undefined);
           setPendingDrawing(0);
           setCaughtUp(false);
         }
@@ -212,6 +228,7 @@ export default function RoomScreen() {
       });
     return () => {
       alive = false;
+      if (aiPulseTimer.current) clearTimeout(aiPulseTimer.current);
       unsubscribe();
       c.dispose();
       client.current = null;
@@ -230,6 +247,7 @@ export default function RoomScreen() {
     teamDone = snap?.settings.mode === "team" && game?.teamProgress?.some(progress => progress.teamId === me?.teamId && (progress.status === "solved" || progress.status === "finished"));
   const seconds = game?.pause ? Math.ceil(game.pause.remainingMs / 1000) : game?.deadlineAt ? Math.max(0, Math.ceil((game.deadlineAt - clock - clockOffset) / 1000)) : null;
   const displayTime = seconds === null ? game?.time ?? "--:--" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  const refereeWarning = drawing && !paused && snap?.settings.aiRefereeEnabled !== false && game?.refereeWarning && game.refereeWarning.expiresAt > clock + clockOffset ? game.refereeWarning : undefined;
   useEffect(() => {
     if (!code || !game?.canvasId) return;
     const b = createDrawingBatcher({
@@ -661,6 +679,11 @@ export default function RoomScreen() {
                     options={numbers(1, 20, "rounds")}
                     onChange={(v) => change({ rounds: Number(v) })}
                   />
+                  <fieldset className="room-ai-settings" disabled={settingsPending}>
+                    <legend>AI features</legend>
+                    <label><input type="checkbox" aria-label="Enable AI Guesser" checked={snap.settings.aiGuesserEnabled !== false} onChange={e => change({ aiGuesserEnabled: e.currentTarget.checked })} /> AI Guesser</label>
+                    <label><input type="checkbox" aria-label="Enable AI Referee" checked={snap.settings.aiRefereeEnabled !== false} onChange={e => change({ aiRefereeEnabled: e.currentTarget.checked })} /> AI Referee</label>
+                  </fieldset>
                 </>
               ) : (
                 <p>
@@ -718,7 +741,7 @@ export default function RoomScreen() {
             {snap.settings.mode === "team" && snap.teams.filter(t => t.id !== me.teamId).map(t => <section className="room-panel" key={t.id}><h2>{t.name}</h2><p>{game?.teamProgress?.find(progress => progress.teamId === t.id)?.status ?? (snap.players.some(p => p.teamId === t.id && p.solved) ? "Solved" : "Still guessing")}</p></section>)}
           </aside>
           <section className="room-drawing">
-            {!result && snap.phase !== "finished" && <><div className="room-round"><h2>Round {game?.round ?? "–"} / {snap.settings.rounds}</h2><span>{snap.settings.mode === "individual" ? "Everyone vs AI" : "Team play"}</span></div>
+            {!result && snap.phase !== "finished" && <><div className="room-round"><h2>Round {game?.round ?? "–"} / {snap.settings.rounds}</h2><span>{snap.settings.mode === "team" ? "Team play" : snap.settings.aiGuesserEnabled === false ? "Individual play" : "Everyone vs AI"}</span></div>
             <div className="room-prompt">
               <div>
                 <span className="room-eyebrow">{choosing ? "Choosing a word" : role === "drawer" ? "You are drawing" : "Guess the drawing"}</span>
@@ -728,7 +751,8 @@ export default function RoomScreen() {
             </div></>}
             {snap.phase === "finished" && <FinalResults snapshot={snap} playerId={session.playerId} host={!!host} onReturn={() => void action(() => client.current!.returnToLobby())} />}
             {result && game?.result && <RoundRecap snapshot={snap} playerId={session.playerId} seconds={seconds} onReturn={() => void action(() => client.current!.returnToLobby())} />}
-            <div className="room-board" hidden={snap.phase === "finished"}>
+            <div className={`room-board${refereeWarning ? " room-board-warning" : ""}`} hidden={snap.phase === "finished"}>
+              {refereeWarning && <div className="room-referee-warning" role="status" data-testid="referee-warning"><strong>Writing detected by referee</strong><span>{Math.round(refereeWarning.confidence * 100)}% confidence</span></div>}
               <DrawingCanvas
                 ref={canvas}
                 readOnly={
@@ -828,7 +852,7 @@ export default function RoomScreen() {
             )}
           </section>
           <aside className="room-chat-column">
-            {snap.phase !== "finished" && <AiCard game={game} result={result} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
+            {snap.phase !== "finished" && snap.settings.aiGuesserEnabled !== false && <AiCard game={game} result={result} pulse={drawing && !paused ? aiPulse : undefined} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
             <div className="room-chat-order">
               <section
                 data-testid="room-chat"
