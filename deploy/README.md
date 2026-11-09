@@ -1,6 +1,89 @@
 # Deploy More Than Meets the AI
 
-Use a host with Docker Engine and the Compose plugin. Run the commands below from `deploy/` in your normal Git checkout.
+Use a host with Docker Engine and the Compose plugin. The GHCR procedure runs from the existing VPS stack directory; the source-build procedures run from `deploy/` in your normal Git checkout.
+
+## Pull prebuilt GHCR images on node1
+
+This is the no-build path for the existing Docker stack at
+`/home/yashindo/docker-compose/more-than-meets-the-ai`. Main-branch pushes run
+[CI and image publishing](../docs/CI.md); after the **whole** Container images
+workflow succeeds, both image references and digests appear in its summary.
+The web and API use the same `sha-<full-commit-sha>` tag. The workflow publishes
+images only: it does not SSH into node1, migrate its database or restart games.
+
+Images are `ghcr.io/gabnash05/more-than-meets-the-ai-web` and
+`ghcr.io/gabnash05/more-than-meets-the-ai-api`, for `linux/amd64`. The API is the
+`base` target with AI unavailable. The browser uses same-origin API/socket paths;
+no domain, resume credential, model or production database URL is baked in.
+
+### First-time registry switch
+
+Copy only `deploy/compose.ghcr.yaml` from the approved checkout to that existing
+stack directory as `compose.ghcr.yaml`. Keep its current `compose.yaml` as the
+old-release fallback. Do **not** overwrite `runtime/api.env`,
+`secrets/postgres-password`, backups or data. The new file retains the project
+name `more-than-meets-the-ai`, the `postgres_data` volume mounted at
+`/var/lib/postgresql`, the existing database/user `mtmai`, resource/log limits and
+loopback ingress port 10005. The API and database are not publicly published.
+It contains no `build` keys and does not require a repository checkout on the VPS.
+Do not use another project name, remove volumes or run `down -v` while switching.
+
+GHCR packages may initially be private. Either make **both** packages public in
+their GitHub package settings, or configure `docker login ghcr.io` on the VPS
+with a user-managed credential restricted to `read:packages` and an appropriate
+Docker credential helper. Never put that credential in Compose, a GitHub workflow
+file, shell history or chat. Workflow pushes use their automatic job token; they
+do not need a VPS login secret. An existing package must grant this repository
+Actions access. A public repository does not by itself guarantee anonymous pulls.
+
+### Deploy a successfully published commit
+
+Choose a maintenance window: replacing the single API process interrupts active
+matches. Take and verify a private database backup, retain the previous image
+tag/digests and review migration compatibility first. These commands assume the
+existing node1 database is healthy and `runtime/api.env` already has its correct
+private `DATABASE_URL`. Do not run test-database cleanup on this stack.
+
+From the stack directory, replace the explicitly marked commit placeholder with
+the full SHA from the successful run (not a short SHA):
+
+```sh
+export IMAGE_TAG=sha-REPLACE_WITH_FULL_SUCCESSFUL_COMMIT_SHA
+export WEB_ORIGINS=https://mtmai.yashindo.syn-forge.com
+
+docker compose -f compose.ghcr.yaml config --quiet
+docker compose -f compose.ghcr.yaml pull web api
+docker compose -f compose.ghcr.yaml run --rm --no-deps --pull never api npm run db:migrate
+docker compose -f compose.ghcr.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 120 api
+docker compose -f compose.ghcr.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 120 web
+docker compose -f compose.ghcr.yaml ps
+curl -fsS http://127.0.0.1:10005/api/health
+curl -fsS https://mtmai.yashindo.syn-forge.com/api/health
+```
+
+Run these one at a time and stop on any failure. `config --quiet` validates without
+printing resolved credentials. Pull both images **before** migration/recreation;
+`--pull never` prevents a later step from silently choosing other image contents.
+Updating API then web with `--no-deps` leaves the running PostgreSQL service alone.
+Keep using `-f compose.ghcr.yaml` so a later command does not accidentally select
+the old locally loaded images. `IMAGE_PREFIX` can override the default GHCR
+owner/repository prefix for a fork; `WEB_BIND` overrides the loopback listener.
+The optional `API_ENV_FILE` and `POSTGRES_SECRET_FILE` override private host-file
+locations, never image contents.
+
+Verify public HTTPS, authenticated WebSocket upgrades and an isolated two-browser
+game after the update; health alone does not establish realtime correctness.
+To roll back, select a previously verified matching tag, pull both images and
+repeat the API/web recreation only after checking the database is compatible.
+Do not delete the persistent volume or automatically run reverse migrations.
+For exact content pinning, replace each service's image reference with its
+reported `name@sha256:...` digest instead of relying on a rebuildable tag.
+
+## Build locally instead
+
+The sections below retain the source-build and optional inference paths. They
+are not needed for a normal GHCR update. The source-build Compose file defaults
+to memory storage; do not substitute it for the persistent node1 registry stack.
 
 ## Start the game
 
