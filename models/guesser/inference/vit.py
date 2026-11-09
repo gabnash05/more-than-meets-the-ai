@@ -9,6 +9,20 @@ from PIL import Image
 BACKBONE = "vit_tiny_patch16_224.augreg_in21k_ft_in1k"
 
 
+def validate_selection(selection: dict, manifest: dict, labels: list[str]) -> None:
+    """Require the bundled selection record to match the serving manifest."""
+    if (
+        selection.get("backbone") != BACKBONE
+        or selection.get("preprocess_candidate") != manifest.get("preprocessing")
+        or selection.get("labels_sha256") != manifest.get("files", {}).get("labels.json")
+        or selection.get("num_classes") != len(labels)
+        or selection.get("fast_dev")
+        or not selection.get("best_model_path")
+        or selection.get("best_model_score") is None
+    ):
+        raise ValueError("checkpoint-selection-mismatch")
+
+
 class ViTTiny:
     def __init__(self, root: Path, manifest: dict, labels: list[str]):
         import timm
@@ -21,16 +35,7 @@ class ViTTiny:
         self.images = import_module("models.guesser.data.src.06-images")
         self.candidate = manifest["preprocessing"]
         selection = json.loads((root / "checkpoint-selection.json").read_text(encoding="utf-8"))
-        if (
-            selection["backbone"] != BACKBONE
-            or selection["preprocess_candidate"] != self.candidate
-            or selection["labels_sha256"] != manifest["files"]["labels.txt"]
-            or selection["num_classes"] != len(labels)
-            or selection["fast_dev"]
-            or not selection["best_model_path"]
-            or selection["best_model_score"] is None
-        ):
-            raise ValueError("checkpoint-selection-mismatch")
+        validate_selection(selection, manifest, labels)
         if self.images.candidate_hash(self.candidate) != manifest.get("preprocessingConfigHash"):
             raise ValueError("preprocessing-config-mismatch")
         self.model = timm.create_model(BACKBONE, pretrained=False, num_classes=len(labels))
