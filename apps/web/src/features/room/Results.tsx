@@ -52,10 +52,15 @@ export function RoundRecap({ snapshot, playerId, seconds, onReturn }: ResultProp
       </ul>
       {snapshot.settings.aiGuesserEnabled !== false && <p className="room-recap-ai">AI benchmark: {aiLabel}</p>}
       <div className="room-recap-next">
-        {nextDrawer && <Avatar avatar={nextDrawer.profile.avatar} />}
+        {nextDrawer && snapshot.game?.round !== snapshot.settings.rounds && !(snapshot.startBlockers?.length && countdown != null && countdown <= 0) && <Avatar avatar={nextDrawer.profile.avatar} />}
         <p>
-          Next drawer: {nextDrawer?.profile.name ?? "Waiting"}
-          {countdown !== undefined && countdown !== null && <> · <strong className="room-countdown">{countdown}s</strong></>}
+          {snapshot.game?.round === snapshot.settings.rounds
+            ? <>Final standings{countdown != null && countdown > 0 ? <> in <strong className="room-countdown">{countdown}s</strong></> : " are being prepared…"}</>
+            : snapshot.startBlockers?.length && countdown != null && countdown <= 0
+              ? <>Waiting for players or host action.</>
+              : nextDrawer
+                ? <>Next drawer: {nextDrawer.profile.name}{countdown != null && countdown > 0 ? <> · <strong className="room-countdown">{countdown}s</strong></> : " · Preparing the next round…"}</>
+                : <>Preparing the next round…</>}
         </p>
       </div>
       {snapshot.startBlockers?.map(blocker => <p key={blocker}>{blocker}</p>)}
