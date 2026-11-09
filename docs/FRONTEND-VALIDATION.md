@@ -1,5 +1,57 @@
 # Frontend implementation and validation
 
+## Lossless drawing-sync follow-up — 10 November 2026
+
+The implemented protocol and preservation boundaries are in [the drawing-sync contract](FRONTEND-ROOM-INTEGRATION.md#lossless-drawing-sync-follow-up--10-november-2026). This follow-up is locally verified; no VPS deployment, registry publication or inference work was performed by the synchronization task.
+
+| Final local check, Node.js 24.22.2 | Result |
+| --- | --- |
+| Web typecheck and ESLint | Passed |
+| Complete web unit suite | 108 passed |
+| Local-demo production export and browser suite | Passed; 55 browser tests |
+| Remote production export and real multiplayer suite | Passed; 8 tests, 1 unavailable-inference smoke test skipped |
+| API typecheck, lint, build and complete suite | Passed; 57 active tests, 2 deferred Team tests |
+| Six-browser PostgreSQL/API sustained drawing probe | Passed; exact backing-bitmap parity, independent solves, no timeout banners or console errors |
+
+Chrome is still absent; task-local configurations use the installed Playwright Chromium headless shell without weakening checked-in browser configuration. New browser coverage includes 600 coalesced pointer samples chunked below the per-operation limit with identical replay pixels, idle/burst replay, reset barriers, throttled-frame progress, and real multiplayer overflow recovery. The latter holds a real fill job, submits 600 canonical append envelopes through the authenticated authority, verifies one additional resync, releases the fill and compares the complete bitmap with an independently hydrated reference. Guesser input policy is unchanged; readiness is verified through renderer busy state and exact application, not an assumed disabled guess field.
+
+Unit faults include atomic grouped puts and ACK metadata updates, unchanged legacy retries, reads/deletes ordered after writes, abort/open/put failures, and expiry while a real fake-indexeddb transaction is held open. Burst writes used one transaction instead of twelve; four concurrent ACK metadata writes used one transaction. Serial recovery intentionally remains ordered and is not claimed to group sequential ACKs. Other regressions cover header digit growth before rejection, failed-prefix invalidation, disposal, and stale in-flight failure versus replacement reset.
+
+### Measured local comparison
+
+The same six-context held-stroke probe measured 20 actual-painted-pixel samples per run using one observer clock. Both paired runs transmitted 363 drawing points. The baseline used the existing pre-follow-up production export and original metadata projection; the task-local API wrapper restored that original projection for the instrumented baseline. The final run used the current production export and metadata projection. Diagnostic hooks were confined to the scratch harness, not application code.
+
+| Metric | Instrumented baseline | Final |
+| --- | --- | --- |
+| Input to viewer painted pixel: median / nearest-rank p95 / maximum | 27.2 / 33.3 / 60.2 ms | 26.5 / 31.1 / 32.2 ms |
+| Drawing Socket.IO message bytes, excluding WebSocket/TCP/TLS framing | 297,955 | 243,727 |
+| Drawing message bytes per point | 820.813 | 671.424 |
+| Operation creation to socket emission: median / p95 | 3 / 10 ms | 2 / 4 ms |
+| Receiver incremental arrival to replay-idle: median / p95 | 0.2 / 0.4 ms | 0.2 / 0.4 ms |
+| Outbox readwrite transactions during the ordinary stream | 773 | 774 |
+
+Drawing-message bytes per point fell **18.2%** in this local comparison. Ordinary stream latency was approximately preserved, not shown to have a large speedup. Grouped persistence helps concurrent bursts; it did not reduce transaction counts in this ordinary one-envelope-at-a-time stream. An earlier uninstrumented baseline measured 25.5 / 31.2 / 38.9 ms, reinforcing that these small latency differences are not a statistical performance claim. The final held stroke lasted 12,011 ms, preserved the first independent solve, and reached recap 230 ms after the final submissions.
+
+The first candidate was rejected despite lower packet counts: restarting a full movement wait and always awaiting a display frame produced 30.4 ms median / 85.5 ms p95 / 87.7 ms maximum. Stage measurements isolated the added waits. The final implementation keeps the prior sender deadline and adds an idle receiver fast path while retaining trailing-frame coalescing for bursts. Tests also exposed and fixed oversized-enqueue side effects and failed-prefix/stale-replay races before final acceptance.
+
+The first real recovery-test run reached `room:start` before the guest socket was connected; it now waits for authenticated connection readiness. A later full run exposed a pre-existing fixture revision race: settings changed while guest connections/resyncs were changing the room. Saving and verifying fixture settings before guest admission resolved it; the subsequent complete multiplayer run passed. No timeout or gameplay assertion was relaxed. Earlier worker reports of incomplete bounds/type errors are superseded by the integrated implementation and checks above.
+
+Raw comparison data is `/home/yashindo/.hermes/cache/scratch/mtmai-sync-v2/comparison.json`; per-run samples/stages are under `baseline-instrumented/`, `candidate-33ms/` and `final-six/`. Final unit output is `web-unit-final-report.json`; browser reports/configurations remain under `mtmai-optimization/`. Scratch evidence may expire. This is same-computer functional/performance evidence, not affected-phone, cellular, public-network, capacity, model-performance or hosted-CI validation. Task-owned servers and the isolated database are stopped after verification; the final export remains configured for remote loopback API port 3001.
+
+## Drawing/round-flow and timeout corrections — 9 November 2026
+
+Final local checks used Node.js 24.22.2. Web typecheck, ESLint, **78 unit tests**, the local-demo production export and **51 local production browser tests** passed. The rebuilt remote production export and the real multiplayer suite also passed: **7 passed, 1 real-inference smoke test explicitly skipped** because providers remain unavailable. The API passed 55 tests with 2 deferred Team tests; see the backend report.
+
+Google Chrome was not installed. Browser checks used the installed Playwright Chromium headless shell via task-local configurations outside the repository; checked-in browser configuration and CI were not weakened. The source test directories were retained, with two workers for local cases and one for multiplayer. Raw reports/configurations live under `/home/yashindo/.hermes/cache/scratch/mtmai-optimization/` and are temporary evidence, not durable CI artifacts.
+
+Coverage includes held-stroke local echo without extra busy cycles, real canvas replay/pixel parity and refresh, delayed guess submission with no duplicate Enter and no lost edited draft, independent three-player solves with hidden targets, correct confirmations, truthful final-round recap labels, responsive/reduced-motion fixtures, host transfer, seat contention and offline restore. Unit faults cover 90-batch streams at simulated ACK delays, the bounded send window, full pending counts beyond that window, version 1 outbox migration, blocked upgrades, transaction aborts, durable-before-ACK cleanup, coalesced/single-flight prune and failures, disposal/session replacement, stale resync timeouts, late ACK retry identity and expiry/write races. Simulated clocks do not measure real device/network latency.
+
+The prior sandbox-only Next.js/port-binding failures did not recur in the coordinator's normal environment: production builds and browser servers completed successfully. No score, answer-privacy, invitation-layout or AI-availability rule changed. No commit, push or redeployment was performed. The affected friends' devices/networks and the exact command responsible for the reported live timeout have not been reproduced.
+
+The final six-context local PostgreSQL/API/browser probe held one stroke for **12,029 ms**, accepted an independent solve while other humans continued, then submitted the remaining solves while the pointer was held. All backing-bitmap hashes matched, no timeout banner or unexpected console error appeared, and recap appeared **234 ms** after the final submissions. Twenty input-to-viewer-painted-pixel samples during the stroke measured **23.6 ms median, 30.5 ms nearest-rank p95, 31.0 ms maximum**. These include test observation overhead and use one host clock. They are local measurements, not affected-phone/public-network performance or a comparable before/after speedup against the earlier node1 baseline.
+
+The first measurement attempt sampled the raw pointer endpoint and timed out. Diagnosis showed identical sender/receiver painted bounds: Atrament smoothing had not painted that endpoint locally either. The corrected harness selects a pixel newly painted on the sender and waits for the same receiver pixel; it still requires all 20 samples, live held-stroke delivery and final exact pixel parity. The failed attempt and its diagnostics are retained in the scratch evidence. Final results are `sustained-six/results.json`; the recap screenshot is `sustained-six/six-player-recap.png`.
+
 ## Final card and multiplayer commit check — 7 November 2026
 
 The finished match hides the drawing board and keeps the match-complete card at the established width. The real multiplayer suite checks that the standings remain visible, the board is hidden, and the host can return to the lobby and start another match.
