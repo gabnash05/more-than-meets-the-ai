@@ -66,6 +66,13 @@ Preparation does not start network transfers. `dataset-summary.json` contains ac
 
 ## 4. Optionally inspect examples
 
+For model-input throughput, the separate [training guide](../training/README.md#exact-training-view-bundles-and-optional-cuda-augmentation)
+documents an explicit epoch/arm view-bundle builder. Run it in the **model**
+environment, not this CPU-only data environment. It reads train originals only,
+retains the existing selection/cut/render/normalization rules and stores derived
+lossless outputs; it does not replace JSONL/manifests, alter split membership or
+touch held-out test. Preparation/export below remain unchanged.
+
 ```sh
 uv run --frozen guesser-data preview --profile medium
 ```
