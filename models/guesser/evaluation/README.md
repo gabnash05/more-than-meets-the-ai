@@ -10,6 +10,14 @@ This Python/Jupyter workspace supports Guesser data auditing, model-training orc
 
 ## Supported environment
 
+The [training input guide](../training/README.md#exact-training-view-bundles-and-optional-cuda-augmentation)
+now provides separate model-environment estimate/build/benchmark commands for
+immutable epoch views and opt-in CUDA affine execution. Do not render these
+bundles in the notebook environment, rewrite notebook cells or replace completed
+A/B artifacts to adopt them. Start a separately configured training process with
+a new output root. Input throughput measurements are not ten-stage recognition
+or held-out accuracy results.
+
 - Python **3.12.16**, pinned in `.python-version` and constrained in `pyproject.toml`. This follows the Guesser plan's supported range and is a safer shared base for the planned ML stack.
 - Target: 64-bit Windows and Linux. The committed `uv.lock` includes platform-specific wheel selections for both, and Windows resolution passed a uv dry run from Linux; a live Windows notebook run remains to be verified.
 - Base Jupyter/scientific dependencies install by default. The optional `inference` extra adds the planned PyTorch 2.7.1 / torchvision 0.22.1 pair, timm, OpenCV, and FastAPI dependencies.
