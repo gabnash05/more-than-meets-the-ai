@@ -221,13 +221,22 @@ class QueuedGuesserInference implements Inference {
   }
 }
 
+/** Resolve the Referee model only when its HTTP provider is explicitly enabled. */
+export function configuredRefereeId(): string | undefined {
+  const modelId = process.env.REFEREE_MODEL_ID;
+  if (process.env.REFEREE_PROVIDER !== "http" || !modelId) return undefined;
+  if (modelId === "referee-fixture-v1" && process.env.AI_TEST_FIXTURES !== "1") return undefined;
+  return modelId;
+}
+
 export function configuredInference(): Inference | undefined {
   const options = inferenceOptions();
   if (process.env.GUESSER_PROVIDER === "queue") {
     const queue = configuredGuesserQueue();
     if (!queue) return;
     const ids: RoleIds = {};
-    if (process.env.REFEREE_PROVIDER === "http" && process.env.AI_TEST_FIXTURES === "1") ids.referee = process.env.REFEREE_MODEL_ID;
+    const refereeId = configuredRefereeId();
+    if (refereeId) ids.referee = refereeId;
     const http = ids.referee ? configuredHttpClient(ids, options) : undefined;
     let renderer: ChromiumRenderer | undefined;
     if (!http) {
@@ -242,7 +251,8 @@ export function configuredInference(): Inference | undefined {
   }
   const ids: RoleIds = {};
   if (process.env.GUESSER_PROVIDER === "http" && (process.env.GUESSER_MODEL_ID !== "quickdraw-int8-smoke" || process.env.AI_SMOKE_TEST === "1")) ids.guesser = process.env.GUESSER_MODEL_ID;
-  if (process.env.REFEREE_PROVIDER === "http" && process.env.AI_TEST_FIXTURES === "1") ids.referee = process.env.REFEREE_MODEL_ID;
+  const refereeId = configuredRefereeId();
+  if (refereeId) ids.referee = refereeId;
   if (!ids.guesser && !ids.referee) return;
   return configuredHttpClient(ids, options);
 }
