@@ -1,11 +1,13 @@
 # CI and GHCR container publishing
 
 Pull requests run `.github/workflows/frontend-ci.yml` and
-`.github/workflows/backend-ci.yml` with read-only repository permissions. Pushes
-to `main` run `.github/workflows/container-images.yml`, which calls both workflows
-before publishing. The same checks are reused, not copied or run twice on each
-main push. All workflows also support manual dispatch; publication is restricted
-to `refs/heads/main`. Application checks use Node.js 24.22.2 and npm lockfiles.
+`.github/workflows/backend-ci.yml` with read-only repository permissions. The
+backend workflow runs both API/PostgreSQL checks and the Python inference-service
+tests. Pushes to `main` run `.github/workflows/container-images.yml`, which calls
+both workflows before publishing. The same checks are reused, not copied or run
+twice on each main push. All workflows also support manual dispatch; publication
+is restricted to `refs/heads/main`. Application checks use Node.js 24.22.2 and
+npm lockfiles; inference tests use the locked Python 3.13 environment.
 Nothing deploys to the VPS, and no SSH or production database secret is needed.
 
 ## Individual multiplayer milestone
@@ -33,11 +35,13 @@ check's failure does not suppress them. Failures remain fatal. The runner's port
 
 ## Container publication
 
-Only after both frontend jobs and backend checks succeed, two independent
-Buildx jobs build the existing Dockerfiles for `linux/amd64` (node1's verified
-architecture) and push:
+Only after both frontend jobs and backend checks, including inference-service
+tests, succeed, four independent Buildx jobs build for `linux/amd64` (node1's
+verified architecture) and push:
 
 - `ghcr.io/gabnash05/more-than-meets-the-ai-api:sha-<full-commit-sha>` — API `base` target, without inference/browser/model extras.
+- `ghcr.io/gabnash05/more-than-meets-the-ai-api-inference:sha-<full-commit-sha>` — API `inference` target with the browser renderer required by live model inference.
+- `ghcr.io/gabnash05/more-than-meets-the-ai-ai:sha-<full-commit-sha>` — CPU PyTorch ViT inference runtime; model bundles are mounted separately and are not baked into this image.
 - `ghcr.io/gabnash05/more-than-meets-the-ai-web:sha-<full-commit-sha>` — Nginx plus the remote-mode static export, using same-origin API/socket URLs.
 
 The owner/repository prefix is derived from GitHub's execution context, so forks
@@ -47,21 +51,21 @@ pinned to inspected release commit SHAs; each image has source/revision OCI
 labels, a separate BuildKit cache scope and its tag/digest in the run summary.
 
 Wait for the **whole** workflow to succeed before deploying matching tags. A
-failed matrix member can leave just one image published; `fail-fast: false`
-lets the other member report its result rather than disguising partial failure.
+failed matrix member can leave only some images published; `fail-fast: false`
+lets the remaining builds report their result rather than hiding partial failure.
 There is deliberately no moving `latest`/`main` tag: a delayed run cannot make
 an older release look newest. Re-running one commit may rebuild its tag; use the
 reported digest if immutable content pinning is required. Publishing does not
 restart games or apply database migrations.
 
-New GHCR packages may initially be private even when the repository is public.
-A repository/package administrator must either make both packages public for
+New GHCR packages may initially be private even when the repository is public. A
+repository/package administrator must either make all required packages public for
 anonymous VPS pulls or authorize a user-managed, read-only registry credential.
 Existing packages must grant this repository Actions access. No custom publish
 PAT is required by the workflow. Registry access policies can still block a hosted
 publication and must be checked on its first actual run.
 
-The pull-only VPS procedure is in [the deployment runbook](../deploy/README.md#pull-prebuilt-ghcr-images-on-node1).
+The pull-only VPS procedure is in [the deployment runbook](../deploy/README.md#pull-prebuilt-ghcr-images-on-node1); the optional ViT canary uses its separate [GHCR Guesser instructions](../deploy/README.md#ghcr-vit-guesser-canary-on-node1).
 
 ## Frontend parallel execution and failure reporting
 
