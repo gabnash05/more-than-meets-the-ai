@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from ai_service.bundles import load_bundle
@@ -185,3 +186,54 @@ def test_validate_selection_uses_labels_json_hash():
             manifest,
             ["label"] * 345,
         )
+
+
+def test_configure_cpu_threads_uses_available_cpu_count(monkeypatch):
+    monkeypatch.setattr(
+        vit,
+        "os",
+        SimpleNamespace(
+            process_cpu_count=lambda: 6,
+            cpu_count=lambda: 4,
+        ),
+        raising=False,
+    )
+    configured = []
+
+    vit._configure_cpu_threads(configured.append)
+
+    assert configured == [6]
+
+
+def test_configure_cpu_threads_falls_back_to_one(monkeypatch):
+    monkeypatch.setattr(
+        vit,
+        "os",
+        SimpleNamespace(
+            process_cpu_count=lambda: None,
+            cpu_count=lambda: None,
+        ),
+        raising=False,
+    )
+    configured = []
+
+    vit._configure_cpu_threads(configured.append)
+
+    assert configured == [1]
+
+
+def test_configure_cpu_threads_falls_back_to_system_cpu_count(monkeypatch):
+    monkeypatch.setattr(
+        vit,
+        "os",
+        SimpleNamespace(
+            process_cpu_count=lambda: None,
+            cpu_count=lambda: 4,
+        ),
+        raising=False,
+    )
+    configured = []
+
+    vit._configure_cpu_threads(configured.append)
+
+    assert configured == [4]

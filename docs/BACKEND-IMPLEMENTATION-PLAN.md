@@ -16,7 +16,7 @@ Local checks passed 35 API tests with 2 Team tests deferred, 41 web unit tests, 
 
 ## Architecture and preserved frontend
 
-Use Node.js 24/npm, the Next.js static export, one authoritative NestJS + Socket.IO process and PostgreSQL/Prisma. Each room serializes transitions; live state remains in RAM and bounded asynchronous archival keeps SQL off the immediate drawing path. Socket.IO channels group authorized recipients; they do not authorize or store the match. No Redis, load balancer, replicas or transparent process failover is part of this milestone.
+Use Node.js 24/npm, the Next.js static export, one authoritative NestJS + Socket.IO process and PostgreSQL/Prisma. Each room serializes transitions; live state remains in RAM and bounded asynchronous archival keeps SQL off the immediate drawing path. Socket.IO channels group authorized recipients; they do not authorize or store the match. No Redis, load balancer, replicas or transparent process failover is part of this milestone. The later optional Guesser queue adds Redis Streams as an inference transport only; room authority and live state remain single-process.
 
 Preserve the approved V10 Lemon Crayon UI, profile/avatar behavior, corrected invitation modal, Atrament renderer, fill worker, 1024 × 768 logical canvas, continuous 33 ms batching and bounded history. Components use RoomClient rather than direct HTTP/socket listeners. Local demo/review fixtures remain separate from remote production; remote failures never fall back to demo data.
 

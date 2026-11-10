@@ -1,12 +1,24 @@
 """CPU adapter for a safely exported validation-selected ViT-Tiny checkpoint."""
 
-from importlib import import_module
 import json
+import os
+from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
 
 from PIL import Image
 
 BACKBONE = "vit_tiny_patch16_224.augreg_in21k_ft_in1k"
+
+
+def _configure_cpu_threads(set_num_threads: Callable[[int], None]) -> None:
+    """Use all process-visible CPUs for PyTorch intra-op work."""
+    # Prefer the process-available count, then system count, and finally one.
+    process_cpu_count = getattr(os, "process_cpu_count", None)
+    process_available = process_cpu_count() if process_cpu_count else None
+    thread_count = process_available or os.cpu_count() or 1
+    # Set the pool before model loading and warm-up so inference shares it.
+    set_num_threads(thread_count)
 
 
 def validate_selection(selection: dict, manifest: dict, labels: list[str]) -> None:
@@ -30,7 +42,7 @@ class ViTTiny:
         from safetensors.torch import load_file
 
         self.torch = torch
-        torch.set_num_threads(1)
+        _configure_cpu_threads(torch.set_num_threads)
         self.labels = labels
         self.images = import_module("models.guesser.data.src.06-images")
         self.candidate = manifest["preprocessing"]

@@ -1,20 +1,20 @@
 """HTTP contract and input validation for the private inference service."""
 
-from concurrent.futures import ThreadPoolExecutor
-from io import BytesIO
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 from threading import Event
 from time import time
 
-from fastapi.testclient import TestClient
 import numpy as np
+from fastapi.testclient import TestClient
+from models.guesser.inference.quickdraw import prepare
 from PIL import Image
 
-from ai_service import main
+from ai_service import inference, main
 from ai_service.bundles import Bundle
 from ai_service.main import app
-from models.guesser.inference.quickdraw import prepare
 
 
 def test_role_readiness_and_bound_fixture_scores(tmp_path, monkeypatch):
@@ -26,7 +26,7 @@ def test_role_readiness_and_bound_fixture_scores(tmp_path, monkeypatch):
     monkeypatch.delenv("GUESSER_MODEL_ID", raising=False)
     headers = {"Authorization": "Bearer fixture-secret-for-tests"}
     now = time()
-    monkeypatch.setattr(main, "time", lambda: now)
+    monkeypatch.setattr(inference, "time", lambda: now)
     job = {
         "jobId": "job",
         "turnId": "turn",
@@ -94,7 +94,7 @@ def test_guesser_prediction_logs_only_safe_correlation_fields(tmp_path, monkeypa
     monkeypatch.setenv("AI_SECRET_FILE", str(credential))
     monkeypatch.setenv("GUESSER_MODEL_ID", "test-guesser")
     now = time()
-    monkeypatch.setattr(main, "time", lambda: now)
+    monkeypatch.setattr(inference, "time", lambda: now)
 
     class AnswerAdapter:
         def predict(self, image):
@@ -170,3 +170,28 @@ def test_quickdraw_dequantizes_probability():
     answer, confidence = adapter.classify(np.zeros((1, 28, 28, 1), dtype=np.float32))
     assert answer == "second"
     assert confidence == 0.75
+
+def test_lifespan_starts_and_stops_the_queue_worker(tmp_path, monkeypatch):
+    credential = tmp_path / "credential"
+    credential.write_text("fixture-secret-for-tests", encoding="utf-8")
+    monkeypatch.setenv("AI_SECRET_FILE", str(credential))
+    monkeypatch.delenv("GUESSER_MODEL_ID", raising=False)
+    monkeypatch.delenv("REFEREE_MODEL_ID", raising=False)
+
+    class FakeWorker:
+        def __init__(self):
+            self.started = False
+            self.stopped = False
+
+        def start(self):
+            self.started = True
+
+        def stop_and_join(self):
+            self.stopped = True
+
+    fake = FakeWorker()
+    monkeypatch.setattr(main, "configured_worker", lambda bundle: fake)
+    with TestClient(app) as client:
+        assert client.get("/health/live").json() == {"live": True}
+        assert fake.started is True
+    assert fake.stopped is True

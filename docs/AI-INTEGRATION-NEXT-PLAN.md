@@ -1,8 +1,19 @@
 # Real AI inference — later milestone
 
-Status: follow-up scope, not an inference implementation or model-performance result. The Individual milestone prepares a provider boundary, `ai-benchmark-v1` scoring and a committed AI ledger. Production currently uses the unavailable adapter. Human AI modifiers remain zero and human winners exclude AI totals.
+Status: the optional Guesser queue transport is implemented and verified with synthetic tests; model readiness, measured throughput and balanced gameplay remain unvalidated. The Individual milestone prepares a provider boundary, `ai-benchmark-v1` scoring and a committed AI ledger. Production currently uses the unavailable adapter unless the Guesser overlay is deployed. Human AI modifiers remain zero and human winners exclude AI totals.
 
 The VM handoff, model artifact contract and initial guess pacing are specified in the [deployment and AI guessing plan](DEPLOYMENT-AND-AI-PLAN.md).
+
+## Implemented queue transport (November 2026)
+
+The Guesser role can dispatch through Redis Streams while the Referee fixture stays on its private direct HTTP route.
+
+- **API settings:** `GUESSER_PROVIDER=queue`, `GUESSER_MODEL_ID`, `AI_QUEUE_REDIS_URL`, optional `AI_QUEUE_REDIS_USERNAME`, and `AI_QUEUE_REDIS_PASSWORD_FILE`. Credentials are read from files, not URLs or source.
+- **Worker settings:** `AI_QUEUE_WORKER=1`, the same Redis URL/user, and the worker password file. One AI container runs one consumer and one inference at a time; add replicas to add consumers.
+- **Wire contract:** versioned `GuessJobV1`/`GuessResultV1` envelopes in `packages/game-contracts/src/ai-inference.ts`, mirrored in `apps/ai/ai_service/queue_contract.py`. The PNG lives under `mmtai:ai:payload:<jobId>`; request/results streams, worker group and readiness keys are defined in `apps/api/src/ai/redis-queue.ts` and `apps/ai/ai_service/queue_worker.py`.
+- **Scheduling:** every due room is reviewed each pass, but a room/role has at most one queued/active job. Queue wait counts against `AI_REQUEST_TIMEOUT_MS`, so a late result is discarded instead of scoring late.
+- **Failure modes:** a malformed, cancelled, expired, missing-payload or model-fault job yields an explicit unavailable result. A broker outage leaves human play intact and the AI unavailable; workers and the API retry connections.
+- **Scaling:** Compose can add workers with `docker compose -f deploy/compose.ghcr.yaml -f deploy/compose.ghcr.guesser.yaml up -d --scale ai=3 ai`. This is operator-triggered scaling, not an autoscaler. Redis remains private to the overlay; the API stays a single process because live rooms are in memory.
 
 ## Starting point
 
