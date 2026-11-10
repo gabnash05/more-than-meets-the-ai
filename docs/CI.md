@@ -2,8 +2,8 @@
 
 Pull requests run `.github/workflows/frontend-ci.yml` and
 `.github/workflows/backend-ci.yml` with read-only repository permissions. The
-backend workflow runs both API/PostgreSQL checks and the Python inference-service
-tests. Pushes to `main` run `.github/workflows/container-images.yml`, which calls
+backend workflow runs API/PostgreSQL and Redis queue checks plus the Python
+inference-service tests. Pushes to `main` run `.github/workflows/container-images.yml`, which calls
 both workflows before publishing. The same checks are reused, not copied or run
 twice on each main push. All workflows also support manual dispatch; publication
 is restricted to `refs/heads/main`. Application checks use Node.js 24.22.2 and
@@ -26,6 +26,9 @@ The backend runner starts an ephemeral PostgreSQL 18 service on loopback port
 55437 with database `mtmai_test`, matching the integration tests' hard guards.
 Trust authentication is confined to that temporary CI database; never reuse it
 for a public server. No production credentials or model artifacts enter CI.
+Both backend jobs also start an ephemeral Redis 7 service on loopback port 6379;
+tests use database 15 and delete only their own keys. Inference tests run a
+scoped Ruff check over the worker, inference and queue-contract modules.
 
 After `npm ci`, the job generates Prisma and migrates only that test database.
 Typecheck, lint, build and tests report their outcomes independently where their
