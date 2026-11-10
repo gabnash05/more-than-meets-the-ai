@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from ai_service.queue_contract import parse_job_json, parse_result_json, validate_result_binding
+from ai_service.queue_contract import (
+    parse_job_json,
+    parse_result_json,
+    validate_result_binding,
+)
 
 FIXTURES = (
     Path(__file__).resolve().parents[3]
