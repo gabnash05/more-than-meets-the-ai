@@ -123,7 +123,7 @@ models/referee/checkpoints/referee-evaluation/bundles/referee-vit-a-v1/
 
 The manifest records role `referee`, adapter `vit-tiny-referee`, input `[1, 3, 224, 224]`, output `[1, 4]`, label order `[text, number, symbol, circle]`, channel order `[text, number]`, sigmoid scores, preprocessing and a hash-bound artifact revision. The exporter verifies every file hash and fixed-tensor parity before publishing atomically.
 
-The bundle is integration-ready, but the production overlay still sets `REFEREE_PROVIDER=unavailable`. To enable it, copy the bundle under `<AI_ARTIFACT_ROOT>/<modelId>/` and set `REFEREE_MODEL_ID=referee-vit-a-v1`, `REFEREE_PROVIDER=http`, and `AI_TEST_FIXTURES=0`; do not enable a public Referee without validation review.
+The bundle is deployed on `node1` as `referee-vit-a-v1` with `REFEREE_PROVIDER=http` and `AI_TEST_FIXTURES=0`; `/health/ready` reports it ready. Copy the bundle under `<AI_ARTIFACT_ROOT>/<modelId>/` for another host and set the same variables. It has not been validated against a reviewed held-out set, so its scores are advisory.
 
 ## Tests
 
@@ -143,5 +143,5 @@ The checkpoint integration test skips when the supplied file is absent.
 
 - Encoded ATYPICT bits are proxies, not reviewed game labels. Report both slices.
 - The filename score `0.5564` is a training-validation metric, not reviewed-label accuracy, gameplay precision or a capacity result.
-- No Referee serving bundle, replay corpus, persistence-policy timing or deployment is included.
+- The serving bundle is deployed, but no real validation metrics, replay corpus or persistence-policy timing exist; the deployment is advisory.
 - Do not commit checkpoints, prepared data, predictions, summaries or reports.
