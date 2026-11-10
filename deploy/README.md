@@ -7,19 +7,27 @@ Use a host with Docker Engine and the Compose plugin. The GHCR procedure runs fr
 This is the no-build path for the existing Docker stack at
 `/home/yashindo/docker-compose/more-than-meets-the-ai`. Main-branch pushes run
 [CI and image publishing](../docs/CI.md); after the **whole** Container images
-workflow succeeds, both image references and digests appear in its summary.
-The web and API use the same `sha-<full-commit-sha>` tag. The workflow publishes
-images only: it does not SSH into node1, migrate its database or restart games.
+workflow succeeds, all image references and digests appear in its summary.
+The web and API use the same `sha-<full-commit-sha>` tag. The optional Guesser
+release also publishes an API `inference` target and a CPU ViT inference image
+with that same tag. Model weights remain a separate read-only host artifact. The
+workflow publishes images only: it does not SSH into node1, migrate its database
+or restart games.
 
-Images are `ghcr.io/gabnash05/more-than-meets-the-ai-web` and
-`ghcr.io/gabnash05/more-than-meets-the-ai-api`, for `linux/amd64`. The API is the
-`base` target with AI unavailable. The browser uses same-origin API/socket paths;
-no domain, resume credential, model or production database URL is baked in.
+Images are `ghcr.io/gabnash05/more-than-meets-the-ai-web`,
+`ghcr.io/gabnash05/more-than-meets-the-ai-api`,
+`ghcr.io/gabnash05/more-than-meets-the-ai-api-inference`, and
+`ghcr.io/gabnash05/more-than-meets-the-ai-ai`, for `linux/amd64`. The base API
+image keeps inference unavailable; the separate `api-inference` target includes
+the Chromium renderer required by live inference. The AI image contains the CPU
+ViT runtime, not weights. The browser uses same-origin API/socket paths; no
+domain, resume credential, model or production database URL is baked in.
 
 ### First-time registry switch
 
-Copy only `deploy/compose.ghcr.yaml` from the approved checkout to that existing
-stack directory as `compose.ghcr.yaml`. Keep its current `compose.yaml` as the
+Copy `deploy/compose.ghcr.yaml` from the approved checkout to that existing
+stack directory as `compose.ghcr.yaml`. Only when enabling the model, also copy
+`deploy/compose.ghcr.guesser.yaml` there. Keep its current `compose.yaml` as the
 old-release fallback. Do **not** overwrite `runtime/api.env`,
 `secrets/postgres-password`, backups or data. The new file retains the project
 name `more-than-meets-the-ai`, the `postgres_data` volume mounted at
@@ -28,13 +36,14 @@ loopback ingress port 10005. The API and database are not publicly published.
 It contains no `build` keys and does not require a repository checkout on the VPS.
 Do not use another project name, remove volumes or run `down -v` while switching.
 
-GHCR packages may initially be private. Either make **both** packages public in
-their GitHub package settings, or configure `docker login ghcr.io` on the VPS
-with a user-managed credential restricted to `read:packages` and an appropriate
-Docker credential helper. Never put that credential in Compose, a GitHub workflow
-file, shell history or chat. Workflow pushes use their automatic job token; they
-do not need a VPS login secret. An existing package must grant this repository
-Actions access. A public repository does not by itself guarantee anonymous pulls.
+GHCR packages may initially be private. Make every package required by the
+selected stack public for anonymous VPS pulls, or configure `docker login
+ghcr.io` on the VPS with a user-managed credential restricted to `read:packages`
+and an appropriate Docker credential helper. Never put that credential in
+Compose, a GitHub workflow file, shell history or chat. Workflow pushes use their
+automatic job token; they do not need a VPS login secret. An existing package
+must grant this repository Actions access. A public repository does not by itself
+guarantee anonymous pulls.
 
 ### Deploy a successfully published commit
 
@@ -78,6 +87,91 @@ repeat the API/web recreation only after checking the database is compatible.
 Do not delete the persistent volume or automatically run reverse migrations.
 For exact content pinning, replace each service's image reference with its
 reported `name@sha256:...` digest instead of relying on a rebuildable tag.
+
+## GHCR ViT Guesser canary on node1
+
+This opt-in deployment uses `compose.ghcr.yaml` plus
+`compose.ghcr.guesser.yaml`. It keeps web and PostgreSQL on the existing GHCR
+stack, pulls the matching `api-inference` and `ai` images, and never publishes
+the inference port. The overlay enables only the Guesser; the Referee remains
+unavailable. New rooms on this stack default to Guesser enabled, so use this only
+when the operator intends to expose the canary to all new rooms.
+
+The ViT bundle is not in Git or the container image. Select a verified bundle,
+copy its complete directory to the VPS under
+`$AI_ARTIFACT_DIR/$GUESSER_MODEL_ID`, and make it readable by container UID 1000.
+For node1, create the destination outside the checkout, then copy the directory
+from the approved local model bundle, for example:
+
+```sh
+ssh node1 'install -d -m 0750 /home/yashindo/docker-compose/more-than-meets-the-ai/runtime/ai-artifacts'
+scp -r models/guesser/checkpoints/notebook-production-full/bundles/guesser-vit-a-v1 \
+  node1:/home/yashindo/docker-compose/more-than-meets-the-ai/runtime/ai-artifacts/
+```
+
+The loader checks every bundle file against the manifest's SHA-256 values at
+startup; authenticated readiness confirms the exact model ID and label count.
+Make the host owner/container UID 1000 able to read the bundle. Keep the artifact
+directory outside the checkout and mount it read-only. For this
+canary the selected ID is `guesser-vit-a-v1`; its saved validation reports rank A
+above B, but this is a gameplay test, not a measured production accuracy claim.
+
+Create the shared service credential once, outside the checkout; retain an
+existing token on retries rather than replacing it:
+
+```sh
+export AI_SECRETS_DIR=/home/yashindo/docker-compose/more-than-meets-the-ai/secrets/ai
+install -d -m 0700 "$AI_SECRETS_DIR"
+if [ ! -e "$AI_SECRETS_DIR/ai-token" ]; then
+  (umask 077; openssl rand -hex 32 > "$AI_SECRETS_DIR/ai-token")
+fi
+chmod 0600 "$AI_SECRETS_DIR/ai-token"
+```
+
+After copying `compose.ghcr.guesser.yaml` beside the base Compose file, set the
+full SHA tag from a **successful** Container images workflow and the two host
+directories. Then validate and pull before replacing the API. The API restart
+can interrupt active matches; no database migration is needed for this overlay.
+
+```sh
+export IMAGE_TAG=sha-REPLACE_WITH_FULL_SUCCESSFUL_COMMIT_SHA
+export WEB_ORIGINS=https://mtmai.yashindo.syn-forge.com
+export GUESSER_MODEL_ID=guesser-vit-a-v1
+export AI_ARTIFACT_DIR=/home/yashindo/docker-compose/more-than-meets-the-ai/runtime/ai-artifacts
+export AI_SECRETS_DIR=/home/yashindo/docker-compose/more-than-meets-the-ai/secrets/ai
+
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml config --quiet
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml pull ai api
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 180 ai
+```
+
+Check authenticated readiness without printing the token:
+
+```sh
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml exec -T ai python -c '
+import json
+from pathlib import Path
+from urllib.request import Request, urlopen
+token = Path("/run/mmtai-secrets/ai-token").read_bytes().strip().decode()
+request = Request("http://127.0.0.1:8000/health/ready", headers={"Authorization": "Bearer " + token})
+ready = json.load(urlopen(request, timeout=5))["guesser"]
+print(json.dumps({"status": ready.get("status"), "modelId": ready.get("modelId"), "artifactRevision": ready.get("artifactRevision"), "labelCount": len(ready.get("labels", []))}))
+assert ready.get("status") == "ready" and ready.get("modelId") == "guesser-vit-a-v1" and len(ready.get("labels", [])) == 345
+'
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 180 api
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml ps
+curl -fsS https://mtmai.yashindo.syn-forge.com/api/health
+curl -fsS -o /dev/null -w '%{http_code}\n' https://mtmai.yashindo.syn-forge.com/room/
+```
+
+To turn off the canary, restore the base API image/configuration without the
+overlay, then stop (do not remove) the worker using both Compose files. This
+preserves the pinned images and model files for diagnosis or rollback:
+
+```sh
+docker compose -f compose.ghcr.yaml up -d --no-deps --pull never --wait --wait-timeout 120 api
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml stop ai
+```
 
 ## Build locally instead
 
