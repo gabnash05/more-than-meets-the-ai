@@ -96,6 +96,10 @@ stack, pulls the matching `api-inference` and `ai` images, and never publishes
 the inference port. The overlay enables only the Guesser; the Referee remains
 unavailable. New rooms on this stack default to Guesser enabled, so use this only
 when the operator intends to expose the canary to all new rooms.
+The AI and API containers have no CPU or memory cgroup limits (PID limits remain);
+ViT uses all CPUs visible to its process, while inference concurrency stays at
+one job. This can compete with PostgreSQL and other node1 services, so monitor
+host resource use.
 
 The ViT bundle is not in Git or the container image. Select a verified bundle,
 copy its complete directory to the VPS under
