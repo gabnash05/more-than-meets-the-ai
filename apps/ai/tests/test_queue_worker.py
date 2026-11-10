@@ -1,9 +1,11 @@
 """Redis Streams worker behavior: binding, deadlines, recovery and readiness."""
 
 import json
+import os
 from io import BytesIO
 from pathlib import Path
 from time import time
+from uuid import uuid4
 
 import pytest
 import redis
@@ -217,3 +219,42 @@ def test_configured_worker_respects_the_enable_switch(monkeypatch) -> None:
     queue = configured_worker(bundle(Adapter()))
     assert queue is not None
     assert queue.consumer
+
+@pytest.mark.skipif(not os.getenv("REDIS_URL"), reason="REDIS_URL not configured")
+def test_two_workers_share_the_consumer_group() -> None:
+    client = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=False)
+    for stream in (JOBS_STREAM, RESULTS_STREAM):
+        client.delete(stream)
+    adapter_a, adapter_b = Adapter(), Adapter()
+    first = QueueWorker(client, bundle(adapter_a), "int-worker-a")
+    second = QueueWorker(client, bundle(adapter_b), "int-worker-b")
+    first.start()
+    second.start()
+    try:
+        job_ids = []
+        for _index in range(2):
+            job_id = f"int-job-{uuid4()}"
+            payload_key = f"mmtai:ai:payload:{job_id}"
+            client.set(payload_key, png(), px=60000)
+            client.xadd(JOBS_STREAM, {"job": job_json(jobId=job_id, payloadKey=payload_key)})
+            job_ids.append(job_id)
+
+        deadline = time() + 15
+        seen: dict[bytes, dict] = {}
+        while len(seen) < 2 and time() < deadline:
+            response = client.xread({RESULTS_STREAM: "0"}, count=10, block=200)
+            for _stream, entries in response or []:
+                for message_id, fields in entries:
+                    seen[message_id] = json.loads(fields[b"result"])
+
+        assert len(seen) == 2, f"expected two results, received {len(seen)}"
+        assert sorted(result["jobId"] for result in seen.values()) == sorted(job_ids)
+        assert adapter_a.calls + adapter_b.calls == 2
+    finally:
+        first.stop_and_join()
+        second.stop_and_join()
+        client.delete(JOBS_STREAM, RESULTS_STREAM)
+        for pattern in ("mmtai:ai:workers:int-worker-*", "mmtai:ai:payload:int-job-*"):
+            for key in client.scan_iter(match=pattern):
+                client.delete(key)
+        client.close()
