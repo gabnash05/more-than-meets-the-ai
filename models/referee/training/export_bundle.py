@@ -57,7 +57,7 @@ def _labels() -> tuple[bytes, list[str]]:
 
 def _preprocessing_hash(candidate: str) -> str:
     if candidate == "foreground":
-        from models.guesser.data.src.common import load_step
+        from guesser_data.common import load_step
 
         return load_step("06-images").candidate_hash("foreground")
     if candidate == "rgb_resize":
