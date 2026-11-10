@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
+import { createClient } from "redis";
+import { guessResultBinding, parseGuessJobV1 } from "../../../packages/game-contracts/src/ai-inference";
 import { configuredInference, type Job } from "../src/ai/client";
 import {
   GUESS_CANCEL_PREFIX,
   GUESS_JOBS_STREAM,
+  GUESS_RESULTS_STREAM,
+  GUESS_WORKER_GROUP,
   GUESS_WORKER_PREFIX,
   GuesserQueue,
   type QueueConnection,
   type QueueEntry,
 } from "../src/ai/redis-queue";
+import { RedisQueueConnection } from "../src/ai/redis-connection";
 
 async function waitFor(condition: () => boolean) {
   for (let i = 0; i < 150; i++) {
@@ -250,5 +256,48 @@ test("invalid queue configuration keeps the game human-playable", () => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  }
+});
+
+test("real Redis round-trip resolves a submitted job", { skip: !process.env.REDIS_URL }, async () => {
+  const url = process.env.REDIS_URL!;
+  const raw = createClient({ url });
+  await raw.connect();
+  const connection = new RedisQueueConnection({ url });
+  const queue = new GuesserQueue({ modelId: "guesser-vit-a-v1", connection, consumerId: `api-int-${randomUUID()}` });
+  const workerId = `worker-int-${randomUUID()}`;
+  try {
+    await raw.del([GUESS_JOBS_STREAM, GUESS_RESULTS_STREAM, `${GUESS_WORKER_PREFIX}${workerId}`]);
+    await queue.start();
+    await raw.xGroupCreate(GUESS_JOBS_STREAM, GUESS_WORKER_GROUP, "0", { MKSTREAM: true }).catch(error => {
+      if (!String(error).includes("BUSYGROUP")) throw error;
+    });
+    await raw.set(`${GUESS_WORKER_PREFIX}${workerId}`, JSON.stringify({
+      modelId: "guesser-vit-a-v1", artifactRevision: "vit-a-20261110", labels, heartbeatAt: Date.now(),
+    }), { expiration: { type: "PX", value: 15000 } });
+    await queue.refresh();
+    assert.equal(queue.ready()?.labels?.length, 345);
+
+    const value = job({ jobId: `job-int-${randomUUID()}`, deadlineAt: Date.now() + 5000 });
+    const pending = queue.submit(value, Buffer.from("png"), signal());
+    let received: Record<string, unknown> | undefined;
+    for (let attempt = 0; attempt < 20 && !received; attempt++) {
+      const reply = await raw.xReadGroup(GUESS_WORKER_GROUP, workerId, [{ key: GUESS_JOBS_STREAM, id: ">" }], { COUNT: 10, BLOCK: 500 });
+      for (const entry of reply ?? []) {
+        for (const message of entry.messages) {
+          const parsed = JSON.parse(String(message.message.job)) as Record<string, unknown>;
+          if (parsed.jobId === value.jobId) received = parsed;
+        }
+      }
+    }
+    assert.ok(received, "worker never received the queued job");
+    await raw.xAdd(GUESS_RESULTS_STREAM, "*", {
+      result: JSON.stringify({ ...guessResultBinding(parseGuessJobV1(received)), status: "answer", answer: "zigzag", confidence: 0.8 }),
+    });
+    assert.deepEqual(await pending, { status: "answer", answer: "zigzag", confidence: 0.8 });
+  } finally {
+    await queue.close();
+    await raw.del([GUESS_JOBS_STREAM, GUESS_RESULTS_STREAM, `${GUESS_WORKER_PREFIX}${workerId}`]);
+    await raw.quit();
   }
 });
