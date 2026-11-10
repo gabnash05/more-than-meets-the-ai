@@ -6,7 +6,7 @@ result that does not belong to the turn or canvas it published. Keep this file
 in lockstep with packages/game-contracts/src/ai-inference.ts.
 """
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
@@ -61,7 +61,7 @@ class GuessUnavailableResultV1(_ResultBinding):
 
 
 GuessResultV1 = Annotated[
-    Union[GuessAnswerResultV1, GuessPassResultV1, GuessUnavailableResultV1],
+    GuessAnswerResultV1 | GuessPassResultV1 | GuessUnavailableResultV1,
     Field(discriminator="status"),
 ]
 
