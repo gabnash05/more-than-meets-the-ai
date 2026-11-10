@@ -124,7 +124,12 @@ export class GuesserQueue {
       for (const key of await this.options.connection.scanKeys(`${GUESS_WORKER_PREFIX}*`)) {
         const raw = await this.options.connection.readText(key);
         if (!raw) continue;
-        const value = JSON.parse(raw) as Partial<WorkerRegistration>;
+        let value: Partial<WorkerRegistration>;
+        try {
+          value = JSON.parse(raw) as Partial<WorkerRegistration>;
+        } catch {
+          continue;
+        }
         if (value.modelId !== this.options.modelId || typeof value.artifactRevision !== "string" || !value.artifactRevision || value.artifactRevision.length > 128) continue;
         if (!Array.isArray(value.labels) || value.labels.length !== 345 || !value.labels.every(label => typeof label === "string" && label.trim().length > 0 && label.length <= 100)) continue;
         if (typeof value.heartbeatAt !== "number" || this.now() - value.heartbeatAt > WORKER_TTL_MS) continue;
