@@ -14,6 +14,13 @@ from models.guesser.inference.quickdraw import HASHES, REVISION, QuickDraw
 from models.referee.inference.fixture import RefereeFixture
 
 MODEL_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}")
+REFEREE_FILES = {
+    "weights.safetensors",
+    "labels.txt",
+    "labels.json",
+    "checkpoint-selection.json",
+}
+REFEREE_LABELS = ["text", "number", "symbol", "circle"]
 
 
 class Adapter(Protocol):
@@ -41,6 +48,56 @@ class Bundle:
         return result
 
 
+def _load_referee_bundle(artifact_root: Path, model_id: str) -> Bundle:
+    """Load and validate a packaged Referee ViT bundle."""
+    try:
+        root = artifact_root / model_id
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        revision = manifest["artifactRevision"]
+        files = manifest["files"]
+        if (
+            manifest.get("version") != 1
+            or manifest.get("role") != "referee"
+            or manifest.get("modelId") != model_id
+            or manifest.get("adapter") != "vit-tiny-referee"
+            or manifest.get("input") != [1, 3, 224, 224]
+            or manifest.get("output") != [1, 4]
+            or manifest.get("labelOrder") != REFEREE_LABELS
+            or manifest.get("channelOrder") != ["text", "number"]
+            or manifest.get("scoreActivation") != "sigmoid"
+            or not isinstance(revision, str)
+            or not 1 <= len(revision) <= 128
+            or not isinstance(files, dict)
+            or set(files) != REFEREE_FILES
+        ):
+            return Bundle(model_id, reason="referee-contract-mismatch")
+        for name, expected in files.items():
+            with (root / name).open("rb") as artifact:
+                actual = file_digest(artifact, "sha256").hexdigest()
+            if actual != expected:
+                return Bundle(model_id, reason="artifact-hash-mismatch")
+        labels = (root / "labels.txt").read_text(encoding="utf-8").splitlines()
+        if labels != REFEREE_LABELS:
+            return Bundle(model_id, reason="invalid-label-order")
+        labels_json = json.loads((root / "labels.json").read_text(encoding="utf-8"))
+        if (
+            not isinstance(labels_json, list)
+            or len(labels_json) != 4
+            or [entry.get("class_id") for entry in labels_json] != list(range(4))
+            or [entry.get("source_name") for entry in labels_json] != labels
+        ):
+            return Bundle(model_id, reason="invalid-label-order")
+        from models.referee.inference.vit import RefereeViT
+
+        return Bundle(model_id, revision, labels, RefereeViT(root, manifest, labels))
+    except FileNotFoundError:
+        return Bundle(model_id, reason="bundle-file-missing")
+    except ImportError:
+        return Bundle(model_id, reason="adapter-dependencies-missing")
+    except (KeyError, TypeError, ValueError, OSError, RuntimeError):
+        return Bundle(model_id, reason="incompatible-bundle")
+
+
 def load_bundle(role: str, model_id: str, artifact_root: Path) -> Bundle:
     if not model_id:
         return Bundle(model_id)
@@ -49,7 +106,7 @@ def load_bundle(role: str, model_id: str, artifact_root: Path) -> Bundle:
     if role == "referee":
         if model_id == "referee-fixture-v1" and os.getenv("AI_TEST_FIXTURES") == "1":
             return Bundle(model_id, "fixture-v1", adapter=RefereeFixture())
-        return Bundle(model_id, reason="referee-adapter-unavailable")
+        return _load_referee_bundle(artifact_root, model_id)
     try:
         root = artifact_root / model_id
         manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
