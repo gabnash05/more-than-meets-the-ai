@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 
-# Do not interrupt an in-progress release halfway through its two image builds.
+# Do not interrupt an in-progress release halfway through its image builds.
 concurrency:
   group: container-images-${{ github.ref }}
   cancel-in-progress: false
@@ -39,9 +39,20 @@ jobs:
           - image: api
             dockerfile: deploy/api.Dockerfile
             target: base
+            build_args: ''
+          - image: api-inference
+            dockerfile: deploy/api.Dockerfile
+            target: inference
+            build_args: ''
+          - image: ai
+            dockerfile: deploy/ai.Dockerfile
+            target: ''
+            build_args: |
+              AI_RUNTIME=vit
           - image: web
             dockerfile: deploy/web.Dockerfile
             target: ''
+            build_args: ''
     steps:
       - name: Check out tested commit
         uses: actions/checkout@v7
@@ -53,7 +64,7 @@ jobs:
         env:
           IMAGE: ${{ matrix.image }}
         # Repository/commit come from GitHub's fixed execution context, not PR text.
-        # Lowercase the registry path, then use one full commit tag for both images.
+        # Lowercase the registry path, then use one full commit tag for every image.
         run: |
           name="ghcr.io/${GITHUB_REPOSITORY,,}-$IMAGE"
           printf 'name=%s\nreference=%s:sha-%s\n' "$name" "$name" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
@@ -75,6 +86,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           target: ${{ matrix.target }}
+          build-args: ${{ matrix.build_args }}
           platforms: linux/amd64
           push: true
           tags: ${{ steps.image.outputs.reference }}
