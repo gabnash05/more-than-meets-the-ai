@@ -1,0 +1,67 @@
+# Opt-in GHCR ViT Guesser overlay for the existing persistent node1 stack.
+# Keep the base compose.ghcr.yaml unchanged for the normal AI-unavailable stack.
+name: more-than-meets-the-ai
+
+services:
+  api:
+    image: ${IMAGE_PREFIX:-ghcr.io/gabnash05/more-than-meets-the-ai}-api-inference:${IMAGE_TAG:?Set IMAGE_TAG to a successful workflow's sha-commit tag}
+    environment:
+      AI_SERVICE_URL: http://ai:8000
+      AI_PRIVATE_LINK: "0"
+      AI_RENDERER_URL: http://web:8080/review/canvas/
+      AI_SECRET_FILE: /run/mmtai-secrets/ai-token
+      GUESSER_PROVIDER: http
+      GUESSER_MODEL_ID: ${GUESSER_MODEL_ID:?Set GUESSER_MODEL_ID to the installed bundle directory}
+      REFEREE_PROVIDER: unavailable
+      REFEREE_MODEL_ID: ""
+      AI_SMOKE_TEST: "0"
+      AI_TEST_FIXTURES: "0"
+      AI_FIRST_GUESS_MS: "1500"
+      AI_GUESS_COOLDOWN_MS: "2000"
+      AI_MAX_GUESSES_PER_TURN: "24"
+      AI_REQUEST_TIMEOUT_MS: "2500"
+      AI_MAX_CONCURRENT_JOBS: "1"
+    volumes:
+      - type: bind
+        source: ${AI_SECRETS_DIR:?Set AI_SECRETS_DIR to the private host secret directory}
+        target: /run/mmtai-secrets
+        read_only: true
+    depends_on:
+      ai:
+        condition: service_healthy
+    mem_limit: 768m
+    pids_limit: 320
+
+  ai:
+    image: ${IMAGE_PREFIX:-ghcr.io/gabnash05/more-than-meets-the-ai}-ai:${IMAGE_TAG:?Set IMAGE_TAG to a successful workflow's sha-commit tag}
+    environment:
+      AI_SECRET_FILE: /run/mmtai-secrets/ai-token
+      AI_ARTIFACT_ROOT: /artifacts
+      GUESSER_MODEL_ID: ${GUESSER_MODEL_ID:?Set GUESSER_MODEL_ID to the installed bundle directory}
+      REFEREE_MODEL_ID: ""
+      AI_SMOKE_TEST: "0"
+      AI_TEST_FIXTURES: "0"
+    volumes:
+      - type: bind
+        source: ${AI_SECRETS_DIR:?Set AI_SECRETS_DIR to the private host secret directory}
+        target: /run/mmtai-secrets
+        read_only: true
+      - type: bind
+        source: ${AI_ARTIFACT_DIR:?Set AI_ARTIFACT_DIR to the directory containing the selected bundle}
+        target: /artifacts
+        read_only: true
+    cpus: 1.0
+    mem_limit: 1536m
+    pids_limit: 256
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).close()"]
+      interval: 10s
+      timeout: 3s
+      start_period: 120s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
