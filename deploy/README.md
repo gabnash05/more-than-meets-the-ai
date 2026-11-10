@@ -31,8 +31,9 @@ stack directory as `compose.ghcr.yaml`. Only when enabling the model, also copy
 old-release fallback. Do **not** overwrite `runtime/api.env`,
 `secrets/postgres-password`, backups or data. The new file retains the project
 name `more-than-meets-the-ai`, the `postgres_data` volume mounted at
-`/var/lib/postgresql`, the existing database/user `mtmai`, resource/log limits and
-loopback ingress port 10005. The API and database are not publicly published.
+`/var/lib/postgresql`, the existing database/user `mtmai`, resource/log limits for
+web/database and loopback ingress port 10005. The API has no CPU or memory cap;
+its PID limit remains. The API and database are not publicly published.
 It contains no `build` keys and does not require a repository checkout on the VPS.
 Do not use another project name, remove volumes or run `down -v` while switching.
 
