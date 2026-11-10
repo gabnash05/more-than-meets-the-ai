@@ -89,14 +89,14 @@ Do not delete the persistent volume or automatically run reverse migrations.
 For exact content pinning, replace each service's image reference with its
 reported `name@sha256:...` digest instead of relying on a rebuildable tag.
 
-## GHCR ViT Guesser canary on node1
+## GHCR ViT Guesser and Referee canary on node1
 
 This opt-in deployment uses `compose.ghcr.yaml` plus
 `compose.ghcr.guesser.yaml`. It keeps web and PostgreSQL on the existing GHCR
 stack, pulls the matching `api-inference` and `ai` images, and never publishes
-the inference port. The overlay enables only the Guesser; the Referee remains
-unavailable. New rooms on this stack default to Guesser enabled, so use this only
-when the operator intends to expose the canary to all new rooms.
+the inference port. The overlay enables both the Guesser and the Referee when
+their bundles are present. New rooms on this stack default both roles on, so
+use this only when the operator intends to expose the canary to all new rooms.
 The AI and API containers have no CPU or memory cgroup limits (PID limits remain);
 ViT uses all CPUs visible to its process, and each AI container runs one inference
 at a time. Add `ai` replicas to add inference concurrency. This can compete with
@@ -329,4 +329,6 @@ The downloaded INT8 bundle is for private smoke tests. Its hashes verify the mod
 
 For the later ViT-Tiny swap, set `AI_RUNTIME=vit`, select the bundle's `GUESSER_MODEL_ID`, and set `AI_SMOKE_TEST=0`. The bundle uses `weights.safetensors`, ordered `labels.txt` and `checkpoint-selection.json`. Its version 1 manifest sets role `guesser`, adapter `vit-tiny`, `modelId`, `artifactRevision`, input `[1,3,224,224]`, output `[1,345]`, the selected `preprocessing`, `preprocessingConfigHash` and a filename-to-SHA-256 map in `files`. Confirm evaluation parity with trusted weights before enabling it.
 
-For the private Referee smoke test, add `AI_TEST_FIXTURES=1`, `REFEREE_MODEL_ID=referee-fixture-v1`, and `REFEREE_PROVIDER=http` to the dedicated stack. Run the browser acceptance command with `ROOM_TEST_AI_REFEREE=1` as well. It draws controlled colors to check that both players see the text warning and that a digits-only response clears it. The fixture is synthetic. Normal stacks leave the Referee model unconfigured until trained weights are available.
+For the Referee, copy the exported bundle under `<AI_ARTIFACT_DIR>/referee-vit-a-v1/` and set `REFEREE_MODEL_ID=referee-vit-a-v1`, `REFEREE_PROVIDER=http`, and `AI_TEST_FIXTURES=0`. The manifest uses role `referee`, adapter `vit-tiny-referee`, input `[1,3,224,224]`, output `[1,4]`, label order `[text, number, symbol, circle]`, channel order `[text, number]` and sigmoid scores. Authenticated `/health/ready` must report the Referee as `ready`; otherwise the bundle, revision or preprocessing configuration is wrong. The current bundle records `rgb_resize` as provisional and has no reviewed held-out validation, so treat its scores as advisory.
+
+For the private Referee fixture smoke test, add `AI_TEST_FIXTURES=1`, `REFEREE_MODEL_ID=referee-fixture-v1`, and `REFEREE_PROVIDER=http` to a dedicated stack instead. Run the browser acceptance command with `ROOM_TEST_AI_REFEREE=1` as well. It draws controlled colors to check that both players see the text warning and that a digits-only response clears it. The fixture is synthetic. Do not enable the fixture on a normal stack.
