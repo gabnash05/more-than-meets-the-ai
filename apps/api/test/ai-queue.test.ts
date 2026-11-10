@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
-import type { Job } from "../src/ai/client";
+import { configuredInference, type Job } from "../src/ai/client";
 import {
   GUESS_CANCEL_PREFIX,
   GUESS_JOBS_STREAM,
@@ -27,6 +27,7 @@ class FakeConnection implements QueueConnection {
   entries: QueueEntry[] = [];
   acknowledged: string[] = [];
   closed = false;
+  failScan = false;
 
   async setValue(key: string, value: string | Buffer, ttl: number) {
     this.events.push(`set:${key}`);
@@ -56,6 +57,7 @@ class FakeConnection implements QueueConnection {
   }
   async deleteEntry() {}
   async scanKeys(pattern: string) {
+    if (this.failScan) throw new Error("redis-down");
     const prefix = pattern.replace(/\*$/, "");
     return [...this.values.keys()].filter(key => key.startsWith(prefix));
   }
@@ -164,6 +166,10 @@ test("readiness ignores stale, foreign and malformed worker registrations", asyn
 
     connection.values.clear();
     connection.values.set(`${GUESS_WORKER_PREFIX}fresh`, { value: registration(), ttl: 15000 });
+    connection.failScan = true;
+    await queue.refresh();
+    assert.equal(queue.ready(), undefined);
+    connection.failScan = false;
     await queue.refresh();
     assert.equal(queue.ready()?.modelId, "guesser-vit-a-v1");
   } finally {
@@ -220,4 +226,29 @@ test("close rejects live waiters and refuses further submissions", async () => {
   await assert.rejects(pending, /queue-closed/);
   assert.equal(connection.closed, true);
   await assert.rejects(queue.submit(job({ jobId: "job-after-close" }), Buffer.from("png"), signal()), /queue-closed/);
+});
+
+test("invalid queue configuration keeps the game human-playable", () => {
+  const keys = ["GUESSER_PROVIDER", "GUESSER_MODEL_ID", "AI_QUEUE_REDIS_URL", "REDIS_URL", "AI_QUEUE_REDIS_PASSWORD_FILE"];
+  const before = new Map(keys.map(key => [key, process.env[key]]));
+  try {
+    process.env.GUESSER_PROVIDER = "queue";
+    process.env.GUESSER_MODEL_ID = "guesser-vit-a-v1";
+    process.env.AI_QUEUE_REDIS_URL = "http://127.0.0.1:6379/15";
+    delete process.env.AI_QUEUE_REDIS_PASSWORD_FILE;
+    assert.equal(configuredInference(), undefined);
+
+    process.env.AI_QUEUE_REDIS_URL = "redis://127.0.0.1:6379/15";
+    process.env.AI_QUEUE_REDIS_PASSWORD_FILE = "/nonexistent/redis-password";
+    assert.equal(configuredInference(), undefined);
+
+    delete process.env.AI_QUEUE_REDIS_PASSWORD_FILE;
+    process.env.GUESSER_MODEL_ID = "bad model id";
+    assert.equal(configuredInference(), undefined);
+  } finally {
+    for (const [key, value] of before) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
