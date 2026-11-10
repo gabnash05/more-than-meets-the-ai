@@ -343,7 +343,7 @@ export class RoomEngine {
   private creatingCodes = new Set<string>();
   private inferenceTimer?: ReturnType<typeof setInterval>;
   private inferenceCursor: Partial<Record<Role, string>> = {};
-  private activeInference = new Map<Role, { code: string; controller: AbortController; guessing: boolean }>();
+  private activeInference = new Map<string, { role: Role; code: string; controller: AbortController; guessing: boolean }>();
   private idleSince = new Map<string, number>();
   private canvasBytes = new Map<string, number>();
   private roomBytes = new Map<string, number>();
@@ -409,6 +409,10 @@ export class RoomEngine {
     return hadWarning;
   }
 
+  private inferenceKey(code: string, role: Role): string {
+    return `${code}:${role}`;
+  }
+
   private cancelInference(code: string): boolean {
     const game = this.rooms.get(code)?.game;
     const warningCleared = game ? this.clearRefereeWarning(game) : false;
@@ -447,27 +451,38 @@ export class RoomEngine {
     game.aiRound = { scoringVersion: "ai-benchmark-v1", status: "unsolved", points: 0, elapsedMs: null };
   }
 
+  /**
+   * Dispatch every due observation that has no job in flight.
+   *
+   * For each role, scan room codes in round-robin order so repeated passes do
+   * not always put the same room first. A room/role pair is skipped while its
+   * previous observation is still pending: canvas updates coalesce into the
+   * next eligible pass instead of building one queued job per stroke. Roles
+   * that become due in the same room share one rendered canvas and reservation.
+   */
   private scheduleObservations(): void {
     const inference = this.options.inference;
     if (!inference || this.stopping) return;
-    const selected = new Map<string, Role[]>();
     const codes = [...this.rooms.keys()];
+    const planned = new Map<string, Role[]>();
     for (const role of ["guesser", "referee"] as const) {
-      if (this.activeInference.has(role)) continue;
       const previous = codes.indexOf(this.inferenceCursor[role] ?? "");
+      let nextCursor: string | undefined;
       for (let offset = 1; offset <= codes.length; offset++) {
         const code = codes[(previous + offset) % codes.length];
         const room = this.rooms.get(code);
-        if (!room || !this.observationDue(room, role)) continue;
-        const roles = selected.get(code) ?? [];
+        if (!room || this.activeInference.has(this.inferenceKey(code, role)) || !this.observationDue(room, role)) continue;
+        nextCursor ??= code;
+        const roles = planned.get(code) ?? [];
         roles.push(role);
-        selected.set(code, roles);
-        this.activeInference.set(role, { code, controller: new AbortController(), guessing: false });
-        this.inferenceCursor[role] = code;
-        break;
+        planned.set(code, roles);
       }
+      if (nextCursor) this.inferenceCursor[role] = nextCursor;
     }
-    for (const [code, roles] of selected) void this.observeGroup(code, roles);
+    for (const [code, roles] of planned) {
+      for (const role of roles) this.activeInference.set(this.inferenceKey(code, role), { role, code, controller: new AbortController(), guessing: false });
+      void this.observeGroup(code, roles);
+    }
   }
 
   private observationDue(room: State, role: Role): boolean {
@@ -490,7 +505,7 @@ export class RoomEngine {
     const reserved = await this.serial(code, async () => {
       const room = this.rooms.get(code);
       if (!room) return;
-      const due = roles.filter(role => !this.activeInference.get(role)?.controller.signal.aborted && this.observationDue(room, role));
+      const due = roles.filter(role => !this.activeInference.get(this.inferenceKey(code, role))?.controller.signal.aborted && this.observationDue(room, role));
       if (!due.length) return;
       const game = room.game!;
       const group = game.groups[0];
@@ -515,10 +530,10 @@ export class RoomEngine {
       return { jobs, operations, at };
     }).catch(() => undefined);
     if (!reserved) {
-      for (const role of roles) this.activeInference.delete(role);
+      for (const role of roles) this.activeInference.delete(this.inferenceKey(code, role));
       return;
     }
-    for (const role of roles) if (!reserved.jobs.some(entry => entry.role === role)) this.activeInference.delete(role);
+    for (const role of roles) if (!reserved.jobs.some(entry => entry.role === role)) this.activeInference.delete(this.inferenceKey(code, role));
     let png: Buffer | null | undefined;
     try {
       const job = reserved.jobs[0].job;
@@ -526,12 +541,12 @@ export class RoomEngine {
     } catch {
       png = undefined;
     }
-    await Promise.all(reserved.jobs.map(({ role, job }) => this.observe(role, { job, at: reserved.at }, png)));
+    await Promise.all(reserved.jobs.map(({ role, job }) => this.observe(code, role, { job, at: reserved.at }, png)));
   }
 
-  private async observe(role: Role, reserved: { job: Job; at: number }, png: Buffer | null | undefined): Promise<void> {
+  private async observe(code: string, role: Role, reserved: { job: Job; at: number }, png: Buffer | null | undefined): Promise<void> {
     const inference = this.options.inference!;
-    const active = this.activeInference.get(role)!;
+    const active = this.activeInference.get(this.inferenceKey(code, role))!;
     const { signal } = active.controller;
     let submittedAt: number | undefined;
     let outcome: Outcome | undefined;
@@ -639,7 +654,7 @@ export class RoomEngine {
           if (live) this.publish(live.room);
         });
       }
-      this.activeInference.delete(role);
+      this.activeInference.delete(this.inferenceKey(code, role));
       console.info(JSON.stringify({
         event: "inference", role, revision: reserved.job.artifactRevision,
         outcome: signal.reason === "invalidated" ? "cancelled" : (outcome?.status ?? (submittedAt === undefined ? "skipped" : "failed")),
@@ -902,7 +917,7 @@ export class RoomEngine {
           durableSequence: group.durableSequence,
         },
         refereeWarning: room.phase === "drawing" && !group.pause && game.refereeWarning && game.refereeWarning.expiresAt > now ? game.refereeWarning : undefined,
-        aiStatus: game.aiRound?.status === "unavailable" || !room.aiMatch?.guesser ? "unavailable" : game.aiRound?.status === "solved" ? "correct" : this.activeInference.get("guesser")?.code === room.code && this.activeInference.get("guesser")?.guessing ? "guessing" : "waiting",
+        aiStatus: game.aiRound?.status === "unavailable" || !room.aiMatch?.guesser ? "unavailable" : game.aiRound?.status === "solved" ? "correct" : this.activeInference.get(this.inferenceKey(room.code, "guesser"))?.guessing ? "guessing" : "waiting",
         scoringEligibility: {
           eligible: false,
           reason: "AI inference is unavailable",
