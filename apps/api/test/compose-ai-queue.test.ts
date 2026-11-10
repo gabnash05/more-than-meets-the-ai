@@ -7,16 +7,17 @@ import { test } from "node:test";
 
 const root = resolve(process.cwd(), "../..");
 
-function composeAvailable(): boolean {
-  const result = spawnSync("docker", ["compose", "version"], { encoding: "utf8" });
-  return result.status === 0;
+function composeCommand(): string[] | undefined {
+  if (spawnSync("docker", ["compose", "version"], { encoding: "utf8" }).status === 0) return ["docker", "compose"];
+  if (spawnSync("docker-compose", ["version"], { encoding: "utf8" }).status === 0) return ["docker-compose"];
+  return undefined;
 }
 
-function rendered(overlay: boolean, environment: NodeJS.ProcessEnv): Record<string, unknown> {
-  const args = ["compose", "-f", "deploy/compose.ghcr.yaml"];
+function rendered(command: string[], overlay: boolean, environment: NodeJS.ProcessEnv): Record<string, unknown> {
+  const args = ["-f", "deploy/compose.ghcr.yaml"];
   if (overlay) args.push("-f", "deploy/compose.ghcr.guesser.yaml");
   args.push("config", "--format", "json");
-  const result = spawnSync("docker", args, { cwd: root, env: environment, encoding: "utf8" });
+  const result = spawnSync(command[0], [...command.slice(1), ...args], { cwd: root, env: environment, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
@@ -26,8 +27,9 @@ function services(document: Record<string, unknown>): Record<string, Record<stri
 }
 
 test("Redis stays private to the optional Guesser overlay", async t => {
-  if (!composeAvailable()) {
-    t.skip("docker compose is not available locally");
+  const command = composeCommand();
+  if (!command) {
+    t.skip("Docker Compose is not available locally");
     return;
   }
   const directory = mkdtempSync(join(tmpdir(), "mtmai-compose-"));
@@ -53,11 +55,11 @@ test("Redis stays private to the optional Guesser overlay", async t => {
       AI_ARTIFACT_DIR: artifacts,
     };
 
-    const base = services(rendered(false, environment));
+    const base = services(rendered(command, false, environment));
     assert.equal(base.redis, undefined);
     assert.equal(base.api.environment && (base.api.environment as Record<string, string>).GUESSER_PROVIDER, "unavailable");
 
-    const overlay = services(rendered(true, environment));
+    const overlay = services(rendered(command, true, environment));
     assert.ok(overlay.redis, "the Guesser overlay must define Redis");
     assert.equal(overlay.redis.ports, undefined, "Redis must not publish a host port");
     assert.equal(overlay.redis.image, "docker.io/library/redis:7-alpine");
