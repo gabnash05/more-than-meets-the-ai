@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "role": "guesser",
+  "jobId": "job-0001",
+  "turnId": "turn-0001",
+  "canvasId": "canvas-0001",
+  "generation": 2,
+  "sequence": 6,
+  "deadlineAt": 1762771200000,
+  "modelId": "guesser-vit-a-v1",
+  "artifactRevision": "vit-a-20261110",
+  "payloadKey": "mmtai:ai:payload:job-0001",
+  "hint": "_ _ _ _"
+}
