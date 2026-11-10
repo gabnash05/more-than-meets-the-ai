@@ -18,6 +18,12 @@ members = [
     "data",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3,<10",
+    "ruff>=0.17.3,<1",
+]
+
 [[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
