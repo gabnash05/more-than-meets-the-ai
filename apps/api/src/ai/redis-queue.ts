@@ -90,14 +90,24 @@ export class GuesserQueue {
 
   /** Create the result consumer group and start readiness/result loops. */
   start(): Promise<void> {
-    this.started ??= (async () => {
-      await this.options.connection.ensureGroup(GUESS_RESULTS_STREAM, GUESS_RESULT_GROUP);
-      await this.refresh();
-      this.timer = setInterval(() => void this.refresh(), 2500);
-      this.timer.unref();
-      void this.readResults();
-    })();
+    this.started ??= this.startLoops();
     return this.started;
+  }
+
+  private async startLoops(): Promise<void> {
+    while (!this.closed) {
+      try {
+        await this.options.connection.ensureGroup(GUESS_RESULTS_STREAM, GUESS_RESULT_GROUP);
+        await this.refresh();
+        break;
+      } catch {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    if (this.closed) return;
+    this.timer = setInterval(() => void this.refresh(), 2500);
+    this.timer.unref();
+    void this.readResults();
   }
 
   /** Return the freshest compatible worker registration, if one exists. */
