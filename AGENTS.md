@@ -6,7 +6,7 @@ More Than Meets the AI is a CSC173 multiplayer drawing game where humans race a 
 
 - `apps/web/`: approved Next.js/TypeScript room/game UI; local demo by default, prepared remote mode now connects to the real room backend. AI fixtures remain confined to review/local demo.
 - `models/guesser/evaluation/`: uv-managed Python/Jupyter evaluation environment; model metrics and serving remain future work.
-- `apps/api/`: NestJS + Socket.IO room/game authority with PostgreSQL/Prisma. One process holds live matches in memory; no Redis or load balancer. AI/FastAPI integration remains future work. Shared TypeScript contracts live in `packages/game-contracts/src/`.
+- `apps/api/`: NestJS + Socket.IO room/game authority with PostgreSQL/Prisma. One process holds live matches in memory and remains the only room authority. The optional Guesser transport dispatches inference jobs through Redis Streams; this does not make API replicas safe. Shared TypeScript contracts live in `packages/game-contracts/src/`.
 
 ## Current Individual milestone — 6 November 2026
 
@@ -15,7 +15,7 @@ The accepted Individual-first implementation plan supersedes older Team-completi
 The Individual milestone is implemented and locally verified as of 7 November. See `docs/BACKEND-VALIDATION.md` and `docs/FRONTEND-VALIDATION.md` for actual checks and limits; Team and inference follow-up scopes are separate documents. Preserve the current implementation rather than restarting it.
 
 - Complete and verify Individual play end to end. Remote Team settings/starts are unavailable; retain Team code/types and explicitly deferred tests for a later plan.
-- Prepare the separate `ai-benchmark-v1` round scorer, committed match total and coverage. An eligible unsolved evaluation is zero; unavailable/ineligible is unscored (`null`). The real provider remains unavailable. Positive AI examples are labelled test/review/local-demo fixtures.
+- Prepare the separate `ai-benchmark-v1` round scorer, committed match total and coverage. An eligible unsolved evaluation is zero; unavailable/ineligible is unscored (`null`). The queue transport is implemented; production model readiness, measured throughput and balanced gameplay remain unvalidated. Positive AI examples are labelled test/review/local-demo fixtures.
 - Human AI modifiers stay zero. AI points are a comparison ledger; human totals determine human winners. Never count an AI answer toward drawer recognition.
 - Preserve the existing RoomClient, authenticated transport, ordered drawing outbox, contiguous durable watermark, saving holds and interrupted-prefix recovery. Restart retries the same drawer/position with a new generation and fresh choices.
 - Use the coordinator plus up to three `gpt-6.1-terra` workers with `fork_turns: "none"`, disjoint ownership and no nested delegation. The coordinator owns documentation and final integrated checks.

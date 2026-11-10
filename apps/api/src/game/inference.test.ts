@@ -17,11 +17,11 @@ async function waitFor(condition: () => boolean) {
   assert.fail("Expected observation never settled");
 }
 
-async function fixture(
+function inferenceFixture(
   submit: Inference["submit"],
   render: Inference["render"],
   referee = false,
-  switches?: Pick<RoomSettings, "aiGuesserEnabled" | "aiRefereeEnabled">,
+  requestTimeoutMs = 250,
 ) {
   const events: RoomEvent[] = [];
   let now = Date.now();
@@ -32,23 +32,33 @@ async function fixture(
     clock: () => now,
     eventSink: (_id, event) => { events.push(event); },
     inference: {
-      options: { firstGuessMs: 1500, guessCooldownMs: 2000, maxGuesses: 24, requestTimeoutMs: 250 },
+      options: { firstGuessMs: 1500, guessCooldownMs: 2000, maxGuesses: 24, requestTimeoutMs },
       ready: role => role === "guesser" ? { modelId: "fixture", artifactRevision: "fixture-v1", labels: PROMPTS.slice() } : referee ? { modelId: "referee", artifactRevision: "fixture-v1" } : undefined,
       render,
       submit,
       close: async () => {},
     },
   });
-  const host = await engine.create({ name: "Host", avatar: DEFAULT_AVATAR });
+  return { engine, events, advance: (ms: number) => { now = initial + ms; } };
+}
+
+async function startRoom(
+  engine: RoomEngine,
+  key: string,
+  switches?: Pick<RoomSettings, "aiGuesserEnabled" | "aiRefereeEnabled">,
+) {
+  const hostConnection = `${key}:host`;
+  const guestConnection = `${key}:guest`;
+  const host = await engine.create({ name: `Host ${key}`, avatar: DEFAULT_AVATAR });
   const code = host.snapshot.code;
-  const guest = await engine.join(code, { name: "Guest", avatar: DEFAULT_AVATAR });
+  const guest = await engine.join(code, { name: `Guest ${key}`, avatar: DEFAULT_AVATAR });
   const resume = (token: string) => engine.resume(code, token);
   const send = async (connection: string, name: string, data: object) => {
     const ack = await engine.command(connection, name, { requestId: randomUUID(), ...data });
     assert.equal(ack.ok, true, ack.message);
   };
-  await engine.connect(code, host.resumeToken, "host");
-  await engine.connect(code, guest.resumeToken, "guest");
+  await engine.connect(code, host.resumeToken, hostConnection);
+  await engine.connect(code, guest.resumeToken, guestConnection);
   let lobby = await resume(host.resumeToken);
   assert.equal(lobby.snapshot.settings.aiGuesserEnabled, true);
   assert.equal(lobby.snapshot.settings.aiRefereeEnabled, true);
@@ -56,27 +66,27 @@ async function fixture(
     const { mode, seats, teamCount, seatsPerTeam, rounds } = lobby.snapshot.settings;
     const legacySettings = { mode, seats, teamCount, seatsPerTeam, rounds };
     const settings = { ...legacySettings, ...switches };
-    const denied = await engine.command("guest", "room:settings", {
+    const denied = await engine.command(guestConnection, "room:settings", {
       requestId: randomUUID(), expectedRevision: lobby.snapshot.revision, payload: settings,
     });
     assert.equal(denied.code, "forbidden");
-    await send("host", "room:settings", { expectedRevision: lobby.snapshot.revision, payload: settings });
+    await send(hostConnection, "room:settings", { expectedRevision: lobby.snapshot.revision, payload: settings });
     lobby = await resume(host.resumeToken);
-    await send("host", "room:settings", { expectedRevision: lobby.snapshot.revision, payload: legacySettings });
+    await send(hostConnection, "room:settings", { expectedRevision: lobby.snapshot.revision, payload: legacySettings });
     lobby = await resume(host.resumeToken);
     assert.equal(lobby.snapshot.settings.aiGuesserEnabled, switches.aiGuesserEnabled);
     assert.equal(lobby.snapshot.settings.aiRefereeEnabled, switches.aiRefereeEnabled);
   }
-  await send("host", "room:start", { expectedRevision: lobby.snapshot.revision });
+  await send(hostConnection, "room:start", { expectedRevision: lobby.snapshot.revision });
   const choice = await resume(host.resumeToken);
   const game = choice.snapshot.game!;
   const target = choice.privateState!.promptOptions![0].label;
   const generation = game.generation;
-  await send("host", "room:choose-prompt", { generation, payload: { id: choice.privateState!.promptOptions![0].id } });
+  await send(hostConnection, "room:choose-prompt", { generation, payload: { id: choice.privateState!.promptOptions![0].id } });
   const ink = async (clear = false) => {
     const point = { x: 100, y: 100, time: 0 };
-    const base = { opId: randomUUID(), actionId: randomUUID(), at: now, clientSeq: 1 };
-    await send("host", "room:drawing", { generation, payload: {
+    const base = { opId: randomUUID(), actionId: randomUUID(), at: Date.now(), clientSeq: 1 };
+    await send(hostConnection, "room:drawing", { generation, payload: {
       roomCode: code, canvasId: game.canvasId, generation, streamId: randomUUID(), clientSeq: clear ? [1, 1] : [1, 2],
       operations: clear ? [{ ...base, type: "canvas.clear" }] : [
         { ...base, type: "stroke.start", point, settings: { tool: "brush", color: "#181321", size: 12 } },
@@ -85,15 +95,94 @@ async function fixture(
     } });
   };
   return {
-    engine, code, target, ink, events,
-    advance: (ms: number) => { now = initial + ms; },
+    engine, code, target, ink, generation, canvasId: game.canvasId,
     finish: async () => {
-      await send("guest", "room:guess", { generation, payload: { text: target } });
+      await send(guestConnection, "room:guess", { generation, payload: { text: target } });
       return (await resume(guest.resumeToken)).snapshot.game!.result!;
     },
     guest: () => resume(guest.resumeToken),
   };
 }
+
+async function fixture(
+  submit: Inference["submit"],
+  render: Inference["render"],
+  referee = false,
+  switches?: Pick<RoomSettings, "aiGuesserEnabled" | "aiRefereeEnabled">,
+) {
+  const context = inferenceFixture(submit, render, referee);
+  const room = await startRoom(context.engine, "solo", switches);
+  return { ...context, ...room };
+}
+
+test("independent rooms dispatch Guesser observations concurrently", async () => {
+  const submitted: Job[] = [];
+  const pending: ((outcome: Outcome) => void)[] = [];
+  const context = inferenceFixture((_role, job) => {
+    submitted.push(job);
+    return new Promise<Outcome>(resolve => { pending.push(resolve); });
+  }, async () => Buffer.from("pixels"));
+  try {
+    const first = await startRoom(context.engine, "first");
+    const second = await startRoom(context.engine, "second");
+    await first.ink();
+    await second.ink();
+    context.advance(5000);
+    await waitFor(() => pending.length === 2);
+    assert.equal(submitted.length, 2);
+    assert.equal(new Set(submitted.map(job => job.canvasId)).size, 2);
+    const counts = new Map<string, number>();
+    for (const job of submitted) counts.set(job.canvasId, (counts.get(job.canvasId) ?? 0) + 1);
+    assert.deepEqual([...counts.values()], [1, 1]);
+  } finally {
+    for (const resolve of pending) resolve({ status: "pass" });
+    await delay(30);
+    await context.engine.shutdown();
+  }
+});
+
+test("a pending room coalesces canvas updates and keeps status per room", async () => {
+  const submitted: Job[] = [];
+  const pending: { job: Job; resolve: (outcome: Outcome) => void }[] = [];
+  const context = inferenceFixture((_role, job) => {
+    submitted.push(job);
+    return new Promise<Outcome>(resolve => { pending.push({ job, resolve }); });
+  }, async (_key, operations) => Buffer.from(String(operations.length)), false, 10000);
+  try {
+    const first = await startRoom(context.engine, "coalesce-a");
+    const second = await startRoom(context.engine, "coalesce-b");
+    await first.ink();
+    await second.ink();
+    context.advance(5000);
+    await waitFor(() => pending.length === 2);
+    const firstJob = pending.find(entry => entry.job.canvasId === first.canvasId)!;
+    const secondJob = pending.find(entry => entry.job.canvasId === second.canvasId)!;
+    assert.ok(firstJob && secondJob);
+    secondJob.resolve({ status: "pass" });
+    await delay(30);
+
+    await first.ink();
+    const latest = (await first.guest()).snapshot.game!.sync!.sequence;
+    context.advance(6500);
+    await delay(300);
+    assert.equal(submitted.filter(job => job.canvasId === first.canvasId).length, 1);
+
+    firstJob.resolve({ status: "pass" });
+    await delay(30);
+    context.advance(9000);
+    await waitFor(() => submitted.filter(job => job.canvasId === first.canvasId).length === 2);
+    const retry = submitted.filter(job => job.canvasId === first.canvasId)[1];
+    assert.equal(retry.sequence, latest);
+    assert.equal((await first.guest()).snapshot.game!.aiStatus, "guessing");
+    assert.equal((await second.guest()).snapshot.game!.aiStatus, "waiting");
+    pending.find(entry => entry.job === retry)!.resolve({ status: "pass" });
+    await delay(30);
+  } finally {
+    for (const entry of pending) entry.resolve({ status: "pass" });
+    await delay(30);
+    await context.engine.shutdown();
+  }
+});
 
 test("Guesser paces dispatch, caps at 24 attempts and reveals repeated guesses", async () => {
   const jobs: Job[] = [];

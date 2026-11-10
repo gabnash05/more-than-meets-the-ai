@@ -43,9 +43,17 @@ Room metadata saves omit drawing operation arrays before deep cloning; the geome
 
 The shared TypeScript contracts live in `packages/game-contracts/src`; the web contract files re-export them. The API build compiles those shared sources alongside the server under `apps/api/dist`, and `npm start` runs the compiled server entry point.
 
+## Guesser queue
+
+The optional Guesser transport uses Redis Streams so AI workers can scale independently of the room process. Set `GUESSER_PROVIDER=queue`, `GUESSER_MODEL_ID`, `AI_QUEUE_REDIS_URL`, optional `AI_QUEUE_REDIS_USERNAME`, and `AI_QUEUE_REDIS_PASSWORD_FILE`. The API writes the rendered PNG to `mmtai:ai:payload:<jobId>`, appends a versioned `GuessJobV1` envelope to `mmtai:ai:guess:jobs:v1`, and waits for a result bound to the same job/turn/canvas identity. Queue wait counts against `AI_REQUEST_TIMEOUT_MS`; expired jobs become unavailable and late results are discarded.
+
+Workers publish short-lived registrations under `mmtai:ai:workers:*`; the API caches the first compatible fresh registration for readiness. A broker outage, missing password file or invalid URL keeps the room human-playable and reports AI unavailable instead of failing startup. Redis credentials come from files; do not put them in URLs or source.
+
+At most one queued or active job exists per room and role, but different rooms dispatch independently. Each AI container runs one inference at a time, so add replicas to add concurrency. The Referee fixture remains on the direct HTTP path and is disabled in the production overlay.
+
 ## Validation
 
-Run `npm run typecheck`, `npm run lint`, and `npm test`. The test command builds the production server first, then runs engine, fault-injection, HTTP/socket, PostgreSQL, and actual process-restart checks. PostgreSQL integration tests require `TEST_DATABASE_URL` pointing to the isolated `mtmai_test` database at `127.0.0.1:55437`. The restart test also needs free loopback port 3103. Tests delete only records they create; configure test credentials locally and do not commit them.
+Run `npm run typecheck`, `npm run lint`, and `npm test`. The test command builds the production server first, then runs engine, fault-injection, HTTP/socket, PostgreSQL, and actual process-restart checks. PostgreSQL integration tests require `TEST_DATABASE_URL` pointing to the isolated `mtmai_test` database at `127.0.0.1:55437`. The restart test also needs free loopback port 3103. Set `REDIS_URL` to a disposable Redis database (for example `redis://127.0.0.1:6379/15`) to run the real Streams round-trip test; without it, that case is skipped. The Compose overlay test also skips when Docker Compose is unavailable. Tests delete only records/keys they create; configure test credentials locally and do not commit them.
 
 For the guarded test configuration, exact commands and final local evidence, see [backend validation](../../docs/BACKEND-VALIDATION.md). Hosted CI is distinct from these local checks.
 
@@ -53,6 +61,6 @@ For the guarded test configuration, exact commands and final local evidence, see
 
 The separate ai-benchmark-v1 round result uses the human raw speed formula for an eligible first correct AI answer. Eligible unsolved evaluations earn zero; unavailable/ineligible evaluations have null points. The match summary aggregates only committed eligible results and includes scored/solved/completed prompt counts. Human winners and drawer recognition exclude AI points; human AI modifiers remain zero.
 
-The default Guesser provider reports unavailable. The optional inference configuration uses the browser renderer and an authenticated service on the private network. Internal observations bind job, turn, canvas, generation, sequence, hint and deadline, and results echo the job ID. The engine rejects mismatched, duplicate, late or stale outputs. See the [deployment runbook](../../deploy/README.md) for the smoke-test setup.
+The default Guesser provider reports unavailable. The optional inference configuration uses the browser renderer and either the Redis queue or an authenticated private HTTP service. Internal observations bind job, turn, canvas, generation, sequence, hint and deadline, and results echo the job ID. The engine rejects mismatched, duplicate, late or stale outputs. See the [deployment runbook](../../deploy/README.md) for the queue overlay and smoke-test setup.
 
 AI results/totals extend existing JSON room/result records in the atomic finalization transaction. Older records missing AI fields project unavailable/null/zero scored rounds. No AI-specific database table is added. Synthetic test results are not model-performance evidence.

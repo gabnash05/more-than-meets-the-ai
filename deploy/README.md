@@ -98,9 +98,9 @@ the inference port. The overlay enables only the Guesser; the Referee remains
 unavailable. New rooms on this stack default to Guesser enabled, so use this only
 when the operator intends to expose the canary to all new rooms.
 The AI and API containers have no CPU or memory cgroup limits (PID limits remain);
-ViT uses all CPUs visible to its process, while inference concurrency stays at
-one job. This can compete with PostgreSQL and other node1 services, so monitor
-host resource use.
+ViT uses all CPUs visible to its process, and each AI container runs one inference
+at a time. Add `ai` replicas to add inference concurrency. This can compete with
+PostgreSQL and other node1 services, so monitor host resource use.
 
 The ViT bundle is not in Git or the container image. Select a verified bundle,
 copy its complete directory to the VPS under
@@ -130,7 +130,21 @@ install -d -m 0700 "$AI_SECRETS_DIR"
 if [ ! -e "$AI_SECRETS_DIR/ai-token" ]; then
   (umask 077; openssl rand -hex 32 > "$AI_SECRETS_DIR/ai-token")
 fi
-chmod 0600 "$AI_SECRETS_DIR/ai-token"
+if [ ! -e "$AI_SECRETS_DIR/redis-api-password" ]; then
+  (umask 077; openssl rand -hex 32 > "$AI_SECRETS_DIR/redis-api-password")
+fi
+if [ ! -e "$AI_SECRETS_DIR/redis-worker-password" ]; then
+  (umask 077; openssl rand -hex 32 > "$AI_SECRETS_DIR/redis-worker-password")
+fi
+if [ ! -e "$AI_SECRETS_DIR/redis-users.acl" ]; then
+  (umask 077; {
+    echo "user default off"
+    echo "user api on >$(cat "$AI_SECRETS_DIR/redis-api-password") ~mmtai:* +@all -@dangerous"
+    echo "user worker on >$(cat "$AI_SECRETS_DIR/redis-worker-password") ~mmtai:* +@all -@dangerous"
+  } > "$AI_SECRETS_DIR/redis-users.acl")
+fi
+chmod 0600 "$AI_SECRETS_DIR/ai-token" "$AI_SECRETS_DIR/redis-api-password" \
+  "$AI_SECRETS_DIR/redis-worker-password" "$AI_SECRETS_DIR/redis-users.acl"
 ```
 
 After copying `compose.ghcr.guesser.yaml` beside the base Compose file, set the
@@ -146,11 +160,12 @@ export AI_ARTIFACT_DIR=/home/yashindo/docker-compose/more-than-meets-the-ai/runt
 export AI_SECRETS_DIR=/home/yashindo/docker-compose/more-than-meets-the-ai/secrets/ai
 
 docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml config --quiet
-docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml pull ai api
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml pull redis ai api
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 180 redis
 docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 180 ai
 ```
 
-Check authenticated readiness without printing the token:
+Check authenticated model readiness without printing the token, then confirm the worker registration reached Redis:
 
 ```sh
 docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml exec -T ai python -c '
@@ -163,6 +178,10 @@ ready = json.load(urlopen(request, timeout=5))["guesser"]
 print(json.dumps({"status": ready.get("status"), "modelId": ready.get("modelId"), "artifactRevision": ready.get("artifactRevision"), "labelCount": len(ready.get("labels", []))}))
 assert ready.get("status") == "ready" and ready.get("modelId") == "guesser-vit-a-v1" and len(ready.get("labels", [])) == 345
 '
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml exec -T redis sh -c '
+  redis-cli --user api --pass "$(cat /run/mmtai-secrets/redis-api-password)" \
+    --scan --pattern "mmtai:ai:workers:*" | grep -q .
+'
 docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 180 api
 docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml ps
 curl -fsS https://mtmai.yashindo.syn-forge.com/api/health
@@ -170,13 +189,24 @@ curl -fsS -o /dev/null -w '%{http_code}\n' https://mtmai.yashindo.syn-forge.com/
 ```
 
 To turn off the canary, restore the base API image/configuration without the
-overlay, then stop (do not remove) the worker using both Compose files. This
-preserves the pinned images and model files for diagnosis or rollback:
+overlay, then stop (do not remove) the worker and Redis using both Compose files.
+This preserves the pinned images, model files and Redis volume for diagnosis or
+rollback:
 
 ```sh
 docker compose -f compose.ghcr.yaml up -d --no-deps --pull never --wait --wait-timeout 120 api
-docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml stop ai
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml stop ai redis
 ```
+
+### Scale Guesser workers
+
+Each `ai` replica adds one consumer to `guesser-workers-v1`. Scale only the AI service; the API remains the single in-memory room authority.
+
+```sh
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --scale ai=3 ai
+```
+
+This is operator-triggered scaling, not an autoscaler. Redis is private to the overlay, has no host port, and persists its AOF under the `redis_data` volume. Queue wait counts against the same 2.5-second request budget; when workers are saturated, a job that cannot finish in time is reported unavailable rather than delivered after the turn deadline.
 
 ## Build locally instead
 

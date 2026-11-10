@@ -1,12 +1,12 @@
 # Guesser evaluation workspace
 
-This Python/Jupyter workspace supports Guesser data auditing, model-training orchestration, and the later evaluation/inference workflow. The training scripts live in the separate Python 3.13 model project; the notebook launches them through uv rather than importing them into this Python 3.12 kernel. The fixed-stage evaluator, serving API, trained checkpoints, and performance results are not implemented or included yet.
+This Python/Jupyter workspace supports Guesser data auditing, model-training orchestration, and the later evaluation/inference workflow. The training scripts live in the separate Python 3.13 model project; the notebook launches them through uv rather than importing them into this Python 3.12 kernel. The fixed ten-stage recognition evaluator is implemented in `../recognition/` and launched by `06_ten_stage_evaluation.ipynb`; the serving API, trained checkpoints, and performance results remain outside this repository.
 
 ## What this workspace is for
 
-- **Available now:** reproducible Python/Jupyter environment; `00_environment_check.ipynb`; `01_dataset_pipeline.ipynb`; `02_dataset_audit.ipynb` for manifest checks and an opt-in indexed-payload audit; `03_training.ipynb` for A/B training orchestration; and `04_model_evaluation.ipynb` for protocol guidance and readiness checks.
-- **Planned use cases:** audit held-out drawing splits and rendered inputs; compare stage-wise recognition metrics for frozen checkpoints; inspect errors/calibration; measure snapshot-to-result latency; and connect a selected checkpoint to the inference API.
-- **Not included by the repository:** local Quick, Draw! data, trained model checkpoints, the fixed ten-stage prediction runner, an inference service, or model results. Do not report smoke training or training-validation curves as the final evaluator.
+- **Available now:** reproducible Python/Jupyter environment; `00_environment_check.ipynb`; `01_dataset_pipeline.ipynb`; `02_dataset_audit.ipynb` for manifest checks and an opt-in indexed-payload audit; `03_training.ipynb` for A/B training orchestration; `04_model_evaluation.ipynb` for protocol guidance and readiness checks; `05_serving_bundle.ipynb` for serving-bundle export; and `06_ten_stage_evaluation.ipynb` for the fixed ten-stage recognition run.
+- **Planned use cases:** audit held-out drawing splits and rendered inputs; inspect errors/calibration; measure snapshot-to-result latency; and connect a selected checkpoint to the inference API.
+- **Not included by the repository:** local Quick, Draw! data, trained model checkpoints, an inference service, or committed model results. Do not report smoke training or training-validation curves as the final evaluator.
 
 ## Supported environment
 
@@ -153,9 +153,10 @@ and keep `DATA_PROFILE` set to `small` in notebook 03.
    `metrics.csv`, `comparison.md`, `comparison-summary.json`, and plots under
    the chosen checkpoint root's `ab_comparison/` directory.
 4. `04_model_evaluation.ipynb` checks whether the validation manifest and both
-   checkpoint handoffs exist. It does not produce recognition scores. The
-   fixed ten-stage prediction/scoring runner is not implemented, so the current
-   reproducible A/B report is a training/validation comparison only.
+   checkpoint handoffs exist. It does not produce recognition scores. Export the
+   selected A/B bundles with `05_serving_bundle.ipynb`, then run
+   `06_ten_stage_evaluation.ipynb` on validation. The held-out test split is a
+   separate frozen run; keep it out of model selection and threshold tuning.
 
 Keep the held-out-test package out of selection and threshold tuning. Do not
 compare scores from different profiles as if they were a controlled dataset-size
@@ -183,13 +184,56 @@ for storage requirements, invalidation, relocation and benchmark-disable flags.
 Existing kernels must launch a new trainer process to load changed training code;
 autoreloading the notebook does not update an already-running child.
 
-## Model-evaluation notebook
+## Model-evaluation notebooks
 
 `04_model_evaluation.ipynb` gives the next action for the current repository
 state: if checkpoints are missing, return to notebook 03 and finish both runs;
-if present, run notebook 03's comparison cell. It checks prerequisites only;
-there is no ten-stage prediction/scoring command yet. The model plan describes
-that intended evaluation, but it cannot be reproduced until the runner exists.
+if present, run notebook 03's comparison cell. It checks prerequisites only and
+does not produce recognition scores.
+
+`05_serving_bundle.ipynb` exports the selected checkpoints as hashed serving
+bundles. The evaluator scores those exported bundles, not raw training
+checkpoints, so the measured artifact matches the serving contract.
+
+`06_ten_stage_evaluation.ipynb` launches `recognition.evaluate` in the model
+project. It defaults to a fixed balanced validation subset of 50 originals per
+class, with ten fixed prefixes per original. The default is 17,250 originals and
+172,500 views per arm; `--full` evaluates all 172,500 validation originals and
+1,725,000 views per arm. The run saves full float32 logits, fits one scalar
+temperature per arm on validation views, and writes class shards, per-class
+CSV, confusion matrices, `metrics.json`, `summary.json`, and `report.md` under
+`<checkpoint-root>/evaluation/ten-stage/`.
+
+Rendering is the bottleneck: on the current development machine it produces
+roughly 17 views per second, so the default 50-per-class run takes about 3
+hours and `--full` about 28 hours. Model inference itself is only a few minutes
+for the default run. `--resume` is safe on a fresh output root: when
+`subset.json` is absent, the runner starts a new run; when a valid run exists,
+it continues matching shards. Use `--overwrite` to force a clean restart.
+
+The ten-stage curve counts blank, uncertain and unchanged views as unsuccessful.
+The policy table treats those views as not emitted and reports coverage,
+accuracy among emitted guesses, and overall correctness separately. A/B deltas
+use a stratified bootstrap over whole drawings within class, keeping all ten
+stages together. The provisional selection goal is at least +5 mean early
+macro top-1 points for B with no more than 2 complete top-1 points lost.
+
+A held-out test run requires `--split test --save-logits`, a freeze record, and
+the validation report whose SHA-256 the record pins. The freeze record must
+contain each bundle's artifact revision, weight/label/preprocessing hashes,
+fitted temperature, and selected threshold. Do not choose or revise those values
+from test errors.
+
+To launch the runner directly from the model project:
+
+```sh
+cd models/guesser
+uv run --frozen --no-sync python -m recognition.evaluate --limit-per-class 1 --quiet
+```
+
+Omit `--limit-per-class` and add `--full` for the complete validation run. The
+notebook is the reviewed launcher; this command is the same entry point for a
+terminal run.
 
 ## Notebook workflow and merge conflicts
 
@@ -233,12 +277,22 @@ uv run --project models/guesser/evaluation python -m pytest
 uv run --project models/guesser/evaluation ruff check models/guesser/evaluation/src models/guesser/evaluation/tests
 ```
 
+The ten-stage runner belongs to the Python 3.13 model project. Run its tests from the model project, then lint from the repository root:
+
+```sh
+cd models/guesser
+uv run --frozen --with pytest python -m pytest recognition/tests -q
+cd ../..
+uv run --project models/guesser/evaluation --frozen ruff check models/guesser/recognition
+uv run --project models/guesser/evaluation --frozen ruff format --check models/guesser/recognition
+```
+
 Commit the updated `uv.lock` with dependency changes so Windows and Linux collaborators resolve the same versions.
 
 ## Required libraries
 
-Use TorchMetrics for top-1/top-3, F1, confusion and calibration error. Reuse PyTorch/Lightning evaluation APIs and the data package's fixed timestamp views. Custom orchestration keeps the ten stages, blank/pass outcomes, original-grouped reporting and held-out-test policy explicit. Do not implement standard metric formulas again.
+Use TorchMetrics where its standard definitions fit the training-side metrics. The ten-stage runner keeps the ten stages, blank/pass outcomes, original-grouped reporting and held-out-test policy explicit. Its saved-prediction scoring uses NumPy/PyTorch arrays so blank, uncertain and unchanged views remain in the recognition denominator instead of being silently dropped.
 
 See the [library guide](../LIBRARIES.md) and [implementation rules](../AGENTS.md). These choices do not mean the model packages or service are installed yet.
 
-Future serving code belongs in `../inference/`; shared weights belong in `../checkpoints/`. The evaluator and inference service are not implemented yet.
+Future serving code belongs in `../inference/`; shared weights belong in `../checkpoints/`. The ten-stage evaluator is implemented in `../recognition/`; the inference service is not implemented yet.

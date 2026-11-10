@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { CanvasOperation } from "../../../../packages/game-contracts/src/drawing";
 import { ChromiumRenderer } from "./renderer";
+import { GuesserQueue } from "./redis-queue";
+import { RedisQueueConnection } from "./redis-connection";
 
 export type Role = "guesser" | "referee";
 export interface ModelIdentity { modelId: string; artifactRevision: string }
@@ -129,28 +132,117 @@ function positiveSetting(name: string, fallback: number, max: number) {
   return value;
 }
 
-export function configuredInference(): Inference | undefined {
-  const ids: RoleIds = {};
-  if (process.env.GUESSER_PROVIDER === "http" && (process.env.GUESSER_MODEL_ID !== "quickdraw-int8-smoke" || process.env.AI_SMOKE_TEST === "1")) ids.guesser = process.env.GUESSER_MODEL_ID;
-  if (process.env.REFEREE_PROVIDER === "http" && process.env.AI_TEST_FIXTURES === "1") ids.referee = process.env.REFEREE_MODEL_ID;
-  if (!ids.guesser && !ids.referee) return;
-  const options = {
+function inferenceOptions(): InferenceOptions {
+  return {
     firstGuessMs: positiveSetting("AI_FIRST_GUESS_MS", 1500, 60000),
     guessCooldownMs: positiveSetting("AI_GUESS_COOLDOWN_MS", 2000, 60000),
     maxGuesses: positiveSetting("AI_MAX_GUESSES_PER_TURN", 24, 24),
     requestTimeoutMs: positiveSetting("AI_REQUEST_TIMEOUT_MS", 2500, 2500),
   };
-  positiveSetting("AI_MAX_CONCURRENT_JOBS", 1, 1);
+}
+
+function rendererUrl(): URL {
+  const url = new URL(process.env.AI_RENDERER_URL ?? "http://127.0.0.1:3100/review/canvas/");
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("invalid renderer URL");
+  return url;
+}
+
+function configuredHttpClient(ids: RoleIds, options: InferenceOptions): InferenceClient | undefined {
   try {
     const url = new URL(process.env.AI_SERVICE_URL ?? "");
-    const rendererUrl = new URL(process.env.AI_RENDERER_URL ?? "http://127.0.0.1:3100/review/canvas/");
     const token = readFileSync(process.env.AI_SECRET_FILE ?? "/run/mmtai-secrets/ai-token", "utf8").trim();
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || !/^[\x21-\x7e]{16,256}$/.test(token)) throw new Error("invalid AI connection");
     if (url.protocol === "http:" && url.origin !== "http://ai:8000" && process.env.AI_PRIVATE_LINK !== "1") throw new Error("AI requires an encrypted link");
-    if (!["http:", "https:"].includes(rendererUrl.protocol) || rendererUrl.username || rendererUrl.password) throw new Error("invalid renderer URL");
-    return new InferenceClient(url, token, ids, new ChromiumRenderer(rendererUrl), options);
+    return new InferenceClient(url, token, ids, new ChromiumRenderer(rendererUrl()), options);
   } catch {
     console.warn("AI configuration unavailable");
     return;
   }
+}
+
+/**
+ * Configure the queued Guesser with the existing HTTP client reserved for the
+ * disabled Referee fixture. Redis credentials come from files, never URLs.
+ */
+function configuredGuesserQueue(): GuesserQueue | undefined {
+  try {
+    const modelId = process.env.GUESSER_MODEL_ID ?? "";
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(modelId)) throw new Error("invalid model id");
+    if (modelId === "quickdraw-int8-smoke" && process.env.AI_SMOKE_TEST !== "1") throw new Error("smoke test disabled");
+    const url = new URL(process.env.AI_QUEUE_REDIS_URL ?? process.env.REDIS_URL ?? "");
+    if (!["redis:", "rediss:"].includes(url.protocol) || url.username || url.password) throw new Error("invalid queue URL");
+    const passwordFile = process.env.AI_QUEUE_REDIS_PASSWORD_FILE;
+    const password = passwordFile ? optionalSecret(passwordFile) : undefined;
+    const connection = new RedisQueueConnection({
+      url: url.toString(),
+      ...(process.env.AI_QUEUE_REDIS_USERNAME ? { username: process.env.AI_QUEUE_REDIS_USERNAME } : {}),
+      ...(password ? { password } : {}),
+    });
+    return new GuesserQueue({ modelId, connection, consumerId: `api-${process.pid}-${randomUUID()}` });
+  } catch (error) {
+    console.warn("AI queue configuration unavailable", error instanceof Error ? error.message : "unknown");
+    return;
+  }
+}
+
+function optionalSecret(path: string): string {
+  const value = readFileSync(path, "utf8").trim();
+  if (!value) throw new Error("empty queue secret");
+  return value;
+}
+
+class QueuedGuesserInference implements Inference {
+  constructor(
+    private queue: GuesserQueue,
+    private http: InferenceClient | undefined,
+    private renderer: ChromiumRenderer | undefined,
+    readonly options: InferenceOptions,
+  ) {
+    void queue.start().catch(() => console.warn("AI queue readiness unavailable"));
+  }
+
+  ready(role: Role) {
+    return role === "guesser" ? this.queue.ready() : this.http?.ready("referee");
+  }
+
+  render(key: string, operations: CanvasOperation[]) {
+    return this.http ? this.http.render(key, operations) : this.renderer!.render(key, operations);
+  }
+
+  submit(role: Role, job: Job, png: Buffer, signal: AbortSignal): Promise<Outcome> {
+    if (role === "guesser") return this.queue.submit(job, png, signal);
+    return this.http ? this.http.submit(role, job, png, signal) : Promise.resolve({ status: "unavailable", reason: "provider-unavailable" });
+  }
+
+  async close() {
+    await this.queue.close().catch(() => undefined);
+    if (this.http) await this.http.close();
+    else await this.renderer?.close();
+  }
+}
+
+export function configuredInference(): Inference | undefined {
+  const options = inferenceOptions();
+  if (process.env.GUESSER_PROVIDER === "queue") {
+    const queue = configuredGuesserQueue();
+    if (!queue) return;
+    const ids: RoleIds = {};
+    if (process.env.REFEREE_PROVIDER === "http" && process.env.AI_TEST_FIXTURES === "1") ids.referee = process.env.REFEREE_MODEL_ID;
+    const http = ids.referee ? configuredHttpClient(ids, options) : undefined;
+    let renderer: ChromiumRenderer | undefined;
+    if (!http) {
+      try {
+        renderer = new ChromiumRenderer(rendererUrl());
+      } catch {
+        console.warn("AI renderer configuration unavailable");
+        return;
+      }
+    }
+    return new QueuedGuesserInference(queue, http, renderer, options);
+  }
+  const ids: RoleIds = {};
+  if (process.env.GUESSER_PROVIDER === "http" && (process.env.GUESSER_MODEL_ID !== "quickdraw-int8-smoke" || process.env.AI_SMOKE_TEST === "1")) ids.guesser = process.env.GUESSER_MODEL_ID;
+  if (process.env.REFEREE_PROVIDER === "http" && process.env.AI_TEST_FIXTURES === "1") ids.referee = process.env.REFEREE_MODEL_ID;
+  if (!ids.guesser && !ids.referee) return;
+  return configuredHttpClient(ids, options);
 }
