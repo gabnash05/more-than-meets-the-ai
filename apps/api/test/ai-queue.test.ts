@@ -171,6 +171,7 @@ test("readiness ignores stale, foreign and malformed worker registrations", asyn
     assert.equal(queue.ready(), undefined);
 
     connection.values.clear();
+    connection.values.set(`${GUESS_WORKER_PREFIX}broken`, { value: "not-json", ttl: 15000 });
     connection.values.set(`${GUESS_WORKER_PREFIX}fresh`, { value: registration(), ttl: 15000 });
     connection.failScan = true;
     await queue.refresh();
