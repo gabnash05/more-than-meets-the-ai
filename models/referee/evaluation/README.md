@@ -36,6 +36,7 @@ Run notebook `00_environment_check.ipynb` first.
 | `03_training_and_checkpoint.ipynb` | Inspect the supplied checkpoint; optional training launcher |
 | `04_validation_evaluation.ipynb` | Run per-channel validation AP, threshold sweep and coverage |
 | `05_report_and_thresholds.ipynb` | Review thresholds, AP slices and optional freeze record |
+| `06_serving_bundle.ipynb` | Export the checkpoint as a hashed Referee serving bundle |
 
 ## Data prerequisites
 
@@ -107,6 +108,23 @@ Outputs are under the ignored output root:
 
 Validation is the tuning split. A held-out `test` run requires `--freeze-record` and `--validation-report`; do not tune on test.
 
+## Serving bundle
+
+`06_serving_bundle.ipynb` calls `training.export_bundle` to produce:
+
+```text
+models/referee/checkpoints/referee-evaluation/bundles/referee-vit-a-v1/
+  manifest.json
+  weights.safetensors
+  labels.txt
+  labels.json
+  checkpoint-selection.json
+```
+
+The manifest records role `referee`, adapter `vit-tiny-referee`, input `[1, 3, 224, 224]`, output `[1, 4]`, label order `[text, number, symbol, circle]`, channel order `[text, number]`, sigmoid scores, preprocessing and a hash-bound artifact revision. The exporter verifies every file hash and fixed-tensor parity before publishing atomically.
+
+The bundle is integration-ready, but the production overlay still sets `REFEREE_PROVIDER=unavailable`. To enable it, copy the bundle under `<AI_ARTIFACT_ROOT>/<modelId>/` and set `REFEREE_MODEL_ID=referee-vit-a-v1`, `REFEREE_PROVIDER=http`, and `AI_TEST_FIXTURES=0`; do not enable a public Referee without validation review.
+
 ## Tests
 
 ```sh
@@ -115,8 +133,8 @@ uv run --frozen pytest -q
 uv run --frozen ruff check src tests
 
 cd ../..
-uv run --project models/referee --frozen --no-sync python -m pytest -q recognition/tests
-uv run --project models/referee --frozen --no-sync ruff check recognition
+uv run --project models/referee --frozen --no-sync python -m pytest -q recognition/tests training/tests
+uv run --project models/referee --frozen --no-sync ruff check recognition training/export_bundle.py training/tests
 ```
 
 The checkpoint integration test skips when the supplied file is absent.
