@@ -10,8 +10,11 @@ services:
       AI_PRIVATE_LINK: "0"
       AI_RENDERER_URL: http://web:8080/review/canvas/
       AI_SECRET_FILE: /run/mmtai-secrets/ai-token
-      GUESSER_PROVIDER: http
+      GUESSER_PROVIDER: queue
       GUESSER_MODEL_ID: ${GUESSER_MODEL_ID:?Set GUESSER_MODEL_ID to the installed bundle directory}
+      AI_QUEUE_REDIS_URL: redis://redis:6379/0
+      AI_QUEUE_REDIS_USERNAME: api
+      AI_QUEUE_REDIS_PASSWORD_FILE: /run/mmtai-secrets/redis-api-password
       REFEREE_PROVIDER: unavailable
       REFEREE_MODEL_ID: ""
       AI_SMOKE_TEST: "0"
@@ -20,15 +23,11 @@ services:
       AI_GUESS_COOLDOWN_MS: "2000"
       AI_MAX_GUESSES_PER_TURN: "24"
       AI_REQUEST_TIMEOUT_MS: "2500"
-      AI_MAX_CONCURRENT_JOBS: "1"
     volumes:
       - type: bind
         source: ${AI_SECRETS_DIR:?Set AI_SECRETS_DIR to the private host secret directory}
         target: /run/mmtai-secrets
         read_only: true
-    depends_on:
-      ai:
-        condition: service_healthy
     pids_limit: 320
 
   ai:
@@ -40,6 +39,10 @@ services:
       REFEREE_MODEL_ID: ""
       AI_SMOKE_TEST: "0"
       AI_TEST_FIXTURES: "0"
+      AI_QUEUE_WORKER: "1"
+      AI_QUEUE_REDIS_URL: redis://redis:6379/0
+      AI_QUEUE_REDIS_USERNAME: worker
+      AI_QUEUE_REDIS_PASSWORD_FILE: /run/mmtai-secrets/redis-worker-password
     volumes:
       - type: bind
         source: ${AI_SECRETS_DIR:?Set AI_SECRETS_DIR to the private host secret directory}
@@ -62,3 +65,35 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    command:
+      - redis-server
+      - --aclfile
+      - /run/mmtai-secrets/redis-users.acl
+      - --appendonly
+      - "yes"
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - type: bind
+        source: ${AI_SECRETS_DIR:?Set AI_SECRETS_DIR to the private host secret directory}
+        target: /run/mmtai-secrets
+        read_only: true
+      - redis_data:/data
+    restart: unless-stopped
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user api --pass \"$$(cat /run/mmtai-secrets/redis-api-password)\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  redis_data:
