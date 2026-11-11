@@ -489,3 +489,36 @@ def test_parse_args_accepts_workers_and_rejects_negative() -> None:
 
     with pytest.raises(ValueError, match="--workers must be non-negative"):
         evaluate.parse_args(["--workers", "-1"])
+
+
+def test_interrupted_run_exits_cleanly_with_progress(monkeypatch, capsys) -> None:
+    """An operator stop reports progress and exits 130 without a traceback."""
+
+    def interrupted(args):
+        raise evaluate.EvaluationInterrupted(done_views=150, total_views=3450)
+
+    monkeypatch.setattr(evaluate, "run", interrupted)
+
+    with pytest.raises(SystemExit) as exit_info:
+        evaluate.main([])
+
+    assert exit_info.value.code == 130
+    message = capsys.readouterr().out
+    assert "stopped by the operator" in message
+    assert "150 of 3,450 views" in message
+    assert "--resume" in message
+
+
+def test_interrupt_during_setup_still_exits_quietly(monkeypatch, capsys) -> None:
+    """A stop outside the scoring loop, such as while loading weights."""
+
+    def interrupted(args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(evaluate, "run", interrupted)
+
+    with pytest.raises(SystemExit) as exit_info:
+        evaluate.main([])
+
+    assert exit_info.value.code == 130
+    assert "stopped by the operator" in capsys.readouterr().out
