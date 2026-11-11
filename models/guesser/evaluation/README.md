@@ -202,7 +202,7 @@ class, with ten fixed prefixes per original. The default is 17,250 originals and
 1,725,000 views per arm. The run saves full float32 logits, fits one scalar
 temperature per arm on validation views, and writes class shards, per-class
 CSV, confusion matrices, `metrics.json`, `summary.json`, and `report.md` under
-`<checkpoint-root>/evaluation/ten-stage/`.
+`<checkpoint-root>/evaluation/ten-stage/<split>/`.
 
 Rendering and preprocessing dominate the run and are CPU-bound, so a full pass is
 a long job and exact wall time depends on the machine, the split size and the
