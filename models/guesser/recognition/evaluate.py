@@ -42,6 +42,25 @@ CALIBRATION_CHUNK = 16384
 DEFAULT_CALIBRATION_SAMPLES = 50000
 
 
+class EvaluationInterrupted(Exception):
+    """Raised when an operator stops a run, carrying how much was finished.
+
+    A stop is not a failure: every finished class is already on disk with its
+    hash recorded, so the caller only needs to report progress and exit without
+    a traceback. A later ``--resume`` continues from the last finished class.
+    """
+
+    def __init__(self, done_views: int, total_views: int) -> None:
+        super().__init__("evaluation interrupted by the operator")
+        self.done_views = done_views
+        self.total_views = total_views
+
+    @property
+    def fraction(self) -> float:
+        """Share of the selected views that finished before the stop."""
+        return self.done_views / self.total_views if self.total_views else 0.0
+
+
 @dataclass(frozen=True)
 class Bundle:
     root: Path
@@ -1299,22 +1318,33 @@ def run(args: argparse.Namespace) -> dict:
     progress = _load_progress(
         progress_path, subset["sha256"], [bundle.model_id for bundle in bundles]
     )
-    _score_subset(
-        prepared_dir=prepared_dir,
-        split=args.split,
-        subset=subset,
-        bundles=bundles,
-        models=models,
-        device=device,
-        output_dir=output_dir,
-        progress=progress,
-        progress_path=progress_path,
-        batch_size=args.batch_size,
-        workers=args.workers,
-        manifest_cache_dir=args.manifest_cache_dir.resolve(),
-        logits_memmaps=logits_memmaps,
-        quiet=args.quiet,
-    )
+    try:
+        _score_subset(
+            prepared_dir=prepared_dir,
+            split=args.split,
+            subset=subset,
+            bundles=bundles,
+            models=models,
+            device=device,
+            output_dir=output_dir,
+            progress=progress,
+            progress_path=progress_path,
+            batch_size=args.batch_size,
+            workers=args.workers,
+            manifest_cache_dir=args.manifest_cache_dir.resolve(),
+            logits_memmaps=logits_memmaps,
+            quiet=args.quiet,
+        )
+    except KeyboardInterrupt:
+        # An operator stop is expected, not a fault. Count finished views from
+        # the durable progress record instead of in-memory counters, because a
+        # class only counts once both its shard and its hash reached disk; a
+        # class interrupted mid-write is simply re-rendered by the next resume.
+        finished_views = sum(
+            len(subset["indices"][class_id]) * STAGES
+            for class_id in progress[bundles[0].model_id]
+        )
+        raise EvaluationInterrupted(finished_views, subset["views"]) from None
 
     class_ids = _class_ids_for_subset(subset)
     n_classes = len(bundles[0].labels)
@@ -1505,8 +1535,34 @@ def run(args: argparse.Namespace) -> dict:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run the evaluator, turning an operator stop into a clean exit.
+
+    A stop is reported and exits with status 130, the shell convention for an
+    interrupt, so a launcher can tell "stopped by the operator" apart from a
+    real failure while still seeing a non-zero status.
+    """
     args = parse_args(argv)
-    print(json.dumps(run(args), indent=2))
+    try:
+        result = run(args)
+    except EvaluationInterrupted as interrupted:
+        print(
+            f"evaluation stopped by the operator after "
+            f"{interrupted.done_views:,} of {interrupted.total_views:,} views "
+            f"({interrupted.fraction:.1%}). Finished classes are saved; rerun "
+            "with --resume to continue from the last one.",
+            flush=True,
+        )
+        sys.exit(130)
+    except KeyboardInterrupt:
+        # Raised outside the scoring loop, for example while loading weights or
+        # computing metrics. Nothing is corrupted, so say so and stop quietly.
+        print(
+            "evaluation stopped by the operator. Finished classes are saved; "
+            "rerun with --resume to continue.",
+            flush=True,
+        )
+        sys.exit(130)
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
