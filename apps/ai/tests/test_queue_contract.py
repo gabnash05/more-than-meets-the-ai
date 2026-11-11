@@ -70,6 +70,30 @@ def test_invalid_results_are_rejected() -> None:
             parse_result_json(value)
 
 
+def test_referee_fixtures_validate() -> None:
+    job = parse_job_json(read("referee.job.valid.json"))
+    assert job.role == "referee"
+    assert job.jobId == "job-0002"
+    assert not hasattr(job, "hint")
+
+    result = parse_result_json(read("referee.result.evidence.valid.json"))
+    assert result.status == "evidence"
+    assert result.scores == [0.82, 0.21]
+    validate_result_binding(result, job)
+
+
+def test_invalid_referee_results_are_rejected() -> None:
+    evidence = read("referee.result.evidence.valid.json").decode()
+    mutations = (
+        evidence.replace('"scores": [0.82, 0.21]', '"scores": [0.82]'),
+        evidence.replace('"scores": [0.82, 0.21]', '"scores": [1.2, 0.21]'),
+        evidence.replace('"status": "evidence"', '"status": "answer"'),
+    )
+    for value in mutations:
+        with pytest.raises(ValidationError):
+            parse_result_json(value)
+
+
 def test_result_binding_must_match_the_job() -> None:
     job = parse_job_json(read("job.valid.json"))
     result = parse_result_json(read("result.answer.valid.json"))
