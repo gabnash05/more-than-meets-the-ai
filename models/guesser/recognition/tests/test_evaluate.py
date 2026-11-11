@@ -290,8 +290,8 @@ def test_flush_updates_pending_rows_and_logits(tmp_path: Path) -> None:
     )
 
     evaluate._flush(
-        images,
-        [0, 1],
+        torch.from_numpy(np.stack(images)),
+        np.asarray([0, 1], dtype=np.int64),
         pending,
         [bundle],
         {"model": FixedModel()},
@@ -324,8 +324,8 @@ def test_flush_with_no_images_is_a_noop(tmp_path: Path) -> None:
     pending = {"model": []}
 
     evaluate._flush(
-        [],
-        [],
+        None,
+        np.empty(0, dtype=np.int64),
         pending,
         [bundle],
         {"model": FixedModel()},
@@ -402,3 +402,90 @@ def test_comparison_without_bootstrap_keeps_a_loss_negative() -> None:
     assert comparison["earlyDelta"] == -1.0
     assert comparison["completeDelta"] == -1.0
     assert comparison["goalMet"] is False
+
+
+class StubDrawings:
+    """Deterministic ten-stage views for the dataset numbering test."""
+
+    def __init__(
+        self, prepared_dir: str, split: str, manifest_cache_dir: Path | None = None
+    ) -> None:
+        self.prepared_dir = prepared_dir
+        self.split = split
+        self.manifest_cache_dir = manifest_cache_dir
+
+    def evaluation_images(self, index: int, candidate: str = "foreground"):
+        for stage in range(10):
+            usable = (index + stage) % 10 != 0
+            yield {
+                "status": "ok" if usable else "blank",
+                "image": np.full((3, 2, 2), float(index), dtype=np.float32)
+                if usable
+                else None,
+                "fraction": (stage + 1) / 10,
+                "unchanged": stage == 0,
+                "drawing_id": f"drawing-{index}",
+                "diagnostics": {"candidate": candidate, "coverage": 0.5},
+            }
+
+
+def test_dataset_numbers_view_indices_across_classes(monkeypatch) -> None:
+    """View numbering must keep advancing across class boundaries."""
+    monkeypatch.setattr(evaluate, "IndexedDrawings", StubDrawings)
+    dataset = evaluate.TenStageViewDataset(
+        Path("prepared"),
+        "validation",
+        global_indices=[0, 1, 2],
+        manifest_indices=[40, 41, 99],
+        class_ids=[0, 0, 1],
+        candidate="foreground",
+        manifest_cache_dir=None,
+    )
+
+    assert len(dataset) == 3
+    first, second, third = (dataset[position] for position in range(3))
+    assert [item[0]["viewIndex"] for item in first] == list(range(0, 10))
+    assert [item[0]["viewIndex"] for item in second] == list(range(10, 20))
+    assert [item[0]["viewIndex"] for item in third] == list(range(20, 30))
+    assert [item[0]["stage"] for item in first] == list(range(1, 11))
+    assert third[0][0]["classId"] == 1
+    assert third[0][0]["drawingId"] == "drawing-99"
+    # A blank stage carries no image and no input hash, but keeps its row.
+    assert first[0][1] is None
+    assert first[0][0]["inputSha256"] is None
+    assert first[1][0]["inputSha256"] is not None
+
+
+def test_collate_views_flattens_and_keeps_rows_aligned() -> None:
+    image = np.zeros((3, 2, 2), dtype=np.float32)
+    batch = [
+        [({"viewIndex": 0}, image), ({"viewIndex": 1}, None)],
+        [({"viewIndex": 2}, None), ({"viewIndex": 3}, image)],
+    ]
+
+    metadata, images, ok_positions = evaluate._collate_views(batch)
+
+    assert [item["viewIndex"] for item in metadata] == [0, 1, 2, 3]
+    assert ok_positions == [0, 3]
+    assert images is not None
+    assert tuple(images.shape) == (2, 3, 2, 2)
+
+
+def test_collate_views_without_usable_views_returns_no_tensor() -> None:
+    metadata, images, ok_positions = evaluate._collate_views(
+        [[({"viewIndex": 0}, None)]]
+    )
+
+    assert [item["viewIndex"] for item in metadata] == [0]
+    assert images is None
+    assert ok_positions == []
+
+
+def test_parse_args_accepts_workers_and_rejects_negative() -> None:
+    args = evaluate.parse_args(["--workers", "6", "--batch-size", "240"])
+    assert args.workers == 6
+    assert args.batch_size == 240
+    assert args.manifest_cache_dir == evaluate.DEFAULT_MANIFEST_CACHE
+
+    with pytest.raises(ValueError, match="--workers must be non-negative"):
+        evaluate.parse_args(["--workers", "-1"])
