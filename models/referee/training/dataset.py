@@ -1,159 +1,136 @@
-"""PyTorch adapters for Referee JSONL manifests and image loading."""
+"""Strict adapters for prepared Referee manifests."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import lightning as L
 import torch
 from PIL import Image
+from referee_data import preprocess, preprocessing_config
 from torch.utils.data import DataLoader, Dataset
-from torchvision.transforms import v2
 
 
 class RefereeDataset(Dataset):
-    """Dataset adapter for Referee JSONL manifests and image splits."""
+    """Load supervised rows; unknown labels never become negatives."""
 
     def __init__(
-        self,
-        prepared_dir: str,
-        split: str = "train",
-        augment: bool = False,
+        self, prepared_dir: str, split: str = "train", augment: bool = False
     ) -> None:
         if split not in ("train", "validation", "test"):
-            raise ValueError(f"Unsupported training split: {split}")
-        self.prepared_dir = Path(prepared_dir)
-        self.split = split
-
-        self.manifests_dir = self.prepared_dir / "manifests"
-        self.images_dir = self.prepared_dir / "images"
-
-        self.samples = self._load_jsonl()
-        self._length = len(self.samples)
-
-        self.augment = (
-            v2.Compose(
-                [
-                    v2.RandomAffine(
-                        degrees=10,
-                        translate=(0.05, 0.05),
-                        scale=(0.9, 1.1),
-                    ),
-                ]
-            )
-            if augment
-            else None
-        )
-        
-        self.transform = v2.Compose(
-            [
-                v2.Resize((224, 224)),
-                v2.ToImage(),
-                v2.ToDtype(torch.float32, scale=True),
-            ]
-        )
-
-    def _load_jsonl(self) -> list[dict[str, Any]]:
-        manifest_path = self.manifests_dir / f"{self.split}.jsonl"
-        if not manifest_path.exists():
-            return []
-        samples = []
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    samples.append(json.loads(line))
-        return samples
+            raise ValueError(f"Unsupported split: {split}")
+        self.prepared_dir = Path(prepared_dir).resolve()
+        self.samples = []
+        self.excluded = {"unknown": [], "blank": [], "uncertain": []}
+        manifest = self.prepared_dir / "manifests" / f"{split}.jsonl"
+        with manifest.open(encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, 1):
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                mask = row["known_mask"]
+                values = [row["text_present"], row["number_present"]]
+                if (
+                    not isinstance(mask, list)
+                    or len(mask) != 2
+                    or any(type(x) is not bool for x in mask)
+                    or any(
+                        (
+                            (type(v) is not int or v not in (0, 1))
+                            if known
+                            else v is not None
+                        )
+                        for v, known in zip(values, mask)
+                    )
+                ):
+                    raise ValueError(f"Invalid labels at {manifest}:{line_number}")
+                path = (self.prepared_dir / row["image_path"]).resolve()
+                if self.prepared_dir not in path.parents or not path.is_file():
+                    raise FileNotFoundError(f"Invalid image path: {path}")
+                # Decode every image, including unknown rows, so corrupt inputs fail closed.
+                with Image.open(path) as image:
+                    image.verify()
+                sample_id = row.get("sample_id", f"{split}:{line_number}")
+                if any(mask):
+                    with Image.open(path) as image:
+                        view = preprocess(image)
+                    if view["status"] == "ok" and view["image"] is not None:
+                        self.samples.append((path, values, mask))
+                    elif view["status"] in ("blank", "uncertain"):
+                        self.excluded[view["status"]].append(sample_id)
+                    else:
+                        raise ValueError(
+                            f"Invalid preprocessing status for {path}: {view['status']}"
+                        )
+                else:
+                    self.excluded["unknown"].append(sample_id)
+        if not self.samples:
+            raise ValueError(f"No supervised samples in {manifest}")
+        self.augment = augment
 
     def __len__(self) -> int:
-        return max(1, self._length)
+        return len(self.samples)
 
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-            if not self.samples:
-                image = torch.randn(3, 224, 224)
-                if self.augment is not None:
-                    image = self.augment(image)
-                return {
-                    "image": image,
-                    "target": torch.zeros(4, dtype=torch.float32),
-                }
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        path, values, mask = self.samples[index]
+        with Image.open(path) as image:
+            view = preprocess(image)
+        if view["status"] != "ok" or view["image"] is None:
+            raise ValueError(f"Image cannot be preprocessed ({view['status']}): {path}")
+        image = torch.as_tensor(view["image"], dtype=torch.float32)
+        if self.augment:
+            from torchvision.transforms import v2
 
-            sample = self.samples[idx]
-            
-            # Clean up path by taking just the filename if 'images/' is prefixed in jsonl
-            raw_img_path = sample.get("image_path") or sample.get("filename") or f"{idx}.png"
-            img_filename = Path(raw_img_path).name
-            img_path = self.images_dir / img_filename
-
-            if img_path.exists():
-                pil_img = Image.open(img_path).convert("RGB")
-                image = self.transform(pil_img)
-            else:
-                image = torch.randn(3, 224, 224)
-
-            if self.augment is not None:
-                image = self.augment(image)
-
-            # Extract multi-label encoded_presence array as a float tensor for BCE loss
-            presence = sample.get("encoded_presence", [0, 0, 0, 0])
-            target = torch.tensor(presence, dtype=torch.float32)
-
-            return {
-                "image": image,
-                "target": target,
-            }
+            settings = preprocessing_config()["foreground"]
+            white = (1.0 - settings["mean"]) / settings["std"]
+            image = v2.RandomAffine(
+                degrees=10, translate=(0.05, 0.05), scale=(0.9, 1.1), fill=white
+            )(image)
+        return {
+            "image": image,
+            "target": torch.tensor(
+                [v if k else 0 for v, k in zip(values, mask)], dtype=torch.float32
+            ),
+            "known_mask": torch.tensor(mask, dtype=torch.bool),
+        }
 
 
 class RefereeDataModule(L.LightningDataModule):
-    """Train/validation DataModule for Referee model training."""
-
     def __init__(
-        self,
-        prepared_dir: str,
-        batch_size: int = 32,
-        num_workers: int = 2,
+        self, prepared_dir: str, batch_size: int = 32, num_workers: int = 2
     ) -> None:
         super().__init__()
-        self.prepared_dir = prepared_dir
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.train_dataset: RefereeDataset | None = None
-        self.val_dataset: RefereeDataset | None = None
+        self.prepared_dir, self.batch_size, self.num_workers = (
+            prepared_dir,
+            batch_size,
+            num_workers,
+        )
+        self.train_dataset = self.val_dataset = None
 
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
             self.train_dataset = RefereeDataset(
-                self.prepared_dir,
-                split="train",
-                augment=True,
+                self.prepared_dir, "train", augment=True
             )
-            self.val_dataset = RefereeDataset(
-                self.prepared_dir,
-                split="validation",
-                augment=False,
-            )
+            self.val_dataset = RefereeDataset(self.prepared_dir, "validation")
 
     def _dataloader(self, dataset: RefereeDataset, *, shuffle: bool) -> DataLoader:
-        options: dict = {
-            "batch_size": self.batch_size,
-            "shuffle": shuffle,
-            "num_workers": self.num_workers,
-            "pin_memory": torch.cuda.is_available(),
-        }
-        if self.num_workers > 0:
-            options["persistent_workers"] = True
-            options["prefetch_factor"] = 2
-        return DataLoader(dataset, **options)
+        return DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=shuffle,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=self.num_workers > 0,
+        )
 
     def train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             self.setup("fit")
-        assert self.train_dataset is not None
         return self._dataloader(self.train_dataset, shuffle=True)
 
     def val_dataloader(self) -> DataLoader:
         if self.val_dataset is None:
             self.setup("fit")
-        assert self.val_dataset is not None
         return self._dataloader(self.val_dataset, shuffle=False)

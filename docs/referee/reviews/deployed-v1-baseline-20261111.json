@@ -1,0 +1,204 @@
+{
+  "manifest": {
+    "version": 1,
+    "role": "referee",
+    "modelId": "referee-vit-a-v1",
+    "artifactRevision": "e6236a3b9da836b5b9cb4d2886423abf4439d4b15cf4cdfe346b7355d505195f",
+    "adapter": "vit-tiny-referee",
+    "backbone": "vit_tiny_patch16_224.augreg_in21k_ft_in1k",
+    "preprocessing": "rgb_resize",
+    "preprocessingConfigHash": "b5f8e9f53a264718b329a7b4908cf1c875becbc18eb55924373bb9d01434cc17",
+    "input": [
+      1,
+      3,
+      224,
+      224
+    ],
+    "output": [
+      1,
+      4
+    ],
+    "labelOrder": [
+      "text",
+      "number",
+      "symbol",
+      "circle"
+    ],
+    "channelOrder": [
+      "text",
+      "number"
+    ],
+    "scoreActivation": "sigmoid",
+    "files": {
+      "weights.safetensors": "d89873a364e6eb08f86cc0205c255abcdf5ef20f14cb625ead4dc3852f36f8b5",
+      "labels.txt": "57203e0964b71429b200382310be3d5751113a3226f0c0742ef69deb3ab8899b",
+      "labels.json": "1432b39fa4ef638972934f961a343bbf1e405b57ff49933c5eaf0f63c681fccc",
+      "checkpoint-selection.json": "f5e716a41051af39ade532c5e0fa10832bb570b4dd39091c616779307463563e"
+    }
+  },
+  "selection": {
+    "backbone": "vit_tiny_patch16_224.augreg_in21k_ft_in1k",
+    "preprocess_candidate": "rgb_resize",
+    "labels_sha256": "1432b39fa4ef638972934f961a343bbf1e405b57ff49933c5eaf0f63c681fccc",
+    "num_classes": 4,
+    "fast_dev": false,
+    "best_model_path": "weights.safetensors",
+    "best_model_score": 0.5564,
+    "sourceCheckpoint": "referee-epoch=04-val_mean_ap=0.5564.ckpt",
+    "sourceCheckpointSha256": "ea8b29c8cdbf764aff7e3f7a5169fe7a5a6fb3ca4089c9c3d892a9f95d0ca054",
+    "epoch": 4,
+    "createdUtc": "2026-11-10T22:41:07.340618+00:00"
+  },
+  "weights_sha256": "d89873a364e6eb08f86cc0205c255abcdf5ef20f14cb625ead4dc3852f36f8b5",
+  "input_size": [
+    1024,
+    768
+  ],
+  "results": [
+    {
+      "case": "white",
+      "pixels_sha256": "005fa1b7ba5d9f175854105a70512e770e4a52c4bf7277582448279b5437eb47",
+      "normal": {
+        "status": "evidence",
+        "scores": [
+          0.49673226475715637,
+          0.291147917509079
+        ]
+      },
+      "inverted": {
+        "status": "evidence",
+        "scores": [
+          0.4345867931842804,
+          0.47303736209869385
+        ]
+      }
+    },
+    {
+      "case": "black",
+      "pixels_sha256": "96a12deebdc8a3421e923d2fc00a649326f0b5167b48ffd231941a415777308c",
+      "normal": {
+        "status": "evidence",
+        "scores": [
+          0.4345867931842804,
+          0.47303736209869385
+        ]
+      },
+      "inverted": {
+        "status": "evidence",
+        "scores": [
+          0.49673226475715637,
+          0.291147917509079
+        ]
+      }
+    },
+    {
+      "case": "gray",
+      "pixels_sha256": "a01145b9bd416eb48cca33a1f6a6a0b9ee5fb4d4f427b2551dd86735564036dc",
+      "normal": {
+        "status": "evidence",
+        "scores": [
+          0.5064903497695923,
+          0.3061005771160126
+        ]
+      },
+      "inverted": {
+        "status": "evidence",
+        "scores": [
+          0.43504440784454346,
+          0.47292694449424744
+        ]
+      }
+    },
+    {
+      "case": "dot",
+      "pixels_sha256": "9dd4e89444e5bbfb448a56e9224d4eb56b7fc70a7421eac4d5395181f8096071",
+      "normal": {
+        "status": "evidence",
+        "scores": [
+          0.4967338740825653,
+          0.29115840792655945
+        ]
+      },
+      "inverted": {
+        "status": "evidence",
+        "scores": [
+          0.4346993863582611,
+          0.47387364506721497
+        ]
+      }
+    },
+    {
+      "case": "line",
+      "pixels_sha256": "73fc94b7e8994b5e95f7ac49f8c815cc2a34c0ee90b523868844c9764d48d722",
+      "normal": {
+        "status": "evidence",
+        "scores": [
+          0.4916847050189972,
+          0.2951124310493469
+        ]
+      },
+      "inverted": {
+        "status": "evidence",
+        "scores": [
+          0.430116206407547,
+          0.5588588118553162
+        ]
+      }
+    },
+    {
+      "case": "circle",
+      "pixels_sha256": "ff9906d8a008a5f5f5d27075254269f8f7ecff98b8ce927efb45f4e72dee5dbe",
+      "normal": {
+        "status": "evidence",
+        "scores": [
+          0.47759920358657837,
+          0.2815502882003784
+        ]
+      },
+      "inverted": {
+        "status": "evidence",
+        "scores": [
+          0.18915468454360962,
+          0.21744868159294128
+        ]
+      }
+    },
+    {
+      "case": "text",
+      "pixels_sha256": "d6d381d07501366c8f0f33463aadb6c78f489a3c9816dbeaea6e891917db64cf",
+      "normal": {
+        "status": "evidence",
+        "scores": [
+          0.4972248077392578,
+          0.291138231754303
+        ]
+      },
+      "inverted": {
+        "status": "evidence",
+        "scores": [
+          0.892114520072937,
+          0.4066087305545807
+        ]
+      }
+    },
+    {
+      "case": "number",
+      "pixels_sha256": "925e604b8da794465daf9c5047057b7651b63b61ac60a964bea9fa82ec7c76aa",
+      "normal": {
+        "status": "evidence",
+        "scores": [
+          0.49775657057762146,
+          0.29051387310028076
+        ]
+      },
+      "inverted": {
+        "status": "evidence",
+        "scores": [
+          0.8665070533752441,
+          0.43457937240600586
+        ]
+      }
+    }
+  ],
+  "limits": "Synthetic direct adapter probes; no renderer or service route; not model accuracy. Historical training source revision unverified."
+}

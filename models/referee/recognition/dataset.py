@@ -7,14 +7,15 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from guesser_data import preprocess as guesser_preprocess
 from PIL import Image
-from referee_data.common import load_step
+from referee_data import preprocess
 from torch.utils.data import Dataset
 from torchvision.transforms import v2
 
 ENCODED_ORDER = ("text", "number", "symbol", "circle")
 LABEL_ORDER = ("text", "number")
-PREPROCESSORS = ("foreground", "rgb_resize")
+PREPROCESSORS = ("foreground", "rgb_resize", "referee_foreground")
 
 
 class RefereeEvaluationDataset(Dataset):
@@ -53,8 +54,12 @@ class RefereeEvaluationDataset(Dataset):
             raise FileNotFoundError(path)
 
         with Image.open(path) as image:
-            if self.preprocessing == "foreground":
-                view = load_step("06-images").preprocess(image)
+            if self.preprocessing in ("foreground", "referee_foreground"):
+                view = (
+                    preprocess(image)
+                    if self.preprocessing == "referee_foreground"
+                    else guesser_preprocess(image, candidate="foreground")
+                )
                 status = view["status"]
                 image_tensor = (
                     None

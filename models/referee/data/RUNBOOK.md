@@ -77,3 +77,15 @@ Use the summary to tell a wiring sample from a trainer-ready run. Real trainer r
 Use the [trainer quick start](#model-trainer-quick-start) for the trainer ZIP. Use the validation owner's independent test package for final evaluation.
 
 ATYPICT is distributed under CC BY 4.0. This workflow retains canvas PNGs, derives separate presence targets, and records the source and split choices in the package. [Source release](https://zenodo.org/records/7330402)
+
+## Corrected preprocessing and production preflight
+
+From the repository root:
+
+```powershell
+uv run --project models/referee/data --frozen --no-dev referee-data preflight --profile train --json
+```
+
+For sample inspection add `--sample` and select the intended profile explicitly. This does not make sample data production-ready. For an extracted trainer package use `from referee_data import preflight; preflight("<package>/prepared")` in the model environment. A package must retain its labels, summary, hashes and bundled reader sources. All source/canonical previews use the Referee-specific preprocessing wrapper; do not apply a second normalization.
+
+The current small reviewed sample intentionally fails production readiness. See [REPAIR-AUDIT.md](../../../docs/referee/REPAIR-AUDIT.md) for review files, ambiguous examples and actual validation results. Only apply review decisions to the matching source sample IDs and hashes; preserve existing human corrections.

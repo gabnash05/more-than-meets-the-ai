@@ -38,7 +38,8 @@ def test_preview_uses_training_rows_and_writes_labels(tmp_path):
     assert result["sample_count"] == 1
     assert len(result["contact_sheets"]) == 1
     assert "unknown means the label is masked" in index
-    assert Image.open(result["contact_sheets"][0]).size == (896, 1080)
+    assert Image.open(result["contact_sheets"][0]).size == (1680, 1300)
+    assert "Source and canonical preprocessing" in index
     assert "Training split only" in index
     assert "validation" not in index
     assert (settings.previews / "train-001.png").is_file()

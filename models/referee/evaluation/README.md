@@ -2,7 +2,15 @@
 
 Notebook-based Referee validation, checkpoint auditing and threshold reporting. This workspace uses Python 3.12 and light notebook dependencies; the actual checkpoint loading and metric runner live in the separate Python 3.13 model project under `models/referee/recognition/`.
 
-## Status
+## Corrected v2 workflow
+
+Use [the trainer handoff](../../../docs/referee/TRAINER-HANDOFF.md) for the two-output repaired pipeline and [the game-owner checklist](../../../docs/referee/GAME-OWNER-CHECKLIST.md) for integration. The launcher notebooks default to opt-in v2 operations; select an actual corrected run checkpoint before executing them. The old four-output checkpoint is retained for historical inspection, not for resuming v2 training. The trainer does not set gameplay thresholds in notebook 05.
+
+The data package now owns canonical preprocessing and strict preflight. `training.train` uses reviewed/masked text and number targets; `training.export_v2` exports the new model identity. No corrected production checkpoint or production-ready dataset has been created by these code changes. Sample review coverage and unresolved issues are recorded in [the repair audit](../../../docs/referee/REPAIR-AUDIT.md).
+
+The sections below document the legacy checkpoint/evaluation tools; do not use their old export recipe for v2.
+
+## Legacy status
 
 The notebook flow and runner are implemented. The supplied checkpoint is a 4-output ViT-Tiny (`num_classes=4`, filename score `0.5564`); the game uses two channels (`text`, `number`), and the checkpoint carries no preprocessing provenance. The runner reports encoded-proxy and reviewed-label metrics separately and refuses to guess when preprocessing is ambiguous. Full local validation and held-out test runs are recorded under the ignored `checkpoints/referee-evaluation/train/` output root. The current test labels have no known negatives, so held-out results measure agreement with encoded ATYPICT proxies, not reviewed gameplay labels.
 
@@ -103,14 +111,14 @@ uv run --frozen --no-sync python -m recognition.evaluate \
   --batch-size 32
 ```
 
-`--preprocessing auto` probes `foreground` and `rgb_resize` on at most 200 rows and compares the encoded text+number mean AP with the checkpoint score. If neither is close or both are ambiguous, it stops and asks for the training owner’s provenance. Use `--preprocessing foreground` or `--preprocessing rgb_resize` only when that choice is confirmed.
+`--preprocessing auto` probes `foreground` and `rgb_resize` on at most 200 rows and compares the encoded text+number mean AP with the checkpoint score. If neither is close or both are ambiguous, it stops and asks for the training ownerâ€™s provenance. Use `--preprocessing foreground` or `--preprocessing rgb_resize` only when that choice is confirmed.
 
 Outputs are under the ignored output root:
 
-- `predictions.jsonl` — per-row scores, targets, origins and status
-- `summary.json` — checkpoint/prepared hashes, coverage, per-channel AP and thresholds
-- `report.md` — human-readable report and limits
-- `preprocessing-probe.json` — candidate probe when `auto` was used
+- `predictions.jsonl` â€” per-row scores, targets, origins and status
+- `summary.json` â€” checkpoint/prepared hashes, coverage, per-channel AP and thresholds
+- `report.md` â€” human-readable report and limits
+- `preprocessing-probe.json` â€” candidate probe when `auto` was used
 
 Validation is the threshold review split. The current prepared validation and test labels contain no known negatives, so known-label AP and F1/threshold sweeps are unscored. The freeze notebook therefore keeps the predeclared `0.5` reference threshold; it binds the checkpoint, preprocessing, prepared-data summary and validation report hash. Review the validation report, then write the freeze record in notebook `05_report_and_thresholds.ipynb`.
 

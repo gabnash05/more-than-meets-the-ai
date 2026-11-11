@@ -50,7 +50,23 @@ def _review(path: Path, ids: set[str]) -> dict[str, dict]:
                 raise DataError(
                     f"Invalid correction {key} for {sample_id}", "invalid_correction"
                 )
-        if not row.get("reviewer") or not row.get("reason"):
+        if not any(
+            key in row for key in ("text_present", "number_present", "exclusion_reason")
+        ):
+            raise DataError(
+                f"Correction has no action: {sample_id}", "invalid_correction"
+            )
+        if "exclusion_reason" in row and (
+            not isinstance(row["exclusion_reason"], str)
+            or not row["exclusion_reason"].strip()
+        ):
+            raise DataError(
+                f"Invalid exclusion reason: {sample_id}", "invalid_correction"
+            )
+        if any(
+            not isinstance(row.get(key), str) or not row[key].strip()
+            for key in ("reviewer", "reason")
+        ):
             raise DataError(
                 f"Correction needs reviewer and reason: {sample_id}",
                 "invalid_correction",
@@ -113,6 +129,12 @@ def prepare(settings: Settings) -> dict:
             "Source receipt is incomplete or mismatched. Run download again.",
             "invalid_source",
         )
+    missing_pairs = receipt.get("missing_pairs")
+    if type(missing_pairs) is not int or missing_pairs != 0:
+        raise DataError(
+            f"Source archives have missing annotation pairs or an invalid missing_pairs count: {missing_pairs!r}. Run download again.",
+            "invalid_source",
+        )
     required = (
         "sample_id",
         "variant",
@@ -153,9 +175,9 @@ def prepare(settings: Settings) -> dict:
                 png = read_member(pair["source_archive"], pair["png_member"])
                 pixels, histogram = _decode(png)
             except (ValueError, OSError, EOFError) as exc:
-                excluded["invalid_input"] += 1
-                diagnostics[f"invalid:{type(exc).__name__}"] += 1
-                continue
+                raise DataError(
+                    f"Invalid source input for {sid}: {exc}", "invalid_source"
+                ) from exc
             diagnostics["blank"] += int(max(histogram) == len(pixels))
             diagnostics["suspect_inverted_polarity"] += int(
                 sum(histogram[128:]) > len(pixels) // 2
@@ -197,9 +219,9 @@ def prepare(settings: Settings) -> dict:
                         diagnostics["sample_array_mismatch"] += 1
                     diagnostics["sample_arrays_checked"] += 1
             except (ValueError, OSError, EOFError) as exc:
-                excluded["invalid_input"] += 1
-                diagnostics[f"invalid:{type(exc).__name__}"] += 1
-                continue
+                raise DataError(
+                    f"Invalid source input for {sid}: {exc}", "invalid_source"
+                ) from exc
             targets, origins = [], []
             for index, key in enumerate(("text_present", "number_present")):
                 value = review.get(key)

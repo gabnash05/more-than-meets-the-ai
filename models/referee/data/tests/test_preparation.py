@@ -110,14 +110,17 @@ def test_small_pool_has_validation_and_bad_test_still_blocks_copy(
             yield wrapped
 
     monkeypatch.setattr(download, "open_member_reader", bad_test_labels)
-    summary = importlib.import_module("referee_data.02-prepare").prepare(settings)
-    assert summary["counts"]["validation"]["rows"] > 0
-    assert summary["counts"]["train"]["rows"] > 0
-    rows = [
-        row
-        for split in summary["available_splits"]
-        for row in iter_jsonl(settings.prepared / "manifests" / f"{split}.jsonl")
-    ]
-    assert not any(row["sample_id"].endswith((":708", ":709")) for row in rows)
-    assert summary["exclusions"]["cross_source_train"] == 1
-    assert summary["exclusions"]["disclosed_probe_group"] == 2
+    with pytest.raises(DataError, match="901|4036"):
+        importlib.import_module("referee_data.02-prepare").prepare(settings)
+
+
+def test_missing_annotation_pairs_in_receipt_prevent_preparation(
+    tmp_path: Path,
+) -> None:
+    settings = _stage(tmp_path)
+    receipt_path = settings.source / "source-receipt.json"
+    receipt = read_json(receipt_path)
+    receipt["missing_pairs"] = 1
+    atomic_json(receipt_path, receipt)
+    with pytest.raises(DataError, match="missing annotation pairs.*1"):
+        importlib.import_module("referee_data.02-prepare").prepare(settings)

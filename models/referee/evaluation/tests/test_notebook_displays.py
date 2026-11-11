@@ -40,3 +40,17 @@ def test_audit_and_summary_tables_are_explicitly_displayed() -> None:
     assert "display(pd.DataFrame(rows).set_index('channel'))" in _source(
         "04_validation_evaluation.ipynb"
     )
+
+
+def test_v2_export_is_opt_in_and_does_not_use_legacy_exporter() -> None:
+    source = _source("06_serving_bundle.ipynb")
+    assert "RUN_EXPORT = False" in source
+    assert "training.export_v2" in source
+    assert "training.export_bundle" not in source
+    assert "referee-vit-v2" in source
+
+
+def test_validation_handles_the_checkpoint_channel_count() -> None:
+    source = _source("04_validation_evaluation.ipynb")
+    assert "for name in summary['channels']:" in source
+    assert "PREPROCESSING = 'foreground'" in source

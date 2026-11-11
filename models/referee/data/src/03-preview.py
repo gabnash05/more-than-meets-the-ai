@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import html
+import textwrap
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .common import DataError, iter_jsonl, resolve_relative
+from .common import DataError, iter_jsonl, load_step, resolve_relative
 from .settings import Settings
 
 MAX_PREVIEW_SAMPLES = 64
 SHEET_COLUMNS = 4
 SHEET_ROWS = 4
-CELL_WIDTH = 224
-CELL_HEIGHT = 270
+CELL_WIDTH = 420
+CELL_HEIGHT = 325
 
 
 def _label(value: Any, known: Any) -> str:
@@ -52,17 +54,42 @@ def _make_sheet(rows: list[dict[str, Any]], prepared: Path, output: Path) -> Non
         try:
             path = resolve_relative(prepared, str(row["image_path"]))
             with Image.open(path) as source:
-                canvas = source.convert("L").resize((200, 200))
+                canvas = source.convert("RGB").resize((190, 190))
+                view = load_step("06-images").preprocess(source)
+            if view["status"] == "ok":
+                config = load_step("06-images").preprocessing_config()["foreground"]
+                pixels = np.clip(
+                    (view["image"][0] * config["std"] + config["mean"]) * 255, 0, 255
+                ).astype(np.uint8)
+                canonical = Image.fromarray(pixels).convert("RGB").resize((190, 190))
+            else:
+                canonical = Image.new("RGB", (190, 190), "#eeeeee")
         except (KeyError, OSError, DataError, TypeError, ValueError) as exc:
             raise DataError(
-                f"Cannot read training preview image for row {index}: {exc}"
+                f"Cannot read training preview image for {row.get('sample_id', index)}: {exc}"
             ) from exc
-        sheet.paste(canvas.convert("RGB"), (x + 12, y + 8))
-        draw.text((x + 12, y + 214), _caption(row), fill="#17212b", font=font)
+        sheet.paste(canvas, (x + 10, y + 18))
+        sheet.paste(canonical, (x + 220, y + 18))
+        draw.text((x + 10, y + 2), "SOURCE", fill="#17212b", font=font)
+        draw.text(
+            (x + 220, y + 2), f"CANONICAL: {view['status']}", fill="#17212b", font=font
+        )
+        draw.text((x + 10, y + 212), _caption(row), fill="#17212b", font=font)
+        draw.text(
+            (x + 10, y + 228),
+            f"mask: {row.get('known_mask')}  origin: {row.get('label_origin')}",
+            fill="#425466",
+            font=font,
+        )
         sample_id = str(row.get("sample_id", f"row {index + 1}"))
-        draw.text((x + 12, y + 232), sample_id[:31], fill="#425466", font=font)
+        for line_index, line in enumerate(
+            textwrap.wrap(sample_id, width=58, break_long_words=True)
+        ):
+            draw.text(
+                (x + 10, y + 245 + line_index * 13), line, fill="#425466", font=font
+            )
         folder = str(row.get("provenance_folder", ""))
-        draw.text((x + 12, y + 248), folder[:31], fill="#425466", font=font)
+        draw.text((x + 10, y + 300), folder[:55], fill="#425466", font=font)
     output.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(output, format="PNG", optimize=True)
 
@@ -105,7 +132,7 @@ def preview(settings: Settings) -> dict[str, Any]:
 body{font:16px system-ui,sans-serif;max-width:980px;margin:2rem auto;padding:0 1rem;color:#17212b}
 img{max-width:100%;height:auto;border:1px solid #d8dee5}section{margin:2rem 0}
 </style></head><body><h1>Training data preview</h1>
-<p>Training split only. Each canvas shows text and number labels; unknown means the label is masked.</p>
+<p>Training split only. Source and canonical preprocessing are shown side by side with status, IDs, masks and label origins. Each canvas shows text and number labels; unknown means the label is masked.</p>
 """
         + "\n".join(sections)
         + "\n</body></html>\n"

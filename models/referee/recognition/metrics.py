@@ -7,21 +7,29 @@ import numpy as np
 
 def _as_arrays(scores, labels) -> tuple[np.ndarray, np.ndarray]:
     scores = np.asarray(scores, dtype=np.float64)
-    labels = np.asarray(labels, dtype=bool)
+    labels = np.asarray(labels)
     if scores.shape != labels.shape or scores.ndim != 1:
         raise ValueError("scores and labels must be 1-D and the same length")
-    return scores, labels
+    if not np.isfinite(scores).all():
+        raise ValueError("scores must be finite")
+    if (
+        labels.dtype.kind not in "biuf"
+        or not np.isfinite(labels).all()
+        or not np.isin(labels, [0, 1]).all()
+    ):
+        raise ValueError("labels must be finite and binary")
+    return scores, labels.astype(bool)
 
 
 def average_precision(scores, labels) -> float | None:
     """Compute average precision with tied scores handled as one threshold.
 
-    Returns None when the slice has no positive examples; a missing positive
-    class is not an accuracy of zero.
+    Returns None when either class is absent: such a slice cannot assess
+    discrimination between positive and negative examples.
     """
     scores, labels = _as_arrays(scores, labels)
     positives = int(labels.sum())
-    if positives == 0:
+    if positives == 0 or positives == len(labels):
         return None
 
     order = np.argsort(-scores, kind="mergesort")
@@ -90,7 +98,10 @@ def sweep_thresholds(
     if step <= 0 or start > stop:
         raise ValueError("Invalid threshold sweep")
     thresholds = np.arange(start, stop + step / 2, step)
-    return [threshold_metrics(scores, labels, round(float(value), 4)) for value in thresholds]
+    return [
+        threshold_metrics(scores, labels, round(float(value), 4))
+        for value in thresholds
+    ]
 
 
 def best_f1(sweep: list[dict]) -> dict | None:
