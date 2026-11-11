@@ -217,6 +217,18 @@ safe on a fresh output root: when `subset.json` is absent, the runner starts a
 new run; when a valid run exists, it continues matching shards. Use `--overwrite`
 to force a clean restart.
 
+Finished views are cached so a later run of the same split skips rendering.
+Entries live under `--view-cache-dir` (default
+`<model-project>/.local/cache/evaluation-views/<recipe>/<split>/`), one file per
+original at roughly half a megabyte, so a full split occupies tens of gigabytes.
+The recipe covers the split, the selected manifest, the preprocessing candidate
+and the preprocessing source files, so changing any of them starts a fresh tree
+instead of serving stale pixels; weights, thresholds and batch size are absent
+because they change what a view is scored as, never what it looks like. The
+cached path still rebuilds the normalised tensor and its input hash, so a warm
+run produces byte-identical shards and logits. Pass `--no-view-cache` to render
+everything, for example when measuring rendering throughput.
+
 The ten-stage curve counts blank, uncertain and unchanged views as unsuccessful.
 The policy table treats those views as not emitted and reports coverage,
 accuracy among emitted guesses, and overall correctness separately. A/B deltas
