@@ -29,6 +29,7 @@ from torch.utils.data import DataLoader, Dataset
 from training.export_bundle import BACKBONE, BUNDLE_FILES, MODEL_ID
 
 from . import metrics, report
+from .view_cache import EvaluationViewCache
 
 STAGES = 10
 DEFAULT_PREPARED_DIR = Path("data/.local/data/production/prepared")
@@ -37,6 +38,9 @@ DEFAULT_MODEL_IDS = ("guesser-vit-a-v1", "guesser-vit-b-v1")
 DEFAULT_WORKERS = 0
 DEFAULT_MANIFEST_CACHE = (
     Path(__file__).resolve().parents[1] / ".local" / "cache" / "manifests"
+)
+DEFAULT_VIEW_CACHE = (
+    Path(__file__).resolve().parents[1] / ".local" / "cache" / "evaluation-views"
 )
 CALIBRATION_CHUNK = 16384
 DEFAULT_CALIBRATION_SAMPLES = 50000
@@ -198,6 +202,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=DEFAULT_MANIFEST_CACHE,
         help="Shared memory-mapped manifest cache for the render workers.",
+    )
+    parser.add_argument(
+        "--view-cache-dir",
+        type=Path,
+        default=DEFAULT_VIEW_CACHE,
+        help=(
+            "Store preprocessed views here so later runs of the same split skip "
+            "rendering. Entries live under a recipe-hashed directory, so a "
+            "changed split, candidate or preprocessing source cannot reuse them."
+        ),
+    )
+    parser.add_argument(
+        "--no-view-cache",
+        action="store_true",
+        help="Render every view instead of writing and reusing the view cache.",
     )
     parser.add_argument(
         "--quiet",
@@ -605,12 +624,39 @@ def _flush(
         pending[bundle.model_id].clear()
 
 
+def _image_to_uint8(image: np.ndarray, mean: float, std: float) -> np.ndarray:
+    """Recover the stored integer pixels from a normalised float32 view.
+
+    ``_fit_foreground`` builds a single-channel image and spreads it with
+    ``(pixels / 255 - mean) / std``, so inverting that map recovers the original
+    byte. Every one of the 256 possible values survives the round trip at
+    float32 precision: the worst error is around 1e-5 of one pixel step, far
+    below the half-step that rounding would need to cross.
+    """
+    pixels = (np.asarray(image[0], dtype=np.float32) * std + mean) * 255.0
+    return np.rint(pixels).astype(np.uint8)
+
+
+def _uint8_to_image(pixels: np.ndarray, mean: float, std: float) -> np.ndarray:
+    """Rebuild the normalised float32 view from stored integer pixels.
+
+    This repeats the tail of ``_fit_foreground`` exactly, so a cached view and a
+    freshly rendered one hash to the same bytes.
+    """
+    normalised = (np.asarray(pixels, dtype=np.float32) / 255.0 - mean) / std
+    return np.repeat(normalised[None, :, :], 3, axis=0).astype(np.float32)
+
+
 class TenStageViewDataset(Dataset):
     """Render the ten fixed time views of each selected original.
 
-    One item is one original together with all ten of its stages, so a record is
+    One item is one original together with all of its stages, so a record is
     read once and every cut prefix matches a serial run exactly. Workers use
     this to overlap CPU rendering and preprocessing with GPU inference.
+
+    With a view cache, an item is served from disk instead of being rendered.
+    Rendering is deterministic and independent of the weights, so the cached
+    pixels stay valid while many model versions are scored against one split.
     """
 
     def __init__(
@@ -620,15 +666,31 @@ class TenStageViewDataset(Dataset):
         global_indices: list[int],
         manifest_indices: list[int],
         class_ids: list[int],
+        local_indices: list[int],
         candidate: str,
         manifest_cache_dir: Path | None,
+        view_cache: EvaluationViewCache | None = None,
     ) -> None:
-        if not len(global_indices) == len(manifest_indices) == len(class_ids):
+        if not (
+            len(global_indices)
+            == len(manifest_indices)
+            == len(class_ids)
+            == len(local_indices)
+        ):
             raise ValueError("served positions, manifest rows and classes must align")
+        settings = load_step("06-images").candidate_config(candidate)
+        self.mean = float(settings["mean"])
+        self.std = float(settings["std"])
+        self.image_size = int(settings["output"])
+        if view_cache is not None and view_cache.image_size != self.image_size:
+            raise ValueError("view cache image size does not match the candidate")
         self.global_indices = global_indices
         self.manifest_indices = manifest_indices
         self.class_ids = class_ids
+        self.local_indices = local_indices
+        self.split = split
         self.candidate = candidate
+        self.view_cache = view_cache
         # IndexedDrawings reopens per PID, so forked workers map the shared
         # manifest cache instead of decoding the split into private memory.
         self.drawings = IndexedDrawings(
@@ -638,43 +700,129 @@ class TenStageViewDataset(Dataset):
     def __len__(self) -> int:
         return len(self.manifest_indices)
 
-    def __getitem__(self, position: int) -> list[tuple[dict, np.ndarray | None]]:
-        """Return this original's ten stages in order with their view metadata.
+    def _metadata(
+        self,
+        view_index: int,
+        drawing_id: str,
+        class_id: int,
+        stage: int,
+        status: str,
+        coverage: float | None,
+        unchanged: bool,
+        image: np.ndarray | None,
+    ) -> dict:
+        """Describe one view; the input hash covers the exact pixels scored."""
+        return {
+            "viewIndex": view_index,
+            "drawingId": drawing_id,
+            "classId": class_id,
+            "stage": stage + 1,
+            "fraction": (stage + 1) / STAGES,
+            "unchanged": unchanged,
+            "preprocessStatus": status,
+            "coverage": coverage,
+            "inputSha256": _sha256_bytes(
+                np.ascontiguousarray(image).tobytes()
+            )
+            if image is not None
+            else None,
+        }
 
-        ``global_indices`` fixes the logits row of the first stage, and stage
-        order advances it by one, matching the serial runner's view numbering.
+    def __getitem__(self, position: int) -> list[tuple[dict, np.ndarray | None]]:
+        """Return this original's stages in order, from cache or by rendering.
+
+        The cached path still rebuilds the normalised float32 view and hashes
+        it, so every downstream row is identical whether or not the cache was
+        warm; it only skips cutting, rasterising and masking the drawing.
         """
         base = self.global_indices[position] * STAGES
         class_id = self.class_ids[position]
+        local_index = self.local_indices[position]
+        manifest_index = self.manifest_indices[position]
+
+        if self.view_cache is not None:
+            cached = self.view_cache.load(self.split, class_id, local_index)
+            if cached is not None:
+                # Only the manifest row is needed for the drawing ID; the record
+                # payload itself is what the cache exists to avoid reading.
+                drawing_id = self.drawings.manifest_row(manifest_index)["drawing_id"]
+                served: list[tuple[dict, np.ndarray | None]] = []
+                for stage in range(STAGES):
+                    pixels = cached.images[stage]
+                    image = (
+                        _uint8_to_image(pixels, self.mean, self.std)
+                        if pixels is not None
+                        else None
+                    )
+                    served.append(
+                        (
+                            self._metadata(
+                                base + stage,
+                                drawing_id,
+                                class_id,
+                                stage,
+                                cached.statuses[stage],
+                                cached.coverage[stage],
+                                cached.unchanged[stage],
+                                image,
+                            ),
+                            image,
+                        )
+                    )
+                return served
+
+        statuses: list[str] = []
+        unchanged_flags: list[bool] = []
+        coverages: list[float | None] = []
+        images: list[np.ndarray | None] = []
         views: list[tuple[dict, np.ndarray | None]] = []
+        drawing_id = ""
         for stage, view in enumerate(
-            self.drawings.evaluation_images(
-                self.manifest_indices[position], candidate=self.candidate
-            )
+            self.drawings.evaluation_images(manifest_index, candidate=self.candidate)
         ):
             status = view["status"]
             coverage = view["diagnostics"].get("coverage")
-            usable = status == "ok"
-            metadata = {
-                "viewIndex": base + stage,
-                "drawingId": view["drawing_id"],
-                "classId": class_id,
-                "stage": stage + 1,
-                "fraction": float(view["fraction"]),
-                "unchanged": bool(view["unchanged"]),
-                "preprocessStatus": status,
-                "coverage": float(coverage) if coverage is not None else None,
-                "inputSha256": _sha256_bytes(
-                    np.ascontiguousarray(view["image"]).tobytes()
+            image = view["image"] if status == "ok" else None
+            drawing_id = view["drawing_id"]
+            statuses.append(status)
+            unchanged_flags.append(bool(view["unchanged"]))
+            coverages.append(float(coverage) if coverage is not None else None)
+            images.append(image)
+            views.append(
+                (
+                    self._metadata(
+                        base + stage,
+                        drawing_id,
+                        class_id,
+                        stage,
+                        status,
+                        coverages[-1],
+                        unchanged_flags[-1],
+                        image,
+                    ),
+                    image,
                 )
-                if usable
-                else None,
-            }
-            views.append((metadata, view["image"] if usable else None))
+            )
         if len(views) != STAGES:
             raise ValueError(
-                f"original {self.manifest_indices[position]} produced "
-                f"{len(views)} views, expected {STAGES}"
+                f"original {manifest_index} produced {len(views)} views, "
+                f"expected {STAGES}"
+            )
+
+        if self.view_cache is not None:
+            self.view_cache.store(
+                self.split,
+                class_id,
+                local_index,
+                statuses,
+                unchanged_flags,
+                coverages,
+                [
+                    None
+                    if image is None
+                    else _image_to_uint8(image, self.mean, self.std)
+                    for image in images
+                ],
             )
         return views
 
@@ -770,21 +918,24 @@ def _score_subset(
     batch_size: int,
     workers: int,
     manifest_cache_dir: Path,
+    view_cache: EvaluationViewCache | None,
     logits_memmaps: dict[str, np.memmap] | None,
     quiet: bool,
 ) -> None:
     """Render, score and shard every selected original, class shard by shard.
 
-    The plan fixes three numbers per original before any rendering starts: its
+    The plan fixes four numbers per original before any rendering starts: its
     position inside the subset (the logits row), its manifest row (the record),
-    and its class (the output shard). Positions advance across classes exactly
-    as in a serial run, so shards, logits and reported metrics do not depend on
-    how the rendering is split across workers.
+    its class (the output shard) and its index within that class (its view-cache
+    file). Positions advance across classes exactly as in a serial run, so
+    shards, logits and reported metrics do not depend on how the rendering is
+    split across workers.
     """
     model_ids = [bundle.model_id for bundle in bundles]
     global_indices: list[int] = []
     manifest_indices: list[int] = []
     class_ids: list[int] = []
+    local_indices: list[int] = []
     offsets: dict[int, int] = {}
     offset = 0
     for class_id in subset["classIds"]:
@@ -796,6 +947,7 @@ def _score_subset(
             global_indices.append(offset + local_index)
             manifest_indices.append(int(manifest_index))
             class_ids.append(class_id)
+            local_indices.append(local_index)
         offset += len(subset["indices"][str(class_id)])
 
     # A class counts as done only when every arm's shard still hashes to the
@@ -879,8 +1031,10 @@ def _score_subset(
         [global_indices[position] for position in served],
         [manifest_indices[position] for position in served],
         [class_ids[position] for position in served],
+        [local_indices[position] for position in served],
         bundles[0].preprocessing,
         manifest_cache_dir,
+        view_cache,
     )
     loader = DataLoader(
         dataset,
@@ -1204,6 +1358,30 @@ def _comparison(
     }
 
 
+def _view_cache_recipe(split: str, subset: dict, bundle: Bundle, settings: dict) -> dict:
+    """Describe everything that could change a cached pixel.
+
+    The manifest digest covers which originals were selected and which records
+    they point at, the bundle's preprocessing hash covers the candidate settings,
+    and the module digests cover the code that rasterises and masks. Weights,
+    thresholds and batch size are deliberately absent, because they change what
+    a view is scored as, never what it looks like, so the cache survives model
+    changes and is rebuilt only when the pixels themselves would move.
+    """
+    images_module = load_step("06-images")
+    loader_module = load_step("05-loader")
+    return {
+        "split": split,
+        "manifestSha256": subset["manifestSha256"],
+        "candidate": bundle.preprocessing,
+        "candidateHash": bundle.preprocessing_hash,
+        "outputSize": int(settings["output"]),
+        "stages": STAGES,
+        "imagesSource": _sha256_file(Path(images_module.__file__)),
+        "loaderSource": _sha256_file(Path(loader_module.__file__)),
+    }
+
+
 def run(args: argparse.Namespace) -> dict:
     started = datetime.now(UTC)
     prepared_dir = args.prepared_dir.resolve()
@@ -1314,6 +1492,20 @@ def run(args: argparse.Namespace) -> dict:
                     path, dtype=np.float32, mode="w+", shape=shape
                 )
 
+    # Rendering dominates the run and produces the same pixels for every model
+    # scored against this split, so store them once and reuse them next time.
+    view_cache: EvaluationViewCache | None = None
+    if not args.no_view_cache:
+        view_settings = load_step("06-images").candidate_config(bundles[0].preprocessing)
+        view_cache = EvaluationViewCache(
+            args.view_cache_dir.resolve(),
+            _view_cache_recipe(args.split, subset, bundles[0], view_settings),
+            stages=STAGES,
+            image_size=int(view_settings["output"]),
+        )
+        if not args.quiet:
+            print(f"view cache: {view_cache.directory}", flush=True)
+
     progress_path = output_dir / "progress.json"
     progress = _load_progress(
         progress_path, subset["sha256"], [bundle.model_id for bundle in bundles]
@@ -1332,6 +1524,7 @@ def run(args: argparse.Namespace) -> dict:
             batch_size=args.batch_size,
             workers=args.workers,
             manifest_cache_dir=args.manifest_cache_dir.resolve(),
+            view_cache=view_cache,
             logits_memmaps=logits_memmaps,
             quiet=args.quiet,
         )
@@ -1480,6 +1673,13 @@ def run(args: argparse.Namespace) -> dict:
         "resumeRequested": bool(args.resume),
         "resumeFallback": bool(args.resume and not resuming),
         "saveLogits": bool(args.save_logits),
+        "viewCache": {
+            "directory": str(view_cache.directory),
+            "recipe": view_cache.digest,
+            "entries": view_cache.entries(args.split),
+        }
+        if view_cache is not None
+        else None,
         "command": " ".join(sys.argv),
     }
     calibration = {
