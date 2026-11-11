@@ -428,6 +428,10 @@ class StubDrawings:
                 "diagnostics": {"candidate": candidate, "coverage": 0.5},
             }
 
+    def manifest_row(self, index: int) -> dict:
+        """Return just the manifest fields the cache-hit path still needs."""
+        return {"drawing_id": f"drawing-{index}"}
+
 
 def test_dataset_numbers_view_indices_across_classes(monkeypatch) -> None:
     """View numbering must keep advancing across class boundaries."""
@@ -438,6 +442,7 @@ def test_dataset_numbers_view_indices_across_classes(monkeypatch) -> None:
         global_indices=[0, 1, 2],
         manifest_indices=[40, 41, 99],
         class_ids=[0, 0, 1],
+        local_indices=[0, 1, 0],
         candidate="foreground",
         manifest_cache_dir=None,
     )
@@ -522,3 +527,129 @@ def test_interrupt_during_setup_still_exits_quietly(monkeypatch, capsys) -> None
 
     assert exit_info.value.code == 130
     assert "stopped by the operator" in capsys.readouterr().out
+
+
+def test_view_cache_round_trips_every_byte_value() -> None:
+    """Encoding and rebuilding a view must be lossless for all 256 pixels.
+
+    The cache stores integer pixels because float32 tensors are eight times
+    larger. Recovery relies on the inverse of the normalisation being exact, so
+    this walks the entire value domain rather than a sample of it.
+    """
+    mean, std = 0.5, 0.5
+    for value in range(256):
+        pixels = np.full((224, 224), value, dtype=np.uint8)
+        rebuilt = evaluate._uint8_to_image(pixels, mean, std)
+        assert rebuilt.shape == (3, 224, 224)
+        assert rebuilt.dtype == np.float32
+        assert np.array_equal(evaluate._image_to_uint8(rebuilt, mean, std), pixels)
+
+
+def test_view_cache_round_trips_stage_records(tmp_path: Path) -> None:
+    """Statuses, flags, coverage and pixels must survive a write and read."""
+    cache = evaluate.EvaluationViewCache(
+        tmp_path, {"split": "validation"}, stages=10, image_size=224
+    )
+    statuses = ["ok", "blank", "uncertain"] + ["ok"] * 7
+    unchanged = [True, False] * 5
+    coverage = [0.25] + [None] * 9
+    images = [
+        np.full((224, 224), stage, dtype=np.uint8) if status == "ok" else None
+        for stage, status in enumerate(statuses)
+    ]
+
+    cache.store("validation", 7, 3, statuses, unchanged, coverage, images)
+    loaded = cache.load("validation", 7, 3)
+
+    assert loaded is not None
+    assert list(loaded.statuses) == statuses
+    assert list(loaded.unchanged) == unchanged
+    assert loaded.coverage[0] == pytest.approx(0.25)
+    assert all(value is None for value in loaded.coverage[1:])
+    for stored, expected in zip(loaded.images, images):
+        if expected is None:
+            assert stored is None
+        else:
+            assert np.array_equal(stored, expected)
+
+
+def test_view_cache_treats_a_truncated_entry_as_a_miss(tmp_path: Path) -> None:
+    """A partial write from a killed run must be re-rendered, not believed."""
+    cache = evaluate.EvaluationViewCache(
+        tmp_path, {"split": "validation"}, stages=10, image_size=224
+    )
+    images = [np.zeros((224, 224), dtype=np.uint8)] * 10
+    cache.store("validation", 1, 0, ["ok"] * 10, [False] * 10, [0.5] * 10, images)
+
+    path = cache.path_for("validation", 1, 0)
+    path.write_bytes(path.read_bytes()[: 60 + 1000])
+
+    assert cache.load("validation", 1, 0) is None
+
+
+def test_view_cache_isolates_recipes(tmp_path: Path) -> None:
+    """Changing anything that decides the pixels must start a fresh tree."""
+    first = evaluate.EvaluationViewCache(
+        tmp_path, {"split": "validation", "candidateHash": "a"}, stages=10, image_size=224
+    )
+    second = evaluate.EvaluationViewCache(
+        tmp_path, {"split": "validation", "candidateHash": "b"}, stages=10, image_size=224
+    )
+
+    assert first.directory != second.directory
+    assert first.directory.parent == second.directory.parent
+
+
+class PixelLatticeDrawings(StubDrawings):
+    """Views built from stored bytes, so a cache round trip must be exact."""
+
+    def evaluation_images(self, index: int, candidate: str = "foreground"):
+        for stage in range(10):
+            usable = (index + stage) % 10 != 0
+            pixels = np.full((224, 224), (index + stage) % 256, dtype=np.uint8)
+            yield {
+                "status": "ok" if usable else "blank",
+                "image": evaluate._uint8_to_image(pixels, 0.5, 0.5) if usable else None,
+                "fraction": (stage + 1) / 10,
+                "unchanged": stage == 0,
+                "drawing_id": f"drawing-{index}",
+                "diagnostics": {"candidate": candidate, "coverage": 0.5},
+            }
+
+
+def test_dataset_serves_identical_views_from_a_warm_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A cache hit must reproduce the rendered item byte for byte.
+
+    This is the property the whole cache rests on: scoring a split twice, once
+    cold and once warm, has to produce the same rows and the same pixels.
+    """
+    monkeypatch.setattr(evaluate, "IndexedDrawings", PixelLatticeDrawings)
+    cache = evaluate.EvaluationViewCache(
+        tmp_path, {"split": "validation"}, stages=10, image_size=224
+    )
+
+    def build() -> evaluate.TenStageViewDataset:
+        return evaluate.TenStageViewDataset(
+            Path("prepared"),
+            "validation",
+            global_indices=[0, 1],
+            manifest_indices=[40, 41],
+            class_ids=[0, 0],
+            local_indices=[0, 1],
+            candidate="foreground",
+            manifest_cache_dir=None,
+            view_cache=cache,
+        )
+
+    cold = build()[0]
+    assert cache.load("validation", 0, 0) is not None, "the cold pass must populate"
+    warm = build()[0]
+
+    for (cold_meta, cold_image), (warm_meta, warm_image) in zip(cold, warm):
+        assert cold_meta == warm_meta
+        if cold_image is None:
+            assert warm_image is None
+        else:
+            assert np.array_equal(cold_image, warm_image)
