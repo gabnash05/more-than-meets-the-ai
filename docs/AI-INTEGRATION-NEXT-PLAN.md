@@ -1,6 +1,6 @@
 # Real AI inference — later milestone
 
-Status: the optional Guesser queue transport is implemented and verified with synthetic tests; model readiness, measured throughput and balanced gameplay remain unvalidated. The Individual milestone prepares a provider boundary, `ai-benchmark-v1` scoring and a committed AI ledger. Production currently uses the unavailable adapter unless the Guesser overlay is deployed. Human AI modifiers remain zero and human winners exclude AI totals.
+Status: the optional inference queue transport is implemented and verified with synthetic tests; model readiness, measured throughput and balanced gameplay remain unvalidated. The Individual milestone prepares a provider boundary, `ai-benchmark-v1` scoring and a committed AI ledger. Production currently uses the unavailable adapter unless the Guesser/Referee overlay is deployed. Human AI modifiers remain zero and human winners exclude AI totals.
 
 The VM handoff, model artifact contract and initial guess pacing are specified in the [deployment and AI guessing plan](DEPLOYMENT-AND-AI-PLAN.md).
 
