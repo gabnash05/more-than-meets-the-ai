@@ -26,6 +26,12 @@ test("a real Referee bundle is enabled without fixture mode", () => {
   });
 });
 
+test("a real Referee bundle is enabled for the shared queue", () => {
+  withEnv({ REFEREE_PROVIDER: "queue", REFEREE_MODEL_ID: "referee-vit-a-v1", AI_TEST_FIXTURES: "0" }, () => {
+    assert.equal(configuredRefereeId(), "referee-vit-a-v1");
+  });
+});
+
 test("the fixture stays gated behind AI_TEST_FIXTURES", () => {
   withEnv({ REFEREE_PROVIDER: "http", REFEREE_MODEL_ID: "referee-fixture-v1", AI_TEST_FIXTURES: "0" }, () => {
     assert.equal(configuredRefereeId(), undefined);

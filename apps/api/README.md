@@ -43,13 +43,13 @@ Room metadata saves omit drawing operation arrays before deep cloning; the geome
 
 The shared TypeScript contracts live in `packages/game-contracts/src`; the web contract files re-export them. The API build compiles those shared sources alongside the server under `apps/api/dist`, and `npm start` runs the compiled server entry point.
 
-## Guesser queue
+## Inference queue
 
-The optional Guesser transport uses Redis Streams so AI workers can scale independently of the room process. Set `GUESSER_PROVIDER=queue`, `GUESSER_MODEL_ID`, `AI_QUEUE_REDIS_URL`, optional `AI_QUEUE_REDIS_USERNAME`, and `AI_QUEUE_REDIS_PASSWORD_FILE`. The API writes the rendered PNG to `mmtai:ai:payload:<jobId>`, appends a versioned `GuessJobV1` envelope to `mmtai:ai:guess:jobs:v1`, and waits for a result bound to the same job/turn/canvas identity. Queue wait counts against `AI_REQUEST_TIMEOUT_MS`; expired jobs become unavailable and late results are discarded.
+The optional inference transport uses Redis Streams so AI workers can scale independently of the room process. Set `GUESSER_PROVIDER=queue`, `GUESSER_MODEL_ID`, `REFEREE_PROVIDER=queue`, `REFEREE_MODEL_ID`, `AI_QUEUE_REDIS_URL`, optional `AI_QUEUE_REDIS_USERNAME`, and `AI_QUEUE_REDIS_PASSWORD_FILE`. The API writes the rendered PNG to `mmtai:ai:payload:<jobId>`, appends a versioned `InferenceJobV1` envelope tagged with the role to `mmtai:ai:guess:jobs:v1`, and waits for a result bound to the same job/turn/canvas identity. Queue wait counts against `AI_REQUEST_TIMEOUT_MS`; expired jobs become unavailable and late results are discarded.
 
-Workers publish short-lived registrations under `mmtai:ai:workers:*`; the API caches the first compatible fresh registration for readiness. A broker outage, missing password file or invalid URL keeps the room human-playable and reports AI unavailable instead of failing startup. Redis credentials come from files; do not put them in URLs or source.
+Workers publish short-lived role-tagged registrations under `mmtai:ai:workers:*`; the API caches the first compatible fresh registration for each role. A broker outage, missing password file or invalid URL keeps the room human-playable and reports that role unavailable instead of failing startup. Redis credentials come from files; do not put them in URLs or source.
 
-At most one queued or active job exists per room and role, but different rooms dispatch independently. Each AI container runs one inference at a time, so add replicas to add concurrency. The Referee fixture remains on the direct HTTP path and is disabled in the production overlay.
+At most one queued or active job exists per room and role, but different rooms dispatch independently. Each AI container runs one inference at a time and dispatches each job to the model named by its role, so add replicas to add both Guesser and Referee concurrency. The HTTP Referee fixture remains available as a separate provider for dedicated smoke stacks.
 
 ## Validation
 

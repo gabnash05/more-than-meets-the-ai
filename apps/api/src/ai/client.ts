@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { CanvasOperation } from "../../../../packages/game-contracts/src/drawing";
 import { ChromiumRenderer } from "./renderer";
-import { GuesserQueue } from "./redis-queue";
+import { InferenceQueue } from "./redis-queue";
 import { RedisQueueConnection } from "./redis-connection";
 
 export type Role = "guesser" | "referee";
@@ -161,14 +161,18 @@ function configuredHttpClient(ids: RoleIds, options: InferenceOptions): Inferenc
 }
 
 /**
- * Configure the queued Guesser with the existing HTTP client reserved for the
- * disabled Referee fixture. Redis credentials come from files, never URLs.
+ * Configure the shared Redis Streams queue for both roles.
+ *
+ * The Guesser is required for this transport. The Referee joins the same queue
+ * only when REFEREE_PROVIDER=queue, so its HTTP fixture path stays available.
+ * Redis credentials come from files, never URLs.
  */
-function configuredGuesserQueue(): GuesserQueue | undefined {
+function configuredInferenceQueue(): InferenceQueue | undefined {
   try {
     const modelId = process.env.GUESSER_MODEL_ID ?? "";
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(modelId)) throw new Error("invalid model id");
     if (modelId === "quickdraw-int8-smoke" && process.env.AI_SMOKE_TEST !== "1") throw new Error("smoke test disabled");
+    const refereeId = process.env.REFEREE_PROVIDER === "queue" ? configuredRefereeId() : undefined;
     const url = new URL(process.env.AI_QUEUE_REDIS_URL ?? process.env.REDIS_URL ?? "");
     if (!["redis:", "rediss:"].includes(url.protocol) || url.username || url.password) throw new Error("invalid queue URL");
     const passwordFile = process.env.AI_QUEUE_REDIS_PASSWORD_FILE;
@@ -178,7 +182,11 @@ function configuredGuesserQueue(): GuesserQueue | undefined {
       ...(process.env.AI_QUEUE_REDIS_USERNAME ? { username: process.env.AI_QUEUE_REDIS_USERNAME } : {}),
       ...(password ? { password } : {}),
     });
-    return new GuesserQueue({ modelId, connection, consumerId: `api-${process.pid}-${randomUUID()}` });
+    return new InferenceQueue({
+      modelIds: { guesser: modelId, ...(refereeId ? { referee: refereeId } : {}) },
+      connection,
+      consumerId: `api-${process.pid}-${randomUUID()}`,
+    });
   } catch (error) {
     console.warn("AI queue configuration unavailable", error instanceof Error ? error.message : "unknown");
     return;
@@ -191,9 +199,9 @@ function optionalSecret(path: string): string {
   return value;
 }
 
-class QueuedGuesserInference implements Inference {
+class QueuedInference implements Inference {
   constructor(
-    private queue: GuesserQueue,
+    private queue: InferenceQueue,
     private http: InferenceClient | undefined,
     private renderer: ChromiumRenderer | undefined,
     readonly options: InferenceOptions,
@@ -202,7 +210,7 @@ class QueuedGuesserInference implements Inference {
   }
 
   ready(role: Role) {
-    return role === "guesser" ? this.queue.ready() : this.http?.ready("referee");
+    return this.queue.ready(role) ?? this.http?.ready(role);
   }
 
   render(key: string, operations: CanvasOperation[]) {
@@ -210,7 +218,7 @@ class QueuedGuesserInference implements Inference {
   }
 
   submit(role: Role, job: Job, png: Buffer, signal: AbortSignal): Promise<Outcome> {
-    if (role === "guesser") return this.queue.submit(job, png, signal);
+    if (role === "guesser" || process.env.REFEREE_PROVIDER === "queue") return this.queue.submit(role, job, png, signal);
     return this.http ? this.http.submit(role, job, png, signal) : Promise.resolve({ status: "unavailable", reason: "provider-unavailable" });
   }
 
@@ -221,10 +229,10 @@ class QueuedGuesserInference implements Inference {
   }
 }
 
-/** Resolve the Referee model only when its HTTP provider is explicitly enabled. */
+/** Resolve the Referee model for either the shared queue or the HTTP fixture path. */
 export function configuredRefereeId(): string | undefined {
   const modelId = process.env.REFEREE_MODEL_ID;
-  if (process.env.REFEREE_PROVIDER !== "http" || !modelId) return undefined;
+  if ((process.env.REFEREE_PROVIDER !== "http" && process.env.REFEREE_PROVIDER !== "queue") || !modelId) return undefined;
   if (modelId === "referee-fixture-v1" && process.env.AI_TEST_FIXTURES !== "1") return undefined;
   return modelId;
 }
@@ -232,12 +240,12 @@ export function configuredRefereeId(): string | undefined {
 export function configuredInference(): Inference | undefined {
   const options = inferenceOptions();
   if (process.env.GUESSER_PROVIDER === "queue") {
-    const queue = configuredGuesserQueue();
+    const queue = configuredInferenceQueue();
     if (!queue) return;
     const ids: RoleIds = {};
     const refereeId = configuredRefereeId();
     if (refereeId) ids.referee = refereeId;
-    const http = ids.referee ? configuredHttpClient(ids, options) : undefined;
+    const http = process.env.REFEREE_PROVIDER === "http" && ids.referee ? configuredHttpClient(ids, options) : undefined;
     let renderer: ChromiumRenderer | undefined;
     if (!http) {
       try {
@@ -247,11 +255,11 @@ export function configuredInference(): Inference | undefined {
         return;
       }
     }
-    return new QueuedGuesserInference(queue, http, renderer, options);
+    return new QueuedInference(queue, http, renderer, options);
   }
   const ids: RoleIds = {};
   if (process.env.GUESSER_PROVIDER === "http" && (process.env.GUESSER_MODEL_ID !== "quickdraw-int8-smoke" || process.env.AI_SMOKE_TEST === "1")) ids.guesser = process.env.GUESSER_MODEL_ID;
-  const refereeId = configuredRefereeId();
+  const refereeId = process.env.REFEREE_PROVIDER === "http" ? configuredRefereeId() : undefined;
   if (refereeId) ids.referee = refereeId;
   if (!ids.guesser && !ids.referee) return;
   return configuredHttpClient(ids, options);

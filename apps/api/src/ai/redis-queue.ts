@@ -1,10 +1,10 @@
-import type { Job, Outcome, ReadyModel } from "./client";
+import type { Job, Outcome, ReadyModel, Role } from "./client";
 import {
   GUESS_JOB_VERSION,
   GUESS_PAYLOAD_PREFIX,
-  parseGuessResultV1,
-  type GuessJobV1,
-  type GuessResultV1,
+  parseInferenceResultV1,
+  type InferenceJobV1,
+  type InferenceResultV1,
 } from "../../../../packages/game-contracts/src/ai-inference";
 
 export const GUESS_JOBS_STREAM = "mmtai:ai:guess:jobs:v1";
@@ -24,7 +24,7 @@ export interface QueueEntry {
 }
 
 /**
- * Minimal Redis Streams operations used by the Guesser queue.
+ * Minimal Redis Streams operations used by the shared inference queue.
  *
  * Keeping this boundary narrow lets the queue logic run against a fake in
  * tests and against node-redis in production without importing either one.
@@ -43,7 +43,9 @@ export interface QueueConnection {
 }
 
 interface Options {
-  modelId: string;
+  /** Legacy single-model option; equivalent to modelIds.guesser. */
+  modelId?: string;
+  modelIds?: Partial<Record<Role, string>>;
   connection: QueueConnection;
   consumerId: string;
   /** Latest accepted future timestamp in milliseconds; used for readiness cache age. */
@@ -51,7 +53,7 @@ interface Options {
 }
 
 interface Waiter {
-  job: GuessJobV1;
+  job: InferenceJobV1;
   resolve: (outcome: Outcome) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -60,23 +62,26 @@ interface Waiter {
 }
 
 interface WorkerRegistration {
+  role?: Role;
   modelId: string;
   artifactRevision: string;
-  labels: string[];
+  labels?: string[];
   heartbeatAt: number;
 }
 
 /**
- * Client side of the Redis Streams Guesser queue.
+ * Client side of the shared Redis Streams inference queue.
  *
- * A submit writes the canvas payload, appends a versioned job, and waits for a
- * worker result bound to the same identity. Readiness is a cache of short-lived
- * worker registrations, so a missing or stale worker makes the AI unavailable
- * instead of hanging a room.
+ * A submit writes the canvas payload, appends a role-tagged versioned job, and
+ * waits for a worker result bound to the same identity. Readiness is a cache of
+ * short-lived worker registrations, so a missing or stale worker makes that
+ * role unavailable instead of hanging a room. Adding AI replicas adds both
+ * Guesser and Referee capacity without changing the room process.
  */
-export class GuesserQueue {
+export class InferenceQueue {
   private waiters = new Map<string, Waiter>();
-  private models: ReadyModel | undefined;
+  private models: Partial<Record<Role, ReadyModel>> = {};
+  private modelIds: Partial<Record<Role, string>>;
   private refreshedAt = 0;
   private refreshing = false;
   private timer?: ReturnType<typeof setInterval>;
@@ -85,6 +90,7 @@ export class GuesserQueue {
   private now: () => number;
 
   constructor(private options: Options) {
+    this.modelIds = { ...(options.modelId ? { guesser: options.modelId } : {}), ...options.modelIds };
     this.now = options.now ?? Date.now;
   }
 
@@ -110,9 +116,9 @@ export class GuesserQueue {
     void this.readResults();
   }
 
-  /** Return the freshest compatible worker registration, if one exists. */
-  ready(): ReadyModel | undefined {
-    return this.now() - this.refreshedAt < READY_CACHE_MS ? this.models : undefined;
+  /** Return the freshest compatible worker registration for one role. */
+  ready(role: Role = "guesser"): ReadyModel | undefined {
+    return this.now() - this.refreshedAt < READY_CACHE_MS ? this.models[role] : undefined;
   }
 
   /** Re-read worker registrations from Redis; exposed for deterministic tests. */
@@ -120,7 +126,7 @@ export class GuesserQueue {
     if (this.refreshing) return;
     this.refreshing = true;
     try {
-      let found: ReadyModel | undefined;
+      const found: Partial<Record<Role, ReadyModel>> = {};
       for (const key of await this.options.connection.scanKeys(`${GUESS_WORKER_PREFIX}*`)) {
         const raw = await this.options.connection.readText(key);
         if (!raw) continue;
@@ -130,16 +136,21 @@ export class GuesserQueue {
         } catch {
           continue;
         }
-        if (value.modelId !== this.options.modelId || typeof value.artifactRevision !== "string" || !value.artifactRevision || value.artifactRevision.length > 128) continue;
-        if (!Array.isArray(value.labels) || value.labels.length !== 345 || !value.labels.every(label => typeof label === "string" && label.trim().length > 0 && label.length <= 100)) continue;
+        const role: Role = value.role === "referee" ? "referee" : "guesser";
+        const expected = this.modelIds[role];
+        if (!expected || value.modelId !== expected || typeof value.artifactRevision !== "string" || !value.artifactRevision || value.artifactRevision.length > 128) continue;
+        if (role === "guesser" && (!Array.isArray(value.labels) || value.labels.length !== 345 || !value.labels.every(label => typeof label === "string" && label.trim().length > 0 && label.length <= 100))) continue;
         if (typeof value.heartbeatAt !== "number" || this.now() - value.heartbeatAt > WORKER_TTL_MS) continue;
-        found = { modelId: value.modelId, artifactRevision: value.artifactRevision, labels: value.labels };
-        break;
+        found[role] = {
+          modelId: value.modelId,
+          artifactRevision: value.artifactRevision,
+          ...(role === "guesser" ? { labels: value.labels as string[] } : {}),
+        };
       }
       this.models = found;
     } catch {
-      // A transient Redis failure makes the Guesser unavailable until the next refresh.
-      this.models = undefined;
+      // A transient Redis failure makes the affected roles unavailable until the next refresh.
+      this.models = {};
     } finally {
       this.refreshedAt = this.now();
       this.refreshing = false;
@@ -147,22 +158,30 @@ export class GuesserQueue {
   }
 
   /**
-   * Publish one job and wait for its result.
+   * Publish one role-tagged job and wait for its result.
    *
    * The waiter is registered before the request is appended so a fast worker
    * cannot publish a result that the API misses. Queue wait is bounded by the
    * job deadline: a late job is cancelled and reported unavailable rather than
-   * delivering a stale guess to the room.
+   * delivering a stale result to the room.
    */
-  async submit(job: Job, png: Buffer, signal: AbortSignal): Promise<Outcome> {
+  async submit(role: Role, job: Job, png: Buffer, signal: AbortSignal): Promise<Outcome> {
     if (this.closed) throw new Error("queue-closed");
     if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("aborted");
-    const envelope: GuessJobV1 = {
-      ...job,
+    const envelope = {
       version: GUESS_JOB_VERSION,
-      role: "guesser",
+      role,
+      jobId: job.jobId,
+      turnId: job.turnId,
+      canvasId: job.canvasId,
+      generation: job.generation,
+      sequence: job.sequence,
+      deadlineAt: job.deadlineAt,
+      modelId: job.modelId,
+      artifactRevision: job.artifactRevision,
       payloadKey: `${GUESS_PAYLOAD_PREFIX}${job.jobId}`,
-    };
+      ...(role === "guesser" && job.hint !== undefined ? { hint: job.hint } : {}),
+    } as InferenceJobV1;
     const remaining = Math.max(1, job.deadlineAt - this.now());
     const ttl = remaining + PAYLOAD_GRACE_MS;
     const cancelKey = `${GUESS_CANCEL_PREFIX}${job.jobId}`;
@@ -210,9 +229,9 @@ export class GuesserQueue {
     if (typeof jobId !== "string") return false;
     const waiter = this.waiters.get(jobId);
     if (!waiter) return false;
-    let result: GuessResultV1;
+    let result: InferenceResultV1;
     try {
-      result = parseGuessResultV1(value, waiter.job);
+      result = parseInferenceResultV1(value, waiter.job);
     } catch {
       return false;
     }
@@ -259,8 +278,12 @@ export class GuesserQueue {
   }
 }
 
-function toOutcome(result: GuessResultV1): Outcome {
+/** Backwards-compatible name for the Guesser-only queue tests and imports. */
+export { InferenceQueue as GuesserQueue };
+
+function toOutcome(result: InferenceResultV1): Outcome {
   if (result.status === "answer") return { status: "answer", answer: result.answer, confidence: result.confidence };
   if (result.status === "pass") return { status: "pass", reason: result.reason === "no-evidence" ? "no-evidence" : undefined };
+  if (result.status === "evidence") return { status: "evidence", scores: result.scores };
   return { status: "unavailable", reason: result.reason };
 }

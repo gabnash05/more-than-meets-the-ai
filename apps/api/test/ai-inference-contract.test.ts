@@ -5,8 +5,12 @@ import { test } from "node:test";
 import {
   guessResultBinding,
   isGuessJobV1,
+  isRefereeJobV1,
   parseGuessJobV1,
   parseGuessResultV1,
+  parseInferenceResultV1,
+  parseRefereeJobV1,
+  parseRefereeResultV1,
 } from "../../../packages/game-contracts/src/ai-inference";
 
 const directory = resolve(process.cwd(), "../../packages/game-contracts/fixtures/ai-inference-v1");
@@ -74,5 +78,44 @@ test("result validation rejects bad confidence, long answers and binding drift",
     const value = structuredClone(source);
     mutate(value);
     assert.throws(() => parseGuessResultV1(value, job));
+  }
+});
+
+test("referee fixtures satisfy the role-specific contract", () => {
+  const job = parseRefereeJobV1(read("referee.job.valid.json"));
+  assert.equal(isRefereeJobV1(job), true);
+  assert.equal(job.role, "referee");
+  assert.equal(parseRefereeResultV1(read("referee.result.evidence.valid.json"), job).status, "evidence");
+  assert.deepEqual(parseInferenceResultV1(read("referee.result.evidence.valid.json"), job), {
+    version: 1,
+    role: "referee",
+    jobId: "job-0002",
+    turnId: "turn-0001",
+    canvasId: "canvas-0001",
+    generation: 2,
+    sequence: 6,
+    deadlineAt: 1762771200000,
+    modelId: "referee-vit-a-v1",
+    artifactRevision: "referee-vit-a-v1-e6236a3b",
+    status: "evidence",
+    scores: [0.82, 0.21],
+  });
+});
+
+test("referee result validation rejects bad scores and binding drift", () => {
+  const job = parseRefereeJobV1(read("referee.job.valid.json"));
+  const evidence = record("referee.result.evidence.valid.json");
+  const mutations: ((value: Record<string, unknown>) => void)[] = [
+    value => { value.scores = [0.82]; },
+    value => { value.scores = [1.2, 0.2]; },
+    value => { value.scores = ["0.8", 0.2]; },
+    value => { value.sequence = 7; },
+    value => { value.status = "answer"; },
+    value => { value.extra = true; },
+  ];
+  for (const mutate of mutations) {
+    const value = structuredClone(evidence);
+    mutate(value);
+    assert.throws(() => parseRefereeResultV1(value, job));
   }
 });

@@ -26,7 +26,7 @@ function services(document: Record<string, unknown>): Record<string, Record<stri
   return document.services as Record<string, Record<string, unknown>>;
 }
 
-test("Redis stays private to the optional Guesser overlay", async t => {
+test("Redis stays private to the optional Guesser and Referee overlay", async t => {
   const command = composeCommand();
   if (!command) {
     t.skip("Docker Compose is not available locally");
@@ -65,6 +65,7 @@ test("Redis stays private to the optional Guesser overlay", async t => {
     assert.equal(overlay.redis.image, "docker.io/library/redis:7-alpine");
     const api = overlay.api.environment as Record<string, string>;
     assert.equal(api.GUESSER_PROVIDER, "queue");
+    assert.equal(api.REFEREE_PROVIDER, "queue");
     assert.equal(api.AI_QUEUE_REDIS_URL, "redis://redis:6379/0");
     assert.equal(api.AI_QUEUE_REDIS_PASSWORD_FILE, "/run/mmtai-secrets/redis-api-password");
     assert.equal((overlay.api.depends_on as Record<string, unknown> | undefined)?.ai, undefined);

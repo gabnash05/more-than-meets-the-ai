@@ -63,7 +63,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml --profile ai up -d 
 
 ### Current GHCR queue overlay
 
-`deploy/compose.ghcr.guesser.yaml` adds a private `redis:7-alpine` service with AOF persistence and no host port. The API publishes versioned Guesser jobs to `mmtai:ai:guess:jobs:v1` and the AI container runs one consumer in `guesser-workers-v1`; results return on `mmtai:ai:guess:results:v1`. Queue wait is included in the same request deadline, so a job that cannot finish in time is reported unavailable rather than scoring late. The API no longer waits for AI health before starting, so a broker or model outage leaves human rooms playable.
+`deploy/compose.ghcr.guesser.yaml` adds a private `redis:7-alpine` service with AOF persistence and no host port. The API publishes versioned inference jobs tagged with the Guesser or Referee role to `mmtai:ai:guess:jobs:v1`; the AI container runs one consumer in `guesser-workers-v1`, dispatches each job to the matching role bundle, and returns results on `mmtai:ai:guess:results:v1`. Queue wait is included in the same request deadline, so a job that cannot finish in time is reported unavailable rather than scoring late. The API no longer waits for AI health before starting, so a broker or model outage leaves human rooms playable.
 
 ```bash
 docker compose -f deploy/compose.ghcr.yaml -f deploy/compose.ghcr.guesser.yaml up -d --scale ai=3 ai
