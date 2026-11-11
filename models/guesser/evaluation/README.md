@@ -204,6 +204,24 @@ temperature per arm on validation views, and writes class shards, per-class
 CSV, confusion matrices, `metrics.json`, `summary.json`, and `report.md` under
 `<checkpoint-root>/evaluation/ten-stage/<split>/`.
 
+Notebook outputs are stripped before they reach Git, so the notebook's displayed
+tables and curves are not the deliverable. `guesser_evaluation.report_figures`
+writes them to `<output root>/figures/` instead: `summary.csv` and
+`policy-<model>.csv` for the tables, and `stage-top1`, `stage-top3`,
+`delta-by-stage`, `first-correct-stage` and `coverage-by-stage` as PNG and SVG.
+The policy sweep is exported only for a validation run, because a frozen test run
+reports a single threshold rather than a trade-off. Every plotted value is read
+from `summary.json`, so a figure cannot disagree with `report.md`. The module also
+runs from the terminal, which is how the exports are regenerated without opening a
+notebook:
+
+```sh
+uv run --project evaluation --frozen --no-sync \
+  python -m guesser_evaluation.report_figures \
+  <checkpoint-root>/evaluation/ten-stage/<split>/summary.json \
+  <checkpoint-root>/evaluation/ten-stage/<split>/figures
+```
+
 Rendering and preprocessing dominate the run and are CPU-bound, so a full pass is
 a long job and exact wall time depends on the machine, the split size and the
 preprocessing candidate. Budget hours for `--full` and leave the host otherwise
@@ -221,10 +239,13 @@ Finished views are cached so a later run of the same split skips rendering.
 Entries live under `--view-cache-dir` (default
 `<model-project>/.local/cache/evaluation-views/<recipe>/<split>/`), one file per
 original at roughly half a megabyte, so a full split occupies tens of gigabytes.
-The recipe covers the split, the selected manifest, the preprocessing candidate
-and the preprocessing source files, so changing any of them starts a fresh tree
-instead of serving stale pixels; weights, thresholds and batch size are absent
-because they change what a view is scored as, never what it looks like. The
+The recipe covers the split, the selected subset and manifest, the preprocessing
+candidate and the preprocessing source files, so changing any of them starts a
+fresh tree instead of serving stale pixels. The subset is part of the key because
+a cache file is addressed by position inside the selected subset, and a limited
+run holds different drawings at those positions than a full run does. Weights,
+thresholds and batch size are absent because they change what a view is scored
+as, never what it looks like. The
 cached path still rebuilds the normalised tensor and its input hash, so a warm
 run produces byte-identical shards and logits. Pass `--no-view-cache` to render
 everything, for example when measuring rendering throughput.
