@@ -653,3 +653,44 @@ def test_dataset_serves_identical_views_from_a_warm_cache(
             assert warm_image is None
         else:
             assert np.array_equal(cold_image, warm_image)
+
+
+def test_view_cache_recipe_tracks_the_selected_subset() -> None:
+    """A smoke subset and the full subset must never share cache entries.
+
+    Cache files are addressed by class and by position inside the selected
+    subset, and a limited subset holds different drawings at those positions.
+    Without the subset in the key a smoke run would seed the full run with
+    pixels belonging to other drawings.
+    """
+    bundle = evaluate.Bundle(
+        root=Path("bundles/guesser-vit-a-v1"),
+        model_id="guesser-vit-a-v1",
+        artifact_revision="revision",
+        labels=["label"] * 345,
+        preprocessing="foreground",
+        preprocessing_hash="hash",
+        weights_sha256="weights",
+        labels_sha256="labels",
+        manifest={},
+    )
+    settings = {"output": 224}
+    shared = {"manifestSha256": "manifest"}
+
+    full_recipe = evaluate._view_cache_recipe(
+        "test", {"sha256": "subset-full", **shared}, bundle, settings
+    )
+    smoke_recipe = evaluate._view_cache_recipe(
+        "test", {"sha256": "subset-smoke", **shared}, bundle, settings
+    )
+
+    assert full_recipe["subsetSha256"] == "subset-full"
+    assert full_recipe != smoke_recipe
+
+    full_cache = evaluate.EvaluationViewCache(
+        Path("cache"), full_recipe, stages=10, image_size=224
+    )
+    smoke_cache = evaluate.EvaluationViewCache(
+        Path("cache"), smoke_recipe, stages=10, image_size=224
+    )
+    assert full_cache.directory != smoke_cache.directory
