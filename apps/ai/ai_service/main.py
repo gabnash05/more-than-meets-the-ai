@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
         for role in ("guesser", "referee")
     }
     app.state.locks = {role: Lock() for role in app.state.bundles}
-    app.state.worker = configured_worker(app.state.bundles["guesser"])
+    app.state.worker = configured_worker(app.state.bundles)
     if app.state.worker:
         app.state.worker.start()
     yield
