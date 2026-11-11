@@ -28,7 +28,9 @@ FIXTURES = (
     / "ai-inference-v1"
 )
 JOB = json.loads((FIXTURES / "job.valid.json").read_text(encoding="utf-8"))
+REFEREE_JOB = json.loads((FIXTURES / "referee.job.valid.json").read_text(encoding="utf-8"))
 LABELS = [f"label-{index}" for index in range(345)]
+REFEREE_LABELS = ["text", "number", "symbol", "circle"]
 
 
 class Adapter:
@@ -195,12 +197,43 @@ def test_register_publishes_worker_identity_and_readiness_ttl() -> None:
     registration = json.loads(str(fake.values[key]))
     assert registration == {
         "workerId": "worker-1",
+        "role": "guesser",
         "modelId": JOB["modelId"],
         "artifactRevision": JOB["artifactRevision"],
         "labels": LABELS,
         "heartbeatAt": 123456,
     }
     assert ("set", key) in fake.commands
+
+
+def test_referee_job_dispatches_to_the_referee_bundle() -> None:
+    referee_adapter = Adapter(result={"status": "evidence", "scores": [0.82, 0.21]})
+    referee_bundle = Bundle(
+        REFEREE_JOB["modelId"],
+        REFEREE_JOB["artifactRevision"],
+        labels=REFEREE_LABELS,
+        adapter=referee_adapter,
+    )
+    fake = FakeRedis()
+    queue = QueueWorker(fake, {"guesser": bundle(Adapter()), "referee": referee_bundle}, "worker-1")
+    fake.values[REFEREE_JOB["payloadKey"]] = png()
+    referee_job = {**REFEREE_JOB, "deadlineAt": int(time() * 1000) + 10000}
+
+    assert queue.handle("1-0", {"job": json.dumps(referee_job, separators=(",", ":"))}) is True
+    assert referee_adapter.calls == 1
+    result = json.loads(fake.results[-1][1]["result"])
+    assert result["role"] == "referee"
+    assert result["status"] == "evidence"
+    assert result["scores"] == [0.82, 0.21]
+    assert "payloadKey" not in result
+
+    queue.register(heartbeat_at=123456)
+    guesser_registration = json.loads(str(fake.values[f"{WORKER_PREFIX}worker-1"]))
+    referee_registration = json.loads(str(fake.values[f"{WORKER_PREFIX}worker-1:referee"]))
+    assert guesser_registration["role"] == "guesser"
+    assert referee_registration["role"] == "referee"
+    assert referee_registration["modelId"] == REFEREE_JOB["modelId"]
+    assert "labels" not in referee_registration
 
 
 def test_next_reclaims_an_abandoned_job_when_no_new_work_exists() -> None:
