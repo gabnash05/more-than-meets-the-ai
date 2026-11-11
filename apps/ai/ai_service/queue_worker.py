@@ -1,8 +1,10 @@
-"""Redis Streams consumer that runs one Guesser inference at a time.
+"""Redis Streams consumer that runs one inference at a time.
 
 Each AI container owns one consumer in the shared ``guesser-workers-v1`` group.
-A message is acknowledged only after its result is written, so a crash leaves
-the job reclaimable instead of silently losing it.
+The worker dispatches each job to the bundle named by its role, so adding AI
+replicas adds both Guesser and Referee capacity without changing the room
+process. A message is acknowledged only after its result is written, so a crash
+leaves the job reclaimable instead of silently losing it.
 """
 
 import json
@@ -13,14 +15,14 @@ from collections.abc import Mapping
 from pathlib import Path
 from threading import Event, Thread
 from time import time
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import redis
 from pydantic import ValidationError
 
 from .bundles import Bundle
 from .inference import InvalidImage, Observation, infer_observation
-from .queue_contract import GuessJobV1, parse_job_json, result_binding
+from .queue_contract import InferenceJobV1, parse_job_json, result_binding
 
 JOBS_STREAM = "mmtai:ai:guess:jobs:v1"
 RESULTS_STREAM = "mmtai:ai:guess:results:v1"
@@ -59,11 +61,17 @@ def _fields(raw: Mapping[object, object]) -> dict[str, str]:
 
 
 class QueueWorker:
-    """Poll, execute and acknowledge Guesser jobs on one model process."""
+    """Poll, execute and acknowledge role-tagged jobs on one model process."""
 
-    def __init__(self, client: StreamClient, bundle: Bundle, consumer: str, stop: Event | None = None) -> None:
+    def __init__(
+        self,
+        client: StreamClient,
+        bundles: Bundle | Mapping[str, Bundle],
+        consumer: str,
+        stop: Event | None = None,
+    ) -> None:
         self.client = client
-        self.bundle = bundle
+        self.bundles = dict(bundles) if isinstance(bundles, Mapping) else {"guesser": bundles}
         self.consumer = consumer
         self.stop = stop or Event()
         self.thread: Thread | None = None
@@ -84,21 +92,28 @@ class QueueWorker:
             if "BUSYGROUP" not in str(exc):
                 raise
 
+    def _registration_key(self, role: str) -> str:
+        """Keep the historical Guesser key and suffix the Referee key."""
+        return f"{WORKER_PREFIX}{self.consumer}" if role == "guesser" else f"{WORKER_PREFIX}{self.consumer}:{role}"
+
     def register(self, heartbeat_at: int | None = None) -> None:
-        """Publish a short-lived readiness record for the API scheduler."""
-        if not self.bundle.adapter or not self.bundle.revision:
-            return
-        payload = {
-            "workerId": self.consumer,
-            "modelId": self.bundle.model_id,
-            "artifactRevision": self.bundle.revision,
-            "labels": self.bundle.labels,
-            "heartbeatAt": heartbeat_at if heartbeat_at is not None else int(time() * 1000),
-        }
-        self.client.set(f"{WORKER_PREFIX}{self.consumer}", json.dumps(payload, separators=(",", ":")), px=WORKER_TTL_MS)
+        """Publish one short-lived readiness record per ready role."""
+        for role, bundle in self.bundles.items():
+            if not bundle.adapter or not bundle.revision:
+                continue
+            payload = {
+                "workerId": self.consumer,
+                "role": role,
+                "modelId": bundle.model_id,
+                "artifactRevision": bundle.revision,
+                "heartbeatAt": heartbeat_at if heartbeat_at is not None else int(time() * 1000),
+                **({"labels": bundle.labels} if role == "guesser" else {}),
+            }
+            self.client.set(self._registration_key(role), json.dumps(payload, separators=(",", ":")), px=WORKER_TTL_MS)
 
     def deregister(self) -> None:
-        self.client.delete(f"{WORKER_PREFIX}{self.consumer}")
+        for role in self.bundles:
+            self.client.delete(self._registration_key(role))
 
     def run(self) -> None:
         """Own the single consumer loop until ``stop`` is set."""
@@ -168,7 +183,10 @@ class QueueWorker:
         self._acknowledge(message_id)
         return True
 
-    def _observe(self, job: GuessJobV1) -> dict | None:
+    def _observe(self, job: InferenceJobV1) -> dict | None:
+        bundle = self.bundles.get(job.role)
+        if bundle is None:
+            return {"status": "unavailable", "reason": "model-unavailable"}
         if self.client.get(f"{CANCEL_PREFIX}{job.jobId}"):
             return {"status": "unavailable", "reason": "cancelled"}
         if job.deadlineAt <= time() * 1000:
@@ -185,10 +203,15 @@ class QueueWorker:
             deadlineAt=job.deadlineAt,
             modelId=job.modelId,
             artifactRevision=job.artifactRevision,
-            hint=job.hint,
+            hint=getattr(job, "hint", None),
         )
         try:
-            return infer_observation(observation, self.bundle, payload if isinstance(payload, bytes) else str(payload).encode(), "guesser")
+            return infer_observation(
+                observation,
+                bundle,
+                payload if isinstance(payload, bytes) else str(payload).encode(),
+                job.role,
+            )
         except InvalidImage:
             return {"status": "unavailable", "reason": "invalid-image"}
 
@@ -197,7 +220,7 @@ class QueueWorker:
         self.client.xdel(JOBS_STREAM, message_id)
 
 
-def configured_worker(bundle: Bundle) -> QueueWorker | None:
+def configured_worker(bundles: Bundle | Mapping[str, Bundle]) -> QueueWorker | None:
     """Build a worker from environment settings, or None when disabled."""
     if os.getenv("AI_QUEUE_WORKER") != "1":
         return None
@@ -219,7 +242,7 @@ def configured_worker(bundle: Bundle) -> QueueWorker | None:
             health_check_interval=30,
         )
         consumer = os.getenv("AI_QUEUE_WORKER_ID") or f"{socket.gethostname()}-{os.getpid()}"
-        return QueueWorker(client, bundle, consumer)
+        return QueueWorker(cast(StreamClient, client), bundles, consumer)
     except (OSError, ValueError):
         LOG.warning("queue worker configuration unavailable")
         return None
