@@ -4,7 +4,7 @@ Notebook-based Referee validation, checkpoint auditing and threshold reporting. 
 
 ## Status
 
-The notebook flow and runner are implemented. No prepared Referee data, measured model performance or serving bundle is included. The supplied checkpoint is a 4-output ViT-Tiny (`num_classes=4`, filename score `0.5564`); the game uses two channels (`text`, `number`), and the checkpoint carries no preprocessing provenance. The runner reports encoded-proxy and reviewed-label metrics separately and refuses to guess when preprocessing is ambiguous.
+The notebook flow and runner are implemented. The supplied checkpoint is a 4-output ViT-Tiny (`num_classes=4`, filename score `0.5564`); the game uses two channels (`text`, `number`), and the checkpoint carries no preprocessing provenance. The runner reports encoded-proxy and reviewed-label metrics separately and refuses to guess when preprocessing is ambiguous. Full local validation and held-out test runs are recorded under the ignored `checkpoints/referee-evaluation/train/` output root. The current test labels have no known negatives, so held-out results measure agreement with encoded ATYPICT proxies, not reviewed gameplay labels.
 
 ## Setup
 
@@ -36,7 +36,14 @@ Run notebook `00_environment_check.ipynb` first.
 | `03_training_and_checkpoint.ipynb` | Inspect the supplied checkpoint; optional training launcher |
 | `04_validation_evaluation.ipynb` | Run per-channel validation AP, threshold sweep and coverage |
 | `05_report_and_thresholds.ipynb` | Review thresholds, AP slices and optional freeze record |
-| `06_serving_bundle.ipynb` | Export the checkpoint as a hashed Referee serving bundle |
+| `06_heldout_test_evaluation.ipynb` | Run test metrics only with the validation-bound freeze record |
+| `07_serving_bundle.ipynb` | Export the checkpoint as a hashed Referee serving bundle |
+
+## What the evaluation shows
+
+Only notebooks `04` and `06` score the model. Notebook `04` shows validation metrics used to check the checkpoint and preprocessing. Notebook `06` shows the final held-out metrics and charts. Notebooks `00`–`03` check the environment, prepare/audit data and inspect the checkpoint; `05` freezes the validation choices; `07` packages the model for serving.
+
+The AP charts show ranking against the dataset's encoded ATYPICT labels: higher AP means the model ranks encoded positives ahead of encoded negatives more often. The held-out chart also shows precision, recall and F1 at the validation-frozen `0.5` threshold. These are proxy-label results. This dataset has no reviewed negative labels, so reviewed-label accuracy and threshold tuning cannot be established from it. The held-out results also cannot confirm session-level split independence because source session IDs are unavailable.
 
 ## Data prerequisites
 
@@ -76,25 +83,24 @@ Inspect it without data:
 ```sh
 cd models/referee
 uv run --frozen --no-sync python -m recognition.checkpoint \
-  --checkpoint checkpoints/referee-epoch=04-val_mean_ap=0.5564.ckpt --json
+  --checkpoint checkpoints/referee_run/weights/referee-epoch=04-val_mean_ap=0.5564.ckpt --json
 ```
 
 Expected fields include `num_classes: 4`, `head_in_features: 192`, `epoch: 4`, `best_model_score: 0.5564`. Lightning checkpoints contain non-tensor objects; this loader is only for the trusted teammate file.
 
 ## Evaluation
 
-Run validation through notebook `04_validation_evaluation.ipynb`, or directly:
+Run full validation through notebook `04_validation_evaluation.ipynb`, or directly:
 
 ```sh
 cd models/referee
 uv run --frozen --no-sync python -m recognition.evaluate \
-  --checkpoint checkpoints/referee-epoch=04-val_mean_ap=0.5564.ckpt \
-  --prepared-dir data/.local/data/sample/prepared \
+  --checkpoint checkpoints/referee_run/weights/referee-epoch=04-val_mean_ap=0.5564.ckpt \
+  --prepared-dir data/.local/data/train/prepared \
   --split validation \
-  --preprocessing auto \
-  --output-dir checkpoints/referee-evaluation/sample/validation-v1 \
-  --batch-size 32 \
-  --limit 200
+  --preprocessing rgb_resize \
+  --output-dir checkpoints/referee-evaluation/train/validation-v1 \
+  --batch-size 32
 ```
 
 `--preprocessing auto` probes `foreground` and `rgb_resize` on at most 200 rows and compares the encoded text+number mean AP with the checkpoint score. If neither is close or both are ambiguous, it stops and asks for the training owner’s provenance. Use `--preprocessing foreground` or `--preprocessing rgb_resize` only when that choice is confirmed.
@@ -106,11 +112,25 @@ Outputs are under the ignored output root:
 - `report.md` — human-readable report and limits
 - `preprocessing-probe.json` — candidate probe when `auto` was used
 
-Validation is the tuning split. A held-out `test` run requires `--freeze-record` and `--validation-report`; do not tune on test.
+Validation is the threshold review split. The current prepared validation and test labels contain no known negatives, so known-label AP and F1/threshold sweeps are unscored. The freeze notebook therefore keeps the predeclared `0.5` reference threshold; it binds the checkpoint, preprocessing, prepared-data summary and validation report hash. Review the validation report, then write the freeze record in notebook `05_report_and_thresholds.ipynb`.
+
+Notebook `06_heldout_test_evaluation.ipynb` checks that freeze record against the checkpoint and validation report before scoring the test split. The evaluator also locks `auto` preprocessing to the frozen validation choice and omits test-derived threshold sweeps. Example CLI:
+
+```sh
+cd models/referee
+uv run --frozen --no-sync python -m recognition.evaluate \
+  --checkpoint checkpoints/referee_run/weights/referee-epoch=04-val_mean_ap=0.5564.ckpt \
+  --prepared-dir data/.local/data/train/prepared \
+  --split test \
+  --output-dir checkpoints/referee-evaluation/train/test-v1 \
+  --preprocessing auto \
+  --freeze-record checkpoints/referee-evaluation/train/validation-v1/freeze.json \
+  --validation-report checkpoints/referee-evaluation/train/validation-v1/report.md
+```
 
 ## Serving bundle
 
-`06_serving_bundle.ipynb` calls `training.export_bundle` to produce:
+`07_serving_bundle.ipynb` calls `training.export_bundle` to produce:
 
 ```text
 models/referee/checkpoints/referee-evaluation/bundles/referee-vit-a-v1/
