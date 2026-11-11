@@ -1,3 +1,5 @@
+> Historical plan: the v1 zero-proxy policy below is superseded by `separate-writing-advisories-v2`. Encoded zeros are known source-derived negatives, not reviewed negatives; uncertain reviews remain masked. See the data runbook.
+
 # Referee validation and inference plan
 
 The latest review uses separate text and number evidence, shared Guesser input, validation-tuned thresholds and persistent observations. This document specifies implementation and evaluation work.

@@ -1,3 +1,5 @@
+> Historical plan: the v1 zero-proxy policy below is superseded by `separate-writing-advisories-v2`. Encoded zeros are known source-derived negatives, not reviewed negatives; uncertain reviews remain masked. See the data runbook.
+
 # Referee data workflow plan
 
 This is a proposed implementation, matching the Guesser's numbered workflow style. The scripts and training package described here have **not** been implemented. The retained sixteen-record probe is an inspection set, not a training dataset or an accuracy evaluation.

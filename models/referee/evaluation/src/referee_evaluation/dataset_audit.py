@@ -14,8 +14,8 @@ from PIL import Image
 SPLITS = ("train", "validation", "test")
 LABEL_ORDER = ("text", "number")
 ENCODED_ORDER = ("text", "number", "symbol", "circle")
-POLICY_VERSION = "separate-writing-advisories-v1"
-ORIGINS = {"reviewed", "encoded_positive", "unreviewed_proxy", "review_uncertain"}
+POLICY_VERSION = "separate-writing-advisories-v2"
+ORIGINS = {"reviewed", "encoded_positive", "encoded_negative", "review_uncertain"}
 
 
 def _read_json(path: Path) -> object:
@@ -102,6 +102,8 @@ def _validate_row(row: dict, split: str) -> None:
             _require(value is not None, "Reviewed target must be known")
         elif origin == "encoded_positive":
             _require(value == 1 and encoded[index] == 1, "Encoded positive is inconsistent")
+        elif origin == "encoded_negative":
+            _require(value == 0 and encoded[index] == 0, "Encoded negative is inconsistent")
         else:
             _require(value is None, "Unknown target must be null")
 

@@ -58,11 +58,13 @@ Review `source/source-receipt.json` for archive bytes consumed, source kind, ver
 
 `prepare` checks canvas and detector-label formats and emits compact PNGs with JSONL manifests. It groups identical pixels and explicitly verified related examples before splitting. Train and validation come from the source training archive with a seeded allocation of about 80/20 by group. Eligible source test examples stay separate. The release has no original-session map.
 
-For independent text and number corrections, add one JSON object per line in `corrections.jsonl` at the profile root. Valid review values are `yes`, `no` and `uncertain`. Omit a slot to retain its previous provenance. An unreviewed zero anchor proxy becomes unknown. This example confirms text and leaves number presence uncertain.
+For independent text and number corrections, add one JSON object per line in `corrections.jsonl` at the profile root. Valid review values are `yes`, `no` and `uncertain`. Omit a slot to retain its previous provenance. An absent encoded flag is a known source-derived negative (`encoded_negative`), not a reviewed negative. Reviewed yes/no overrides either encoded value; uncertain stays masked. This example confirms text and leaves number presence uncertain.
 
 ~~~json
 {"sample_id":"zenodo7330402:multiclass:train:circle:895","text_present":"yes","number_present":"uncertain","reviewer":"reviewer-id","reason":"Text is legible. Number presence is unclear."}
 ~~~
+
+After acquisition, apply matching retained multiclass reviews from the repository root with `python docs/referee/scripts/apply_retained_reviews.py models/referee/data/.local/data/train` (replace `train` with the desired profile). Existing conflicting corrections stop the helper; preparation checks the reviewed PNG hashes. The unidentified bottom-left example is not assigned an ID. Regenerate preparation and export after policy or review changes; v1 manifests are obsolete.
 
 To group a verified set of related canvases, add an object with their `sample_ids` array to `duplicate-groups.jsonl`. The tool groups these relationships transitively with exact pixel duplicates. Use `preview` to render training contact sheets at `preview/index.html`. Re-run `prepare` after edits to corrections or groups.
 

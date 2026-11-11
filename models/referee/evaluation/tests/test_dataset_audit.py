@@ -31,10 +31,10 @@ def _row(split: str, sample_id: str, group_id: str, digest: str, image_path: str
         "split": split,
         "encoded_presence": [1, 0, 0, 1],
         "text_present": 1,
-        "number_present": None,
-        "known_mask": [True, False],
-        "label_origin": ["reviewed", "unreviewed_proxy"],
-        "policy_version": "separate-writing-advisories-v1",
+        "number_present": 0,
+        "known_mask": [True, True],
+        "label_origin": ["reviewed", "encoded_negative"],
+        "policy_version": "separate-writing-advisories-v2",
     }
 
 
@@ -56,13 +56,13 @@ def write_prepared(tmp_path: Path) -> Path:
         "profile": "sample",
         "seed": 198173,
         "label_order": ["text", "number"],
-        "policy_version": "separate-writing-advisories-v1",
+        "policy_version": "separate-writing-advisories-v2",
         "available_splits": ["train", "validation"],
         "counts": {"train": {"rows": 1}, "validation": {"rows": 1}},
     }), encoding="utf-8")
     (base / "labels.json").write_text(json.dumps({
         "label_order": ["text", "number"],
-        "policy_version": "separate-writing-advisories-v1",
+        "policy_version": "separate-writing-advisories-v2",
         "schema_version": 1,
     }), encoding="utf-8")
     return prepared
@@ -74,7 +74,7 @@ def test_valid_prepared_dataset_reports_counts(tmp_path: Path) -> None:
     assert validation["rows"] == 1
     assert validation["images_ok"] == 1
     assert validation["labels"]["text"]["positive"] == 1
-    assert validation["labels"]["number"]["unknown"] == 1
+    assert validation["labels"]["number"]["negative"] == 1
     assert validation["origins"]["reviewed"] == 1
     assert report["totals"]["missing_images"] == 0
 

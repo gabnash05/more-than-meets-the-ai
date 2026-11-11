@@ -124,3 +124,33 @@ def test_missing_annotation_pairs_in_receipt_prevent_preparation(
     atomic_json(receipt_path, receipt)
     with pytest.raises(DataError, match="missing annotation pairs.*1"):
         importlib.import_module("referee_data.02-prepare").prepare(settings)
+
+
+def test_source_negative_and_review_overrides(tmp_path: Path) -> None:
+    settings = _stage(tmp_path)
+    prepare = importlib.import_module("referee_data.02-prepare").prepare
+    prepare(settings)
+    rows = [row for split in ("train", "validation", "test")
+            for row in iter_jsonl(settings.prepared / "manifests" / f"{split}.jsonl")]
+    assert any("encoded_negative" in row["label_origin"] for row in rows)
+    for row in rows:
+        for index, head in enumerate(("text", "number")):
+            origin = row["label_origin"][index]
+            if origin == "encoded_negative":
+                assert row[f"{head}_present"] == row["encoded_presence"][index] == 0
+                assert row["known_mask"][index] is True
+            if origin == "encoded_positive":
+                assert row[f"{head}_present"] == row["encoded_presence"][index] == 1
+            if origin == "review_uncertain":
+                assert row[f"{head}_present"] is None
+                assert row["known_mask"][index] is False
+
+
+def test_correction_source_hash_must_match(tmp_path: Path) -> None:
+    settings = _stage(tmp_path)
+    path = settings.base / "corrections.jsonl"
+    rows = list(iter_jsonl(path))
+    rows[0]["source_png_sha256"] = "0" * 64
+    write_jsonl(path, rows)
+    with pytest.raises(DataError, match="PNG hash mismatch"):
+        importlib.import_module("referee_data.02-prepare").prepare(settings)

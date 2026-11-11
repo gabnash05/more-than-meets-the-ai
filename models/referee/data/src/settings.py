@@ -9,7 +9,7 @@ SEED = 198173
 SPLITS = ("train", "validation", "test")
 PROFILES = ("sample", "train")
 LABEL_ORDER = ("text", "number")
-POLICY_VERSION = "separate-writing-advisories-v1"
+POLICY_VERSION = "separate-writing-advisories-v2"
 SCHEMA_VERSION = 1
 
 RECORD_ID = "7330402"

@@ -1,3 +1,5 @@
+> Historical plan: the v1 zero-proxy policy below is superseded by `separate-writing-advisories-v2`. Encoded zeros are known source-derived negatives, not reviewed negatives; uncertain reviews remain masked. See the data runbook.
+
 # Referee data preparation · Terra delegation plan
 
 **Status** · Implementation brief. The ATYPICT inspection and shared-transform probe are complete. The data package and trainer export described here are proposed.
