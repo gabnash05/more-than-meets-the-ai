@@ -1361,17 +1361,22 @@ def _comparison(
 def _view_cache_recipe(split: str, subset: dict, bundle: Bundle, settings: dict) -> dict:
     """Describe everything that could change a cached pixel.
 
-    The manifest digest covers which originals were selected and which records
-    they point at, the bundle's preprocessing hash covers the candidate settings,
-    and the module digests cover the code that rasterises and masks. Weights,
-    thresholds and batch size are deliberately absent, because they change what
-    a view is scored as, never what it looks like, so the cache survives model
-    changes and is rebuilt only when the pixels themselves would move.
+    The subset digest comes first because a cache file is addressed by class and
+    by position *within the selected subset*: a one-per-class smoke run and the
+    full run pick different drawings for the same position, so without this key
+    a smoke run would leave entries the full run reads for other drawings. The
+    manifest digest covers which records those positions point at, the bundle's
+    preprocessing hash covers the candidate settings, and the module digests
+    cover the code that rasterises and masks. Weights, thresholds and batch size
+    are deliberately absent, because they change what a view is scored as, never
+    what it looks like, so the cache survives model changes and is rebuilt only
+    when the pixels themselves would move.
     """
     images_module = load_step("06-images")
     loader_module = load_step("05-loader")
     return {
         "split": split,
+        "subsetSha256": subset["sha256"],
         "manifestSha256": subset["manifestSha256"],
         "candidate": bundle.preprocessing,
         "candidateHash": bundle.preprocessing_hash,
