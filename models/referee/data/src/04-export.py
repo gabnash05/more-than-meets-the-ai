@@ -210,14 +210,15 @@ def audit(settings: Settings) -> dict:
                 if mask[i] != (value is not None) or origin not in (
                     "reviewed",
                     "encoded_positive",
-                    "unreviewed_proxy",
+                    "encoded_negative",
                     "review_uncertain",
                 ):
                     _fail("Inconsistent mask or origin")
                 if (
                     (origin == "encoded_positive" and (value != 1 or encoded[i] != 1))
+                    or (origin == "encoded_negative" and (value != 0 or encoded[i] != 0))
                     or (
-                        origin in ("unreviewed_proxy", "review_uncertain")
+                        origin == "review_uncertain"
                         and value is not None
                     )
                     or (origin == "reviewed" and value is None)
@@ -518,14 +519,15 @@ def _portable_preflight(prepared: Path, summary: dict, production: bool) -> dict
                     not in (
                         "reviewed",
                         "encoded_positive",
-                        "unreviewed_proxy",
+                        "encoded_negative",
                         "review_uncertain",
                     )
                     or (
                         origin == "encoded_positive" and (value != 1 or encoded[i] != 1)
                     )
+                    or (origin == "encoded_negative" and (value != 0 or encoded[i] != 0))
                     or (
-                        origin in ("unreviewed_proxy", "review_uncertain")
+                        origin == "review_uncertain"
                         and value is not None
                     )
                     or (origin == "reviewed" and value is None)

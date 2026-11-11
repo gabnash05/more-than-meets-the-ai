@@ -97,7 +97,7 @@ def _channel(
         if row[origin_key] == "reviewed":
             reviewed_scores.append(row["scores"][index])
             reviewed_labels.append(label)
-        elif row[origin_key] == "encoded_positive":
+        elif row[origin_key] in ("encoded_positive", "encoded_negative"):
             proxy_scores.append(row["scores"][index])
             proxy_labels.append(label)
 

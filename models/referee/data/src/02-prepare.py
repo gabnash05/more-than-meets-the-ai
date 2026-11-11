@@ -178,6 +178,9 @@ def prepare(settings: Settings) -> dict:
                 raise DataError(
                     f"Invalid source input for {sid}: {exc}", "invalid_source"
                 ) from exc
+            expected_hash = review.get("source_png_sha256")
+            if expected_hash is not None and expected_hash != hashlib.sha256(png).hexdigest():
+                raise DataError(f"Correction PNG hash mismatch: {sid}", "invalid_correction")
             diagnostics["blank"] += int(max(histogram) == len(pixels))
             diagnostics["suspect_inverted_polarity"] += int(
                 sum(histogram[128:]) > len(pixels) // 2
@@ -232,9 +235,9 @@ def prepare(settings: Settings) -> dict:
                     targets.append(None)
                     origins.append("review_uncertain")
                 else:
-                    targets.append(1 if bits[index] else None)
+                    targets.append(bits[index])
                     origins.append(
-                        "encoded_positive" if bits[index] else "unreviewed_proxy"
+                        "encoded_positive" if bits[index] else "encoded_negative"
                     )
             record.update(bits=bits, targets=targets, origins=origins, usable=True)
 
