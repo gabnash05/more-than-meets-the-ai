@@ -10,6 +10,7 @@ import os
 import random
 import shutil
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -705,6 +706,18 @@ def _build_row(metadata: dict, bundle: Bundle) -> dict:
     }
 
 
+def _format_duration(seconds: float) -> str:
+    """Render a duration as a compact h/m/s string for progress lines."""
+    total = max(0, int(round(seconds)))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
 def _finish_class(
     class_id: int,
     rows_by_model: dict[str, list[dict]],
@@ -713,9 +726,8 @@ def _finish_class(
     progress: dict[str, dict[str, str]],
     progress_path: Path,
     output_dir: Path,
-    quiet: bool,
 ) -> None:
-    """Write one completed class's shards, record their hashes, announce it."""
+    """Write one completed class's shards and record their hashes for resume."""
     for bundle in bundles:
         digest = _write_shard(
             _shard_path(output_dir, bundle.model_id, class_id),
@@ -724,12 +736,6 @@ def _finish_class(
         )
         progress[bundle.model_id][str(class_id)] = digest
     _write_progress(progress_path, subset["sha256"], progress)
-    if not quiet:
-        print(
-            f"class {class_id + 1:03d}/345: "
-            f"{len(subset['indices'][str(class_id)])} originals",
-            flush=True,
-        )
 
 
 def _score_subset(
@@ -742,7 +748,6 @@ def _score_subset(
     output_dir: Path,
     progress: dict[str, dict[str, str]],
     progress_path: Path,
-    resuming: bool,
     batch_size: int,
     workers: int,
     manifest_cache_dir: Path,
@@ -786,11 +791,6 @@ def _score_subset(
             for model_id in model_ids
         )
     }
-    if resuming:
-        for class_id in sorted(completed):
-            if not quiet:
-                print(f"class {class_id + 1:03d}/345: resumed", flush=True)
-
     served = [
         position
         for position, class_id in enumerate(class_ids)
@@ -798,6 +798,61 @@ def _score_subset(
     ]
     if not served:
         return
+
+    total_views = subset["views"]
+    completed_views = sum(
+        len(subset["indices"][str(class_id)]) * STAGES for class_id in completed
+    )
+    started = time.monotonic()
+    rendered_views = 0
+    first_report: tuple[int, float] | None = None
+
+    def finish_class(class_id: int, rows: dict[str, list[dict]]) -> None:
+        """Persist one class, then report progress, throughput and time left.
+
+        Progress counts every view of a finished class, including views whose
+        preprocessing failed, because the stage curve counts them too. Throughput
+        and the estimate are measured between consecutive reports rather than
+        since start, so process start-up and model loading do not drag the first
+        estimate down, and a resumed run does not take credit for skipped classes.
+        """
+        nonlocal rendered_views, first_report
+        _finish_class(
+            class_id, rows, subset, bundles, progress, progress_path, output_dir
+        )
+        rendered_views += len(subset["indices"][str(class_id)]) * STAGES
+        if quiet:
+            return
+        elapsed = time.monotonic() - started
+        done = completed_views + rendered_views
+        rate = 0.0
+        if first_report is None:
+            # Anchoring here discards start-up; there is no interval yet.
+            first_report = (rendered_views, elapsed)
+        else:
+            baseline_views, baseline_elapsed = first_report
+            window = elapsed - baseline_elapsed
+            # A window shorter than a couple of seconds is dominated by noise;
+            # reporting it would quote a rate the run cannot sustain.
+            if window >= 2.0:
+                rate = (rendered_views - baseline_views) / window
+        parts = [
+            f"class {class_id + 1:03d}/345 ({done / total_views:5.1%})",
+            f"{done:,}/{total_views:,} views",
+            f"elapsed {_format_duration(elapsed)}",
+        ]
+        if rate > 0:
+            remaining = (total_views - done) / rate
+            parts.insert(2, f"{rate:5.1f} views/s")
+            parts.append(f"eta {_format_duration(remaining)}")
+        print(" | ".join(parts), flush=True)
+
+    if not quiet and completed_views:
+        print(
+            f"resuming: {len(completed)} finished classes skipped "
+            f"({completed_views:,}/{total_views:,} views)",
+            flush=True,
+        )
 
     dataset = TenStageViewDataset(
         prepared_dir,
@@ -867,16 +922,7 @@ def _score_subset(
         for class_id in sorted(open_rows):
             if class_id == latest:
                 continue
-            _finish_class(
-                class_id,
-                open_rows.pop(class_id),
-                subset,
-                bundles,
-                progress,
-                progress_path,
-                output_dir,
-                quiet,
-            )
+            finish_class(class_id, open_rows.pop(class_id))
 
     for metadata, images, ok_positions in loader:
         # Position of a view inside ``images``, so a usable view keeps the
@@ -919,16 +965,7 @@ def _score_subset(
     flush_buffer()
     close_before(None)
     for class_id in sorted(open_rows):
-        _finish_class(
-            class_id,
-            open_rows.pop(class_id),
-            subset,
-            bundles,
-            progress,
-            progress_path,
-            output_dir,
-            quiet,
-        )
+        finish_class(class_id, open_rows.pop(class_id))
 
 
 def _load_arrays(
@@ -1272,7 +1309,6 @@ def run(args: argparse.Namespace) -> dict:
         output_dir=output_dir,
         progress=progress,
         progress_path=progress_path,
-        resuming=resuming,
         batch_size=args.batch_size,
         workers=args.workers,
         manifest_cache_dir=args.manifest_cache_dir.resolve(),
