@@ -15,7 +15,7 @@ services:
       AI_QUEUE_REDIS_URL: redis://redis:6379/0
       AI_QUEUE_REDIS_USERNAME: api
       AI_QUEUE_REDIS_PASSWORD_FILE: /run/mmtai-secrets/redis-api-password
-      REFEREE_PROVIDER: http
+      REFEREE_PROVIDER: queue
       REFEREE_MODEL_ID: ${REFEREE_MODEL_ID:-referee-vit-a-v1}
       AI_SMOKE_TEST: "0"
       AI_TEST_FIXTURES: "0"
