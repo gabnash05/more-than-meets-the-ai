@@ -24,6 +24,8 @@ The results/chat correction adds ranked avatar cards, a clearer recap, green cor
 
 Deploy the web and room API with Compose in memory mode or with an external PostgreSQL database. The optional AI profile provides a pinned smoke-test Guesser and an independent Referee fixture. [Deployment runbook](deploy/README.md)
 
+Main-branch CI is configured to test and publish web/API images to GHCR with matching commit tags. The VPS can pull these images without rebuilding; rollout remains manual and retains PostgreSQL data. See [CI and registry publishing](docs/CI.md) and [the pull-only node1 procedure](deploy/README.md#pull-prebuilt-ghcr-images-on-node1). The workflow must be pushed and pass on GitHub before its images exist.
+
 ## Guesser data and evaluation
 
 The agreed [models layout](models/README.md) separates Guesser data, training, inference, evaluation and checkpoints from Referee work. The [data package](models/guesser/data/README.md) uses Python 3.13 and uv: numbered stages download/clean/sample, prepare splits, optionally preview and export with one data audit. Timed image creation uses the shared foreground/edges preprocessors; no approvals or freeze step are required. See the [runbook](models/guesser/data/RUNBOOK.md).

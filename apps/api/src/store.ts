@@ -15,7 +15,15 @@ export class PrismaGameStore implements GameStore {
   readonly db: PrismaClient;
   constructor(url: string) {
     if (!url) throw new Error("DATABASE_URL is required");
-    this.db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, connectionTimeoutMillis: 5000 }) });
+    // Cancel stalled SQL on PostgreSQL itself, before it can hold the serialized
+    // room queue through a client's ten-second acknowledgement deadline. A local
+    // Promise timeout would leave a write running after the engine rolled back.
+    this.db = new PrismaClient({ adapter: new PrismaPg({
+      connectionString: url,
+      connectionTimeoutMillis: 2000,
+      statement_timeout: 3000,
+      lock_timeout: 1000,
+    }) });
   }
   async loadRooms(): Promise<PersistedRoom[]> {
     return (await this.db.room.findMany()).map(r => ({ code: r.code, state: r.state as Record<string, unknown> }));

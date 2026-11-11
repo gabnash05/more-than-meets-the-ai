@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CanvasOperation, DrawingBatch } from "@/contracts/drawing";
+import { toDrawingPayload, type CanvasOperation, type DrawingBatch } from "@/contracts/drawing";
 import { createDrawingBatcher, sendDrawingBatch } from "./index";
 
 const point = { x: 1, y: 2, time: 0 };
@@ -61,28 +61,30 @@ describe("drawing batcher", () => {
     vi.advanceTimersByTime(33);
     b.enqueue(end());
     expect(batches.map((x) => x.flushReason)).toEqual([
-      "interval",
+      "stroke-start",
       "interval",
       "stroke-end",
     ]);
-    expect(batches.map((x) => x.elapsedMs)).toEqual([33, 33, 0]);
+    expect(batches.map((x) => x.elapsedMs)).toEqual([0, 33, 33]);
     vi.advanceTimersByTime(100);
     expect(batches).toHaveLength(3);
   });
-  it("keeps the interval deadline between samples without idle batches", () => {
+  it("keeps the flush deadline instead of restarting a full wait after each idle gap", () => {
     const b = setup();
     b.enqueue(start());
-    vi.advanceTimersByTime(33);
-    expect(batches).toHaveLength(1);
+    expect(batches[0].flushReason).toBe("stroke-start");
     vi.advanceTimersByTime(15);
     b.enqueue(append());
     vi.advanceTimersByTime(17);
     expect(batches).toHaveLength(1);
     vi.advanceTimersByTime(1);
     expect(batches).toHaveLength(2);
-    expect(batches[1].elapsedMs).toBe(33);
+    expect(batches[1].flushReason).toBe("interval");
     vi.advanceTimersByTime(100);
-    expect(batches).toHaveLength(2);
+    b.enqueue(append());
+    expect(batches).toHaveLength(3);
+    vi.advanceTimersByTime(100);
+    expect(batches).toHaveLength(3);
   });
   it("flushes a short stroke immediately and orders edits after pending ink", () => {
     const b = setup();
@@ -91,11 +93,13 @@ describe("drawing batcher", () => {
     b.enqueue(append());
     b.enqueue(clear());
     expect(batches.map((x) => x.operations.map((op) => op.type))).toEqual([
-      ["stroke.start", "stroke.end"],
+      ["stroke.start"],
+      ["stroke.end"],
       ["stroke.append"],
       ["canvas.clear"],
     ]);
     expect(batches.map((x) => x.flushReason)).toEqual([
+      "stroke-start",
       "stroke-end",
       "command",
       "command",
@@ -112,20 +116,22 @@ describe("drawing batcher", () => {
     b.enqueue(end());
     b.enqueue(clear());
     expect(batches.map((x) => x.clientSeq)).toEqual([
-      [1, 3],
+      [1, 1],
+      [2, 2],
+      [3, 3],
       [4, 4],
     ]);
-    expect(batches[0].pointCount).toBe(3);
-    expect(batches[0].operationCount).toBe(3);
-    expect(new Set(batches.map((x) => x.batchId)).size).toBe(2);
+    expect(batches[1].pointCount).toBe(1);
+    expect(batches[1].operationCount).toBe(1);
+    expect(new Set(batches.map((x) => x.batchId)).size).toBe(4);
     for (const batch of batches)
       expect(batch.byteCount).toBe(
-        new TextEncoder().encode(JSON.stringify(batch)).length,
+        new TextEncoder().encode(JSON.stringify(toDrawingPayload(batch))).length,
       );
   });
   it("flushes once on disposal and ignores subsequent calls", () => {
     const b = setup();
-    b.enqueue(start());
+    b.enqueue(append());
     b.dispose();
     b.dispose();
     b.enqueue(end());
@@ -152,7 +158,8 @@ describe("drawing batcher", () => {
     b.enqueue(end());
     b.enqueue(clear());
     expect(batches.map(batch => [batch.transport, batch.streamId, batch.generation, batch.clientSeq])).toEqual([
-      ["room-client", "stream-1", 4, [1, 2]],
+      ["room-client", "stream-1", 4, [1, 1]],
+      ["room-client", "stream-1", 4, [2, 2]],
       ["room-client", "stream-1", 4, [3, 3]],
     ]);
   });
@@ -162,5 +169,74 @@ describe("drawing batcher", () => {
     b.enqueue(clear());
     sendDrawingBatch(batches[0]);
     expect(spy).toHaveBeenCalledWith("[drawing:batch]", batches[0]);
+  });
+});
+
+describe("bounded drawing payloads", () => {
+  it("rejects an append above the server per-operation point limit before emitting anything", () => {
+    const batches: DrawingBatch[] = [];
+    const b = createDrawingBatcher({ roomCode: "R", canvasId: "C", send: x => batches.push(x) });
+    expect(() => b.enqueue({ ...append(), points: Array.from({ length: 600 }, () => ({ ...point })) } as CanvasOperation)).toThrow("exceeds");
+    expect(batches).toHaveLength(0);
+    b.enqueue(start());
+    expect(batches[0].clientSeq).toEqual([1, 1]);
+    b.dispose();
+  });
+  it("sends starts immediately and batches movement within caps", () => {
+    const batches: DrawingBatch[] = [];
+    const b = createDrawingBatcher({ roomCode: "é", canvasId: "C", maxOperations: 2, maxPoints: 2, send: x => batches.push(x) });
+    b.enqueue(start());
+    expect(batches[0].flushReason).toBe("stroke-start");
+    for (let i = 0; i < 5; i++) b.enqueue({ ...append(), opId: `${i}` });
+    b.flush();
+    expect(batches.map(x => x.operations.length)).toEqual([1, 2, 2, 1]);
+    expect(batches.flatMap(x => x.operations.map(op => op.clientSeq))).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+  it("counts canonical UTF-8 bytes and splits at the exact byte boundary", () => {
+    const batches: DrawingBatch[] = [];
+    const options = { roomCode: "é", canvasId: "C", streamId: "流", generation: 2, send: (x: DrawingBatch) => batches.push(x) };
+    const first = createDrawingBatcher(options);
+    first.enqueue(append()); first.flush();
+    const cap = batches[0].byteCount;
+    expect(cap).toBe(new TextEncoder().encode(JSON.stringify(toDrawingPayload(batches[0]))).length);
+    expect(Object.keys(toDrawingPayload(batches[0]))).not.toContain("byteCount");
+    batches.length = 0;
+    const bounded = createDrawingBatcher({ ...options, maxBytes: cap });
+    bounded.enqueue(append()); bounded.enqueue(append()); bounded.flush();
+    expect(batches).toHaveLength(2);
+    expect(batches.every(batch => batch.byteCount <= cap)).toBe(true);
+    expect(batches.map(batch => batch.operations[0].opId)).toEqual(["2", "2"]);
+  });
+  it("rejects invalid configuration and oversized operations without consuming sequence", () => {
+    expect(() => createDrawingBatcher({ roomCode: "R", canvasId: "C", intervalMs: Infinity })).toThrow();
+    expect(() => createDrawingBatcher({ roomCode: "R", canvasId: "C", maxPoints: NaN })).toThrow();
+    const batches: DrawingBatch[] = [];
+    const b = createDrawingBatcher({ roomCode: "R", canvasId: "C", maxPoints: 2, send: x => batches.push(x) });
+    expect(() => b.enqueue({ ...append(), points: Array.from({ length: 5000 }, () => ({ ...point })) } as CanvasOperation)).toThrow();
+    b.enqueue(append()); b.flush();
+    expect(batches[0].clientSeq).toEqual([1, 1]);
+  });
+  it("preflights growing batch headers before changing pending work", () => {
+    const batches: DrawingBatch[] = [];
+    const b = createDrawingBatcher({ roomCode: "R", canvasId: "C", maxBytes: 400, send: x => batches.push(x) });
+    for (let i = 0; i < 8; i++) b.enqueue({ ...clear(), opId: `clear-${i}` });
+    b.enqueue(append());
+    const candidate = append();
+    const bytes = () => new TextEncoder().encode(JSON.stringify({
+      ...toDrawingPayload(batches[7]), batchId: batches[7].batchId.replace(/-8$/, "-9"),
+      clientSeq: [10, 10], operations: [{ ...candidate, clientSeq: 10 }],
+    })).length;
+    // Fit batch 9 exactly. Flushing the pending append would put this operation
+    // in batch 10, whose larger header makes it invalid without changing input.
+    while (bytes() < 400) candidate.opId += bytes() < 399 ? "é" : "x";
+    expect(bytes()).toBe(400);
+    expect(() => b.enqueue(candidate)).toThrow("exceeds");
+    expect(batches).toHaveLength(8);
+    b.flush();
+    expect(batches[8].clientSeq).toEqual([9, 9]);
+    b.enqueue({ ...append(), opId: "valid-next" }); b.flush();
+    expect(batches[9].clientSeq).toEqual([10, 10]);
+    expect(batches.every(batch => batch.byteCount <= 400)).toBe(true);
+    b.dispose();
   });
 });

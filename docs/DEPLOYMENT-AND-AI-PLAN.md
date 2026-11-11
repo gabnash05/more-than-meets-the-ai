@@ -55,11 +55,21 @@ Implement the service in `models/guesser/inference/` using FastAPI, Uvicorn, PyT
 
 ### Enable the optional profile
 
-After copying the selected model artifact to the read-only mount, set `GUESSER_PROVIDER=http` and `GUESSER_MODEL_ID` in the VM configuration and supply the private service credential. Compose sets `GUESSER_URL=http://guesser:8000` for the API. Check readiness for the selected model before starting a new match.
+After copying the selected model artifact to the read-only mount, set `GUESSER_PROVIDER=queue` and `GUESSER_MODEL_ID` in the GHCR overlay. The overlay supplies `AI_QUEUE_REDIS_URL`, Redis ACL usernames and password-file paths; the base `compose.ghcr.yaml` stays human-only. The older direct HTTP mode remains available by setting `GUESSER_PROVIDER=http` with `AI_SERVICE_URL` and the private service credential. Check readiness for the selected model before starting a new match.
 
 ```bash
 docker compose --env-file deploy/.env -f deploy/compose.yaml --profile ai up -d --build --wait
 ```
+
+### Current GHCR queue overlay
+
+`deploy/compose.ghcr.guesser.yaml` adds a private `redis:7-alpine` service with AOF persistence and no host port. The API publishes versioned inference jobs tagged with the Guesser or Referee role to `mmtai:ai:guess:jobs:v1`; the AI container runs one consumer in `guesser-workers-v1`, dispatches each job to the matching role bundle, and returns results on `mmtai:ai:guess:results:v1`. Queue wait is included in the same request deadline, so a job that cannot finish in time is reported unavailable rather than scoring late. The API no longer waits for AI health before starting, so a broker or model outage leaves human rooms playable.
+
+```bash
+docker compose -f deploy/compose.ghcr.yaml -f deploy/compose.ghcr.guesser.yaml up -d --scale ai=3 ai
+```
+
+That command adds AI consumers on demand; it is not an autoscaler. Room state stays in the single API process, so do not scale `api`.
 
 ### API boundary and pacing
 
@@ -73,9 +83,10 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml --profile ai up -d 
 | `AI_GUESS_COOLDOWN_MS` | 2,000 | Wait this long after the previous attempt settles before dispatching another |
 | `AI_MAX_GUESSES_PER_TURN` | 24 | Cap dispatched attempts, including timed-out attempts |
 | `AI_REQUEST_TIMEOUT_MS` | 2,500 | Cap one request further by the remaining turn time |
-| `AI_MAX_CONCURRENT_JOBS` | 1 | Bound in-flight work per model role |
 
-4. Permit one in-flight job per role. When both roles are due for the same room, reserve one canvas prefix and pass the rendered PNG to both. The Referee can also check between guesses. Count the Guesser cooldown in active drawing time, record each accepted attempt, and stop Guesser work on a correct answer. Reveal guess text and confidence with the committed recap. When a canvas clears or a turn pauses, closes, or changes generation, invalidate pending jobs. A later ink sequence alone does not invalidate a result for the recorded prefix.
+Each AI worker runs one inference at a time; concurrency is added with worker replicas rather than an API-side global cap. The API still permits at most one queued or active job per room and role.
+
+4. Permit one in-flight job per room and role while allowing different rooms to dispatch independently. When both roles are due for the same room, reserve one canvas prefix and pass the rendered PNG to both. The Referee can also check between guesses. Count the Guesser cooldown in active drawing time, record each accepted attempt, and stop Guesser work on a correct answer. Reveal guess text and confidence with the committed recap. When a canvas clears or a turn pauses, closes, or changes generation, invalidate pending jobs. A later ink sequence alone does not invalidate a result for the recorded prefix.
 5. Keep a normal pass, a cancelled job and a provider fault distinct. An eligible wrong answer can yield a scored zero; a round with no eligible answer remains unscored. A qualifying service failure leaves that evaluation unavailable. Preserve human scoring, including drawer recognition and winner selection. Log model revision, latency, skips, timeouts and job outcomes with no raw image, answer or credentials. Provide an operator switch `GUESSER_PROVIDER=unavailable` for immediate human-only recovery on a normal service update.
 
 ## 3. Delivery order and acceptance

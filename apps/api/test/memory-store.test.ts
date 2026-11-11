@@ -69,6 +69,8 @@ test("memory canvas limit rejects the tail without interrupting human scoring", 
     durableUpdates.length = 0;
     assert.equal((await send(start, sequence)).ok, true);
     await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(durableUpdates, [], "routine durable progress is coalesced, not published per batch");
+    await new Promise<void>(resolve => setTimeout(resolve, 250));
     assert.deepEqual(durableUpdates, [1]);
     const duplicate = { type: "stroke.append", opId: "op-1", actionId: "stroke", at: 2, clientSeq: 2, points: [point] };
     assert.equal((await send(duplicate, 2)).code, "invalid-drawing");
@@ -89,6 +91,13 @@ test("memory canvas limit rejects the tail without interrupting human scoring", 
     const result = await engine.resume(code, host.resumeToken);
     assert.equal(result.snapshot.phase, "result");
     assert.ok((result.snapshot.game!.scores[guest.playerId] ?? 0) > 0);
-    assert.deepEqual(await store.loadDrawing(code, game.canvasId, game.generation), before);
+    const finalized = await store.loadDrawing(code, game.canvasId, game.generation);
+    assert.deepEqual(finalized.slice(0, before.length), before, "finalization preserves the accepted prefix");
+    assert.equal(finalized.length, before.length + 1, "the server closes the held stroke exactly once");
+    assert.equal(finalized.at(-1)!.sequence, sequence + 1);
+    const terminal = finalized.at(-1)!.operations[0];
+    assert.ok(terminal && typeof terminal === "object" && "type" in terminal && "actionId" in terminal);
+    assert.equal(terminal.type, "stroke.end");
+    assert.equal(terminal.actionId, "stroke");
   } finally { await engine.shutdown(); }
 });

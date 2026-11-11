@@ -188,6 +188,21 @@ test("drawing tools replay to a second browser and survive refresh", async ({ br
 
 test("individual guesses remain independent and AI coverage is honest", async ({ browser }) => {
   const contexts = await Promise.all(Array.from({ length: 3 }, () => browser.newContext()));
+  for (const context of contexts) await context.addInitScript(() => {
+    const NativeSocket = window.WebSocket;
+    class DelayedSocket extends NativeSocket {
+      private sendQueue = Promise.resolve();
+      send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        const delay = typeof data === "string" && data.includes('"room:guess"') ? 300 : 0;
+        if (delay) (window as Window & { guessSends?: number }).guessSends = ((window as Window & { guessSends?: number }).guessSends ?? 0) + 1;
+        // Serialize all sends so test-only delay never changes packet order.
+        this.sendQueue = this.sendQueue.then(() => new Promise<void>(resolve => {
+          setTimeout(() => { super.send(data); resolve(); }, delay);
+        }));
+      }
+    }
+    window.WebSocket = DelayedSocket;
+  });
   const pages = await Promise.all(contexts.map(context => context.newPage()));
   const [host, ...guests] = pages;
   await host.goto("/");
@@ -198,14 +213,17 @@ test("individual guesses remain independent and AI coverage is honest", async ({
   await host.getByRole("combobox", { name: "Mode" }).click();
   await expect(host.getByRole("option", { name: "Team (coming later)" })).toHaveAttribute("data-disabled", "");
   await host.keyboard.press("Escape");
+  // Save the fixture's settings before guest connections change room revisions.
+  // Roster admission alone does not mean their socket/resync work has settled.
+  await host.getByRole("combobox", { name: "Prompt rounds" }).click();
+  await host.getByRole("option", { name: "1 rounds", exact: true }).click();
+  await expect(host.getByRole("combobox", { name: "Prompt rounds" })).toContainText("1 rounds");
   for (const [index, guest] of guests.entries()) {
     await guest.goto(`/?code=${code}`);
     await guest.getByLabel("Your name").fill(`Guest ${index + 1}`);
     await guest.getByRole("button", { name: "Join room →" }).click();
   }
   await expect(host.locator(".room-person")).toHaveCount(3);
-  await host.getByRole("combobox", { name: "Prompt rounds" }).click();
-  await host.getByRole("option", { name: "1 rounds", exact: true }).click();
   await host.getByRole("button", { name: /Start match/ }).first().click();
   await expect(host.getByRole("heading", { name: "Round 1 / 1" })).toBeVisible();
   await expect.poll(async () => (await Promise.all(pages.map(page => page.getByRole("heading", { name: "Choose a word" }).count()))).reduce((a, b) => a + b, 0)).toBe(1);
@@ -216,8 +234,19 @@ test("individual guesses remain independent and AI coverage is honest", async ({
   const word = (await choices.first().textContent())!.trim();
   for (const guesser of guessers) await expect(guesser.locator(".room-prompt")).not.toContainText(word);
   await choices.first().click();
-  await guessers[0].getByLabel("Your guess").fill(word);
-  await guessers[0].getByLabel("Your guess").press("Enter");
+  const input = guessers[0].getByLabel("Your guess");
+  await input.fill("incorrect draft");
+  await input.press("Enter");
+  await expect(guessers[0].locator(".room-feedback")).toContainText("Checking your guess");
+  await expect(guessers[0].locator(".room-feedback")).not.toContainText("Correct!");
+  await input.fill(word);
+  await input.press("Enter");
+  await expect(guessers[0].getByRole("button", { name: "Send" })).toBeEnabled();
+  await expect(input).toHaveValue(word);
+  expect(await guessers[0].evaluate(() => (window as Window & { guessSends?: number }).guessSends)).toBe(1);
+  await input.press("Enter");
+  await expect(guessers[0].locator(".room-feedback")).toContainText("Correct! The others are still guessing");
+  await expect(guessers[0].locator(".room-feedback")).not.toContainText(word);
   const correct = guessers[1].getByTestId("room-chat").locator(".room-message-correct");
   await expect(correct).toContainText("Correct!");
   await expect(correct).toHaveCSS("color", "rgb(22, 101, 52)");
@@ -227,6 +256,8 @@ test("individual guesses remain independent and AI coverage is honest", async ({
   await expect(drawer.getByLabel("Drawing canvas")).toHaveAttribute("data-readonly", "false");
   await guessers[1].getByLabel("Your guess").fill(word);
   await guessers[1].getByLabel("Your guess").press("Enter");
+  await expect(host.getByLabel("Round recap")).toContainText("Final standings");
+  await expect(host.getByLabel("Round recap")).not.toContainText("Next drawer: Waiting");
   await expect(host.getByText("AI benchmark: Unavailable")).toBeVisible();
   await expect(host.getByRole("heading", { name: "Final standings" })).toBeVisible();
   await expect(host.getByLabel("Final results")).toContainText("0 / 1 rounds scored");

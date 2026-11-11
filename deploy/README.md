@@ -1,6 +1,218 @@
 # Deploy More Than Meets the AI
 
-Use a host with Docker Engine and the Compose plugin. Run the commands below from `deploy/` in your normal Git checkout.
+Use a host with Docker Engine and the Compose plugin. The GHCR procedure runs from the existing VPS stack directory; the source-build procedures run from `deploy/` in your normal Git checkout.
+
+## Pull prebuilt GHCR images on node1
+
+This is the no-build path for the existing Docker stack at
+`/home/yashindo/docker-compose/more-than-meets-the-ai`. Main-branch pushes run
+[CI and image publishing](../docs/CI.md); after the **whole** Container images
+workflow succeeds, all image references and digests appear in its summary.
+The web and API use the same `sha-<full-commit-sha>` tag. The optional Guesser
+release also publishes an API `inference` target and a CPU ViT inference image
+with that same tag. Model weights remain a separate read-only host artifact. The
+workflow publishes images only: it does not SSH into node1, migrate its database
+or restart games.
+
+Images are `ghcr.io/gabnash05/more-than-meets-the-ai-web`,
+`ghcr.io/gabnash05/more-than-meets-the-ai-api`,
+`ghcr.io/gabnash05/more-than-meets-the-ai-api-inference`, and
+`ghcr.io/gabnash05/more-than-meets-the-ai-ai`, for `linux/amd64`. The base API
+image keeps inference unavailable; the separate `api-inference` target includes
+the Chromium renderer required by live inference. The AI image contains the CPU
+ViT runtime, not weights. The browser uses same-origin API/socket paths; no
+domain, resume credential, model or production database URL is baked in.
+
+### First-time registry switch
+
+Copy `deploy/compose.ghcr.yaml` from the approved checkout to that existing
+stack directory as `compose.ghcr.yaml`. Only when enabling the model, also copy
+`deploy/compose.ghcr.guesser.yaml` there. Keep its current `compose.yaml` as the
+old-release fallback. Do **not** overwrite `runtime/api.env`,
+`secrets/postgres-password`, backups or data. The new file retains the project
+name `more-than-meets-the-ai`, the `postgres_data` volume mounted at
+`/var/lib/postgresql`, the existing database/user `mtmai`, resource/log limits for
+web/database and loopback ingress port 10005. The API has no CPU or memory cap;
+its PID limit remains. The API and database are not publicly published.
+It contains no `build` keys and does not require a repository checkout on the VPS.
+Do not use another project name, remove volumes or run `down -v` while switching.
+
+GHCR packages may initially be private. Make every package required by the
+selected stack public for anonymous VPS pulls, or configure `docker login
+ghcr.io` on the VPS with a user-managed credential restricted to `read:packages`
+and an appropriate Docker credential helper. Never put that credential in
+Compose, a GitHub workflow file, shell history or chat. Workflow pushes use their
+automatic job token; they do not need a VPS login secret. An existing package
+must grant this repository Actions access. A public repository does not by itself
+guarantee anonymous pulls.
+
+### Deploy a successfully published commit
+
+Choose a maintenance window: replacing the single API process interrupts active
+matches. Take and verify a private database backup, retain the previous image
+tag/digests and review migration compatibility first. These commands assume the
+existing node1 database is healthy and `runtime/api.env` already has its correct
+private `DATABASE_URL`. Do not run test-database cleanup on this stack.
+
+From the stack directory, replace the explicitly marked commit placeholder with
+the full SHA from the successful run (not a short SHA):
+
+```sh
+export IMAGE_TAG=sha-REPLACE_WITH_FULL_SUCCESSFUL_COMMIT_SHA
+export WEB_ORIGINS=https://mtmai.yashindo.syn-forge.com
+
+docker compose -f compose.ghcr.yaml config --quiet
+docker compose -f compose.ghcr.yaml pull web api
+docker compose -f compose.ghcr.yaml run --rm --no-deps --pull never api npm run db:migrate
+docker compose -f compose.ghcr.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 120 api
+docker compose -f compose.ghcr.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 120 web
+docker compose -f compose.ghcr.yaml ps
+curl -fsS http://127.0.0.1:10005/api/health
+curl -fsS https://mtmai.yashindo.syn-forge.com/api/health
+```
+
+Run these one at a time and stop on any failure. `config --quiet` validates without
+printing resolved credentials. Pull both images **before** migration/recreation;
+`--pull never` prevents a later step from silently choosing other image contents.
+Updating API then web with `--no-deps` leaves the running PostgreSQL service alone.
+Keep using `-f compose.ghcr.yaml` so a later command does not accidentally select
+the old locally loaded images. `IMAGE_PREFIX` can override the default GHCR
+owner/repository prefix for a fork; `WEB_BIND` overrides the loopback listener.
+The optional `API_ENV_FILE` and `POSTGRES_SECRET_FILE` override private host-file
+locations, never image contents.
+
+Verify public HTTPS, authenticated WebSocket upgrades and an isolated two-browser
+game after the update; health alone does not establish realtime correctness.
+To roll back, select a previously verified matching tag, pull both images and
+repeat the API/web recreation only after checking the database is compatible.
+Do not delete the persistent volume or automatically run reverse migrations.
+For exact content pinning, replace each service's image reference with its
+reported `name@sha256:...` digest instead of relying on a rebuildable tag.
+
+## GHCR ViT Guesser and Referee canary on node1
+
+This opt-in deployment uses `compose.ghcr.yaml` plus
+`compose.ghcr.guesser.yaml`. It keeps web and PostgreSQL on the existing GHCR
+stack, pulls the matching `api-inference` and `ai` images, and never publishes
+the inference port. The overlay enables both the Guesser and the Referee when
+their bundles are present. New rooms on this stack default both roles on, so
+use this only when the operator intends to expose the canary to all new rooms.
+The AI and API containers have no CPU or memory cgroup limits (PID limits remain);
+ViT uses all CPUs visible to its process, and each AI container runs one inference
+at a time. Add `ai` replicas to add inference concurrency. This can compete with
+PostgreSQL and other node1 services, so monitor host resource use.
+
+The ViT bundle is not in Git or the container image. Select a verified bundle,
+copy its complete directory to the VPS under
+`$AI_ARTIFACT_DIR/$GUESSER_MODEL_ID`, and make it readable by container UID 1000.
+For node1, create the destination outside the checkout, then copy the directory
+from the approved local model bundle, for example:
+
+```sh
+ssh node1 'install -d -m 0750 /home/yashindo/docker-compose/more-than-meets-the-ai/runtime/ai-artifacts'
+scp -r models/guesser/checkpoints/notebook-production-full/bundles/guesser-vit-a-v1 \
+  node1:/home/yashindo/docker-compose/more-than-meets-the-ai/runtime/ai-artifacts/
+```
+
+The loader checks every bundle file against the manifest's SHA-256 values at
+startup; authenticated readiness confirms the exact model ID and label count.
+Make the host owner/container UID 1000 able to read the bundle. Keep the artifact
+directory outside the checkout and mount it read-only. For this
+canary the selected ID is `guesser-vit-a-v1`; its saved validation reports rank A
+above B, but this is a gameplay test, not a measured production accuracy claim.
+
+Create the shared service credential once, outside the checkout; retain an
+existing token on retries rather than replacing it:
+
+```sh
+export AI_SECRETS_DIR=/home/yashindo/docker-compose/more-than-meets-the-ai/secrets/ai
+install -d -m 0700 "$AI_SECRETS_DIR"
+if [ ! -e "$AI_SECRETS_DIR/ai-token" ]; then
+  (umask 077; openssl rand -hex 32 > "$AI_SECRETS_DIR/ai-token")
+fi
+if [ ! -e "$AI_SECRETS_DIR/redis-api-password" ]; then
+  (umask 077; openssl rand -hex 32 > "$AI_SECRETS_DIR/redis-api-password")
+fi
+if [ ! -e "$AI_SECRETS_DIR/redis-worker-password" ]; then
+  (umask 077; openssl rand -hex 32 > "$AI_SECRETS_DIR/redis-worker-password")
+fi
+if [ ! -e "$AI_SECRETS_DIR/redis-users.acl" ]; then
+  (umask 077; {
+    echo "user default off"
+    echo "user api on >$(cat "$AI_SECRETS_DIR/redis-api-password") ~mmtai:* +@all -@dangerous"
+    echo "user worker on >$(cat "$AI_SECRETS_DIR/redis-worker-password") ~mmtai:* +@all -@dangerous"
+  } > "$AI_SECRETS_DIR/redis-users.acl")
+fi
+chmod 0600 "$AI_SECRETS_DIR/ai-token" "$AI_SECRETS_DIR/redis-api-password" \
+  "$AI_SECRETS_DIR/redis-worker-password" "$AI_SECRETS_DIR/redis-users.acl"
+```
+
+After copying `compose.ghcr.guesser.yaml` beside the base Compose file, set the
+full SHA tag from a **successful** Container images workflow and the two host
+directories. Then validate and pull before replacing the API. The API restart
+can interrupt active matches; no database migration is needed for this overlay.
+
+```sh
+export IMAGE_TAG=sha-REPLACE_WITH_FULL_SUCCESSFUL_COMMIT_SHA
+export WEB_ORIGINS=https://mtmai.yashindo.syn-forge.com
+export GUESSER_MODEL_ID=guesser-vit-a-v1
+export AI_ARTIFACT_DIR=/home/yashindo/docker-compose/more-than-meets-the-ai/runtime/ai-artifacts
+export AI_SECRETS_DIR=/home/yashindo/docker-compose/more-than-meets-the-ai/secrets/ai
+
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml config --quiet
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml pull redis ai api
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 180 redis
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 180 ai
+```
+
+Check authenticated model readiness without printing the token, then confirm the worker registration reached Redis:
+
+```sh
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml exec -T ai python -c '
+import json
+from pathlib import Path
+from urllib.request import Request, urlopen
+token = Path("/run/mmtai-secrets/ai-token").read_bytes().strip().decode()
+request = Request("http://127.0.0.1:8000/health/ready", headers={"Authorization": "Bearer " + token})
+ready = json.load(urlopen(request, timeout=5))["guesser"]
+print(json.dumps({"status": ready.get("status"), "modelId": ready.get("modelId"), "artifactRevision": ready.get("artifactRevision"), "labelCount": len(ready.get("labels", []))}))
+assert ready.get("status") == "ready" and ready.get("modelId") == "guesser-vit-a-v1" and len(ready.get("labels", [])) == 345
+'
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml exec -T redis sh -c '
+  redis-cli --user api --pass "$(cat /run/mmtai-secrets/redis-api-password)" \
+    --scan --pattern "mmtai:ai:workers:*" | grep -q .
+'
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --no-deps --no-build --pull never --wait --wait-timeout 180 api
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml ps
+curl -fsS https://mtmai.yashindo.syn-forge.com/api/health
+curl -fsS -o /dev/null -w '%{http_code}\n' https://mtmai.yashindo.syn-forge.com/room/
+```
+
+To turn off the canary, restore the base API image/configuration without the
+overlay, then stop (do not remove) the worker and Redis using both Compose files.
+This preserves the pinned images, model files and Redis volume for diagnosis or
+rollback:
+
+```sh
+docker compose -f compose.ghcr.yaml up -d --no-deps --pull never --wait --wait-timeout 120 api
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml stop ai redis
+```
+
+### Scale Guesser workers
+
+Each `ai` replica adds one consumer to `guesser-workers-v1`. Scale only the AI service; the API remains the single in-memory room authority.
+
+```sh
+docker compose -f compose.ghcr.yaml -f compose.ghcr.guesser.yaml up -d --scale ai=3 ai
+```
+
+This is operator-triggered scaling, not an autoscaler. Redis is private to the overlay, has no host port, and persists its AOF under the `redis_data` volume. Queue wait counts against the same 2.5-second request budget; when workers are saturated, a job that cannot finish in time is reported unavailable rather than delivered after the turn deadline.
+
+## Build locally instead
+
+The sections below retain the source-build and optional inference paths. They
+are not needed for a normal GHCR update. The source-build Compose file defaults
+to memory storage; do not substitute it for the persistent node1 registry stack.
 
 ## Start the game
 
@@ -117,4 +329,6 @@ The downloaded INT8 bundle is for private smoke tests. Its hashes verify the mod
 
 For the later ViT-Tiny swap, set `AI_RUNTIME=vit`, select the bundle's `GUESSER_MODEL_ID`, and set `AI_SMOKE_TEST=0`. The bundle uses `weights.safetensors`, ordered `labels.txt` and `checkpoint-selection.json`. Its version 1 manifest sets role `guesser`, adapter `vit-tiny`, `modelId`, `artifactRevision`, input `[1,3,224,224]`, output `[1,345]`, the selected `preprocessing`, `preprocessingConfigHash` and a filename-to-SHA-256 map in `files`. Confirm evaluation parity with trusted weights before enabling it.
 
-For the private Referee smoke test, add `AI_TEST_FIXTURES=1`, `REFEREE_MODEL_ID=referee-fixture-v1`, and `REFEREE_PROVIDER=http` to the dedicated stack. Run the browser acceptance command with `ROOM_TEST_AI_REFEREE=1` as well. It draws controlled colors to check that both players see the text warning and that a digits-only response clears it. The fixture is synthetic. Normal stacks leave the Referee model unconfigured until trained weights are available.
+For the Referee, copy the exported bundle under `<AI_ARTIFACT_DIR>/referee-vit-a-v1/` and set `REFEREE_MODEL_ID=referee-vit-a-v1`, `REFEREE_PROVIDER=queue`, and `AI_TEST_FIXTURES=0`. The manifest uses role `referee`, adapter `vit-tiny-referee`, input `[1,3,224,224]`, output `[1,4]`, label order `[text, number, symbol, circle]`, channel order `[text, number]` and sigmoid scores. Authenticated `/health/ready` must report the Referee as `ready`; the API readiness cache must also see a fresh `mmtai:ai:workers:*` registration for the Referee. The current bundle records `rgb_resize` as provisional and has no reviewed held-out validation, so treat its scores as advisory.
+
+For the private Referee fixture smoke test, add `AI_TEST_FIXTURES=1`, `REFEREE_MODEL_ID=referee-fixture-v1`, and `REFEREE_PROVIDER=http` to a dedicated stack instead. Run the browser acceptance command with `ROOM_TEST_AI_REFEREE=1` as well. It draws controlled colors to check that both players see the text warning and that a digits-only response clears it. The fixture is synthetic. Do not enable the fixture on a normal stack.

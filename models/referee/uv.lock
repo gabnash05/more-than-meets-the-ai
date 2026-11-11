@@ -892,6 +892,12 @@ dependencies = [
     { name = "torchvision", version = "0.29.2", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "lightning", specifier = ">=2.6.6" },
@@ -903,6 +909,12 @@ requires-dist = [
     { name = "torchmetrics", specifier = ">=1.9.0" },
     { name = "torchvision", marker = "sys_platform != 'win32'" },
     { name = "torchvision", marker = "sys_platform == 'win32'", index = "https://download.pytorch.org/whl/cu126" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.3,<10" },
+    { name = "ruff", specifier = ">=0.17.3,<1" },
 ]
 
 [[package]]

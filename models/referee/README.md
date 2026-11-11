@@ -3,7 +3,7 @@
 - [data/](data/README.md) prepares ATYPICT canvases and exports smoke packages.
 - `training/`: model training and fine-tuning.
 - `inference/`: model loading and predictions.
-- `evaluation/`: validation, experiments and benchmarks.
+- [evaluation/](evaluation/README.md): notebook-based checkpoint auditing, validation metrics and threshold review.
 - `checkpoints/`: local model weights, ignored by Git.
 
 The data pipeline has been exercised on synthetic fixtures and a bounded ATYPICT sample. The training, inference and evaluation folders describe the planned model work.

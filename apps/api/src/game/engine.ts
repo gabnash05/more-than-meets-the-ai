@@ -1,10 +1,11 @@
 import { MemoryGameStore } from "../store";
+import { MAX_STROKE_APPEND_POINTS } from "../../../../packages/game-contracts/src/drawing";
 import { PROMPTS } from "./prompts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { PlayerProfile } from "../../../../packages/game-contracts/src/player";
 import type {
   CanvasOperation,
-  DrawingBatch,
+  DrawingPayload,
 } from "../../../../packages/game-contracts/src/drawing";
 import type {
   RoomSession,
@@ -222,7 +223,7 @@ function validPoint(p: unknown): boolean {
         v.pressure <= 1))
   );
 }
-function validateOperations(group: Group, batch: DrawingBatch, seen: Set<string>, operationsJson: string): void {
+function validateOperations(group: Group, batch: DrawingPayload, seen: Set<string>, operationsJson: string): void {
   requireThat(
     Array.isArray(batch.operations) &&
       batch.operations.length > 0 &&
@@ -270,7 +271,7 @@ function validateOperations(group: Group, batch: DrawingBatch, seen: Set<string>
         group.openAction === op.actionId &&
           Array.isArray(op.points) &&
           op.points.length > 0 &&
-          op.points.length <= 512 &&
+          op.points.length <= MAX_STROKE_APPEND_POINTS &&
           op.points.every(validPoint),
         "invalid-drawing",
         "Invalid stroke continuation.",
@@ -342,7 +343,7 @@ export class RoomEngine {
   private creatingCodes = new Set<string>();
   private inferenceTimer?: ReturnType<typeof setInterval>;
   private inferenceCursor: Partial<Record<Role, string>> = {};
-  private activeInference = new Map<Role, { code: string; controller: AbortController; guessing: boolean }>();
+  private activeInference = new Map<string, { role: Role; code: string; controller: AbortController; guessing: boolean }>();
   private idleSince = new Map<string, number>();
   private canvasBytes = new Map<string, number>();
   private roomBytes = new Map<string, number>();
@@ -357,6 +358,8 @@ export class RoomEngine {
   private resultSaveErrors = new Set<string>();
   private stopping = false;
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private pendingFinalizations = new Set<string>();
+  private archivePublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private now: () => number;
   private chooseMs: number;
   private drawMs: number;
@@ -388,7 +391,9 @@ export class RoomEngine {
         this.cancelInference(code);
         await this.archives.get(code);
         const timer = this.timers.get(code); if (timer) clearTimeout(timer);
-        this.timers.delete(code); this.rooms.delete(code); this.idleSince.delete(code);
+        this.timers.delete(code);
+        const archiveTimer = this.archivePublishTimers.get(code); if (archiveTimer) clearTimeout(archiveTimer);
+        this.archivePublishTimers.delete(code); this.rooms.delete(code); this.idleSince.delete(code);
         this.archives.delete(code); this.archiveCounts.delete(code); this.archiveErrors.delete(code); this.resultSaveErrors.delete(code);
         this.roomBytes.delete(code);
         for (const key of this.canvasBytes.keys()) if (key.startsWith(`${code}:`)) this.canvasBytes.delete(key);
@@ -402,6 +407,10 @@ export class RoomEngine {
     game.refereeStreak = undefined;
     game.refereeWarning = undefined;
     return hadWarning;
+  }
+
+  private inferenceKey(code: string, role: Role): string {
+    return `${code}:${role}`;
   }
 
   private cancelInference(code: string): boolean {
@@ -442,27 +451,38 @@ export class RoomEngine {
     game.aiRound = { scoringVersion: "ai-benchmark-v1", status: "unsolved", points: 0, elapsedMs: null };
   }
 
+  /**
+   * Dispatch every due observation that has no job in flight.
+   *
+   * For each role, scan room codes in round-robin order so repeated passes do
+   * not always put the same room first. A room/role pair is skipped while its
+   * previous observation is still pending: canvas updates coalesce into the
+   * next eligible pass instead of building one queued job per stroke. Roles
+   * that become due in the same room share one rendered canvas and reservation.
+   */
   private scheduleObservations(): void {
     const inference = this.options.inference;
     if (!inference || this.stopping) return;
-    const selected = new Map<string, Role[]>();
     const codes = [...this.rooms.keys()];
+    const planned = new Map<string, Role[]>();
     for (const role of ["guesser", "referee"] as const) {
-      if (this.activeInference.has(role)) continue;
       const previous = codes.indexOf(this.inferenceCursor[role] ?? "");
+      let nextCursor: string | undefined;
       for (let offset = 1; offset <= codes.length; offset++) {
         const code = codes[(previous + offset) % codes.length];
         const room = this.rooms.get(code);
-        if (!room || !this.observationDue(room, role)) continue;
-        const roles = selected.get(code) ?? [];
+        if (!room || this.activeInference.has(this.inferenceKey(code, role)) || !this.observationDue(room, role)) continue;
+        nextCursor ??= code;
+        const roles = planned.get(code) ?? [];
         roles.push(role);
-        selected.set(code, roles);
-        this.activeInference.set(role, { code, controller: new AbortController(), guessing: false });
-        this.inferenceCursor[role] = code;
-        break;
+        planned.set(code, roles);
       }
+      if (nextCursor) this.inferenceCursor[role] = nextCursor;
     }
-    for (const [code, roles] of selected) void this.observeGroup(code, roles);
+    for (const [code, roles] of planned) {
+      for (const role of roles) this.activeInference.set(this.inferenceKey(code, role), { role, code, controller: new AbortController(), guessing: false });
+      void this.observeGroup(code, roles);
+    }
   }
 
   private observationDue(room: State, role: Role): boolean {
@@ -485,7 +505,7 @@ export class RoomEngine {
     const reserved = await this.serial(code, async () => {
       const room = this.rooms.get(code);
       if (!room) return;
-      const due = roles.filter(role => !this.activeInference.get(role)?.controller.signal.aborted && this.observationDue(room, role));
+      const due = roles.filter(role => !this.activeInference.get(this.inferenceKey(code, role))?.controller.signal.aborted && this.observationDue(room, role));
       if (!due.length) return;
       const game = room.game!;
       const group = game.groups[0];
@@ -510,10 +530,10 @@ export class RoomEngine {
       return { jobs, operations, at };
     }).catch(() => undefined);
     if (!reserved) {
-      for (const role of roles) this.activeInference.delete(role);
+      for (const role of roles) this.activeInference.delete(this.inferenceKey(code, role));
       return;
     }
-    for (const role of roles) if (!reserved.jobs.some(entry => entry.role === role)) this.activeInference.delete(role);
+    for (const role of roles) if (!reserved.jobs.some(entry => entry.role === role)) this.activeInference.delete(this.inferenceKey(code, role));
     let png: Buffer | null | undefined;
     try {
       const job = reserved.jobs[0].job;
@@ -521,12 +541,12 @@ export class RoomEngine {
     } catch {
       png = undefined;
     }
-    await Promise.all(reserved.jobs.map(({ role, job }) => this.observe(role, { job, at: reserved.at }, png)));
+    await Promise.all(reserved.jobs.map(({ role, job }) => this.observe(code, role, { job, at: reserved.at }, png)));
   }
 
-  private async observe(role: Role, reserved: { job: Job; at: number }, png: Buffer | null | undefined): Promise<void> {
+  private async observe(code: string, role: Role, reserved: { job: Job; at: number }, png: Buffer | null | undefined): Promise<void> {
     const inference = this.options.inference!;
-    const active = this.activeInference.get(role)!;
+    const active = this.activeInference.get(this.inferenceKey(code, role))!;
     const { signal } = active.controller;
     let submittedAt: number | undefined;
     let outcome: Outcome | undefined;
@@ -634,7 +654,7 @@ export class RoomEngine {
           if (live) this.publish(live.room);
         });
       }
-      this.activeInference.delete(role);
+      this.activeInference.delete(this.inferenceKey(code, role));
       console.info(JSON.stringify({
         event: "inference", role, revision: reserved.job.artifactRevision,
         outcome: signal.reason === "invalidated" ? "cancelled" : (outcome?.status ?? (submittedAt === undefined ? "skipped" : "failed")),
@@ -682,8 +702,15 @@ export class RoomEngine {
     }
   }
   private persisted(room: State): PersistedRoom {
-    const copy = clone(room);
-    for (const group of copy.game?.groups ?? []) group.operations = [];
+    // Strip journal geometry before deep cloning: drawings have their own archive.
+    // Clone every remaining nested value so stores cannot mutate the live room.
+    const copy = clone({
+      ...room,
+      ...(room.game ? { game: {
+        ...room.game,
+        groups: room.game.groups.map(group => ({ ...group, operations: [] })),
+      } } : {}),
+    });
     return {
       code: room.code,
       state: copy as unknown as Record<string, unknown>,
@@ -846,6 +873,7 @@ export class RoomEngine {
     };
     if (game && group)
       snapshot.game = {
+        closing: room.phase === "drawing" && game.groups.every(entry => entry.closed),
         saving: this.resultSaveErrors.has(room.code)
           ? "blocked"
           : (this.archiveCounts.get(room.code) ?? 0)
@@ -889,7 +917,7 @@ export class RoomEngine {
           durableSequence: group.durableSequence,
         },
         refereeWarning: room.phase === "drawing" && !group.pause && game.refereeWarning && game.refereeWarning.expiresAt > now ? game.refereeWarning : undefined,
-        aiStatus: game.aiRound?.status === "unavailable" || !room.aiMatch?.guesser ? "unavailable" : game.aiRound?.status === "solved" ? "correct" : this.activeInference.get("guesser")?.code === room.code && this.activeInference.get("guesser")?.guessing ? "guessing" : "waiting",
+        aiStatus: game.aiRound?.status === "unavailable" || !room.aiMatch?.guesser ? "unavailable" : game.aiRound?.status === "solved" ? "correct" : this.activeInference.get(this.inferenceKey(room.code, "guesser"))?.guessing ? "guessing" : "waiting",
         scoringEligibility: {
           eligible: false,
           reason: "AI inference is unavailable",
@@ -918,7 +946,24 @@ export class RoomEngine {
     }
     return { snapshot, privateState };
   }
+  private scheduleArchivePublish(room: State): void {
+    if (this.stopping || this.rooms.get(room.code) !== room || this.archivePublishTimers.has(room.code)) return;
+    const generation = room.game?.generation;
+    const timer = setTimeout(() => {
+      // Retain the token until the queued callback runs, so an immediate publish
+      // can supersede even a timer that has already fired.
+      void this.serial(room.code, async () => {
+        if (this.archivePublishTimers.get(room.code) !== timer) return;
+        this.archivePublishTimers.delete(room.code);
+        if (!this.stopping && this.rooms.get(room.code) === room && room.game?.generation === generation) this.publish(room);
+      });
+    }, 200);
+    this.archivePublishTimers.set(room.code, timer);
+  }
   private publish(room: State): void {
+    const timer = this.archivePublishTimers.get(room.code);
+    if (timer) clearTimeout(timer);
+    this.archivePublishTimers.delete(room.code);
     for (const p of room.players) {
       const id = this.leases.get(`${room.code}:${p.id}`);
       if (id)
@@ -1123,7 +1168,8 @@ export class RoomEngine {
           if (this.stopping) return;
           try {
             await this.options.store.appendDrawing(record);
-            this.archiveErrors.delete(room.code);
+            const recovered = this.archiveErrors.delete(room.code);
+            if (recovered) this.publish(room);
             break;
           } catch {
             if (!this.archiveErrors.has(room.code)) {
@@ -1142,7 +1188,8 @@ export class RoomEngine {
           room.code,
           (this.archiveCounts.get(room.code) ?? 1) - 1,
         );
-        this.publish(room);
+        this.scheduleArchivePublish(room);
+        this.requestFinalization(room);
       },
     );
     this.archives.set(room.code, archive);
@@ -1463,6 +1510,31 @@ export class RoomEngine {
     }
     Object.assign(room, candidate);
   }
+  /** Wake a closed turn once its archive is ready, preserving room event ordering. */
+  private requestFinalization(room: State): void {
+    const game = room.game;
+    if (this.stopping || room.phase !== "drawing" || !game ||
+        !game.groups.every(group => group.closed) ||
+        (this.archiveCounts.get(room.code) ?? 0) !== 0 ||
+        this.archiveErrors.has(room.code)) return;
+    const generation = game.generation;
+    const key = `${room.code}:${generation}`;
+    if (this.pendingFinalizations.has(key)) return;
+    this.pendingFinalizations.add(key);
+    // Queue behind the current command; never await this queue from inside that command.
+    void this.serial(room.code, async () => {
+      if (this.stopping || this.rooms.get(room.code) !== room ||
+          room.phase !== "drawing" || room.game?.generation !== generation ||
+          !room.game.groups.every(group => group.closed) ||
+          (this.archiveCounts.get(room.code) ?? 0) !== 0 ||
+          this.archiveErrors.has(room.code)) return;
+      await this.tick(room);
+    }).catch(() => {
+      if (!this.stopping && this.rooms.get(room.code) === room &&
+          room.phase === "drawing" && room.game?.generation === generation)
+        this.scheduleRetry(room);
+    }).finally(() => this.pendingFinalizations.delete(key));
+  }
   private schedule(room: State): void {
     if (this.stopping) return;
     const old = this.timers.get(room.code);
@@ -1542,15 +1614,30 @@ export class RoomEngine {
     }
     if (room.phase === "drawing") {
       this.publish(room);
+      const closingDrawers: string[] = [];
       for (const g of room.game!.groups)
         if (
           !g.closed &&
           (g.pause ? g.pause.until <= now : g.deadlineAt <= now)
         ) {
           g.closed = true;
+          if (g.openAction) closingDrawers.push(g.drawerId);
           this.cancelInference(room.code);
           changed = true;
         }
+      if (closingDrawers.length) {
+        // Commit closure before broadcasting/archiving a canonical stroke end.
+        // A failed save can then roll back without leaking a synthetic operation.
+        room.revision++;
+        await this.save(room);
+        for (const drawerId of closingDrawers) this.closeStroke(room, drawerId);
+        this.publish(room);
+        this.schedule(room);
+        // Finalize on a separate serialized turn after the new archive drains.
+        // Its failure must retain this committed closure, not restore the open stroke.
+        this.requestFinalization(room);
+        return;
+      }
       if (
         room.game!.groups.every((g) => g.closed) &&
         !(this.archiveCounts.get(room.code) ?? 0)
@@ -1887,7 +1974,8 @@ export class RoomEngine {
               }
               if (
                 room.game!.groups.every((g) => g.closed) &&
-                !(this.archiveCounts.get(room.code) ?? 0)
+                !(this.archiveCounts.get(room.code) ?? 0) &&
+                !group.openAction
               ) {
                 await this.finish(room);
                 save = false;
@@ -1911,7 +1999,7 @@ export class RoomEngine {
             break;
           }
           case "room:drawing": {
-            const batch = (payload?.batch ?? envelope.payload) as DrawingBatch;
+            const batch = (payload?.batch ?? envelope.payload) as DrawingPayload;
             const group = this.group(room, player);
             requireThat(
               room.phase === "drawing" &&
@@ -2070,6 +2158,12 @@ export class RoomEngine {
             for (const key of this.canvasBytes.keys()) if (key.startsWith(`${room.code}:`)) this.canvasBytes.delete(key);
           }
         }
+        // Close the accepted stroke only after the closing solve is saved, so a
+        // failed save cannot archive or broadcast a stroke end that was rolled back.
+        if (name === "room:guess") {
+          const group = this.group(room, player);
+          if (group?.closed) this.closeStroke(room, group.drawerId);
+        }
         if (name === "room:leave") {
           this.connections.delete(connectionId);
           this.leases.delete(`${room.code}:${player.id}`);
@@ -2082,9 +2176,10 @@ export class RoomEngine {
         if (name !== "room:drawing") {
           this.publish(room);
           this.schedule(room);
+          this.requestFinalization(room);
         } else if (!(this.options.store instanceof MemoryGameStore) && (this.archiveCounts.get(room.code) ?? 0) === 1) {
-          // Slow archives need a saving update. Memory mode publishes its durable watermark immediately.
-          this.publish(room);
+          // Notify saving progress without publishing a full snapshot for each batch.
+          this.scheduleArchivePublish(room);
         }
         return ack;
       } catch (error) {
@@ -2111,6 +2206,9 @@ export class RoomEngine {
     if (this.inferenceTimer) clearInterval(this.inferenceTimer);
     for (const active of this.activeInference.values()) active.controller.abort("invalidated");
     await Promise.allSettled([...this.queues.values()]);
+    this.pendingFinalizations.clear();
     for (const timer of this.timers.values()) clearTimeout(timer);
+    for (const timer of this.archivePublishTimers.values()) clearTimeout(timer);
+    this.archivePublishTimers.clear();
   }
 }

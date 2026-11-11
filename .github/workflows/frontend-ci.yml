@@ -2,9 +2,8 @@ name: Frontend CI
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+  # Main pushes call this workflow from container-images.yml before publishing.
+  workflow_call:
   workflow_dispatch:
 
 permissions:

@@ -142,7 +142,18 @@ test("an echo during a held pointer does not end the local stroke", async ({ pag
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   await page.mouse.move(middle.x, middle.y, { steps: 5 });
-  await page.evaluate(() => window.canvasReview!.echo());
+  const busyTransitions = await canvas.evaluate(async (element: HTMLCanvasElement) => {
+    let transitions = 0;
+    const observer = new MutationObserver(records => {
+      transitions += records.filter(record => record.attributeName === "aria-busy" && record.oldValue === "false").length;
+    });
+    observer.observe(element, { attributes: true, attributeOldValue: true, attributeFilter: ["aria-busy"] });
+    await window.canvasReview!.echo();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    observer.disconnect();
+    return transitions;
+  });
+  expect(busyTransitions).toBe(0);
   expect(await page.evaluate(() => window.canvasReview!.operations().filter(op => op.type === "stroke.end").length)).toBe(0);
   await page.mouse.move(end.x, end.y, { steps: 5 });
   await page.mouse.up();
@@ -191,4 +202,101 @@ test("saved drawing viewer replays identical pixels at its own size", async ({ p
   await expect(saved).toHaveAttribute("data-readonly", "true");
   await expect.poll(() => hash(saved)).toEqual(original);
   await expect.poll(() => hash(live)).toEqual(original);
+});
+
+test("a burst replays exact pixels once and reset separates batches", async ({ page }) => {
+  await page.goto("/review/canvas/");
+  const canvas = page.getByLabel("Drawing canvas");
+  await expect(canvas).toHaveAttribute("data-ready", "true");
+  await line(page, [150, 150], [450, 300]);
+  await page.getByRole("button", { name: "Fill" }).click();
+  await clickAt(page, 80, 80);
+  await expect(canvas).toHaveAttribute("aria-busy", "false");
+  const operations = await page.evaluate(() => window.canvasReview!.operations());
+  const canonical = await pixels(page);
+  await page.evaluate(() => window.canvasReview!.hydrate([]));
+  const cycles = await canvas.evaluate(async (element: HTMLCanvasElement, ops) => {
+    let count = 0;
+    const observer = new MutationObserver(records => {
+      count += records.filter(record => record.attributeName === "aria-busy" && record.oldValue === "false").length;
+    });
+    observer.observe(element, { attributes: true, attributeOldValue: true, attributeFilter: ["aria-busy"] });
+    await Promise.all(ops.map(op => window.canvasReview!.apply([op])));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    observer.disconnect();
+    return count;
+  }, operations);
+  expect(cycles).toBe(1);
+  expect(await pixels(page)).toEqual(canonical);
+  await page.evaluate(async ops => {
+    const first = window.canvasReview!.apply(ops);
+    const reset = window.canvasReview!.hydrate([]);
+    const last = window.canvasReview!.apply(ops);
+    await Promise.all([first, reset, last]);
+  }, operations);
+  expect(await pixels(page)).toEqual(canonical);
+});
+
+test("incremental replay progresses without animation frames", async ({ page }) => {
+  await page.goto("/review/canvas/");
+  const canvas = page.getByLabel("Drawing canvas");
+  await expect(canvas).toHaveAttribute("data-ready", "true");
+  await line(page, [150, 150], [450, 300]);
+  const operations = await page.evaluate(() => window.canvasReview!.operations());
+  const expected = await pixels(page);
+  await page.evaluate(() => { window.requestAnimationFrame = () => 1; window.cancelAnimationFrame = () => {}; });
+  await page.evaluate(() => window.canvasReview!.hydrate([]));
+  await page.evaluate(ops => Promise.all(ops.map(op => window.canvasReview!.apply([op]))), operations);
+  expect(await pixels(page)).toEqual(expected);
+});
+
+test("coalesced pointer samples preserve every point within the server operation limit", async ({ page }) => {
+  await page.goto("/review/canvas/");
+  const canvas = page.getByLabel("Drawing canvas");
+  await expect(canvas).toHaveAttribute("data-ready", "true");
+  await canvas.evaluate(element => document.addEventListener("pointerdown", event => {
+    (element as HTMLCanvasElement).dataset.testPointerId = String(event.pointerId);
+  }, { capture: true, once: true }));
+  const from = await position(page, 100, 100);
+  await page.mouse.move(from.x, from.y); await page.mouse.down();
+  const expected = await canvas.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const pointerId = Number((element as HTMLCanvasElement).dataset.testPointerId);
+    const samples = Array.from({ length: 600 }, (_, index) => new PointerEvent("pointermove", {
+      pointerId, buttons: 1, pressure: .4,
+      clientX: rect.x + (100 + index / 2) * rect.width / 1024,
+      clientY: rect.y + (100 + index / 4) * rect.height / 768,
+    }));
+    const event = new PointerEvent("pointermove", { pointerId, buttons: 1, bubbles: true });
+    Object.defineProperty(event, "getCoalescedEvents", { value: () => samples });
+    element.dispatchEvent(event);
+    return samples.map(sample => ({ x: (sample.clientX - rect.x) * 1024 / rect.width, y: (sample.clientY - rect.y) * 768 / rect.height, pressure: sample.pressure }));
+  });
+  await page.mouse.up();
+  const operations = await page.evaluate(() => window.canvasReview!.operations());
+  const appends = operations.filter(op => op.type === "stroke.append");
+  expect(appends.every(op => op.points.length <= 512)).toBe(true);
+  expect(appends.flatMap(op => op.points).slice(0, 600).map(({ x, y, pressure }) => ({ x, y, pressure }))).toEqual(expected);
+  const original = await pixels(page);
+  await page.evaluate(ops => window.canvasReview!.hydrate(ops), operations);
+  expect(await pixels(page)).toEqual(original);
+});
+
+test("overflow requires a full replay and restores exact pixels", async ({ page }) => {
+  await page.goto("/review/canvas/");
+  const canvas = page.getByLabel("Drawing canvas");
+  await expect(canvas).toHaveAttribute("data-ready", "true");
+  await line(page, [150, 150], [450, 300]);
+  const operations = await page.evaluate(() => window.canvasReview!.operations());
+  const expected = await pixels(page);
+  const outcomes = await page.evaluate(async ops => {
+    // All calls are submitted synchronously, before a frame can drain the queue.
+    const calls = Array.from({ length: 600 }, (_, index) => window.canvasReview!.apply([{ ...ops[0], opId: `overflow-${index}` }]));
+    return (await Promise.allSettled(calls)).map(result => result.status === "rejected" ? result.reason.name : "resolved");
+  }, operations);
+  expect(outcomes.every(outcome => outcome === "ReplayQueueOverflowError")).toBe(true);
+  await expect(page.evaluate(() => window.canvasReview!.apply([]))).rejects.toThrow("authoritative reset");
+  await page.evaluate(ops => window.canvasReview!.hydrate(ops), operations);
+  await expect(canvas).toHaveAttribute("aria-busy", "false");
+  expect(await pixels(page)).toEqual(expected);
 });

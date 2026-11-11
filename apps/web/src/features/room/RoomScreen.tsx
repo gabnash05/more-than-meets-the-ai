@@ -38,9 +38,11 @@ import {
   type DrawingBatcher,
 } from "@/contracts/drawing";
 import DrawingCanvas from "@/features/canvas/DrawingCanvas";
+import { ReplayQueueOverflowError } from "@/features/canvas/replayQueue";
 import { createDrawingBatcher } from "@/features/drawing-events";
 import { Avatar } from "@/features/player/Avatar";
 import { AiCard } from "./AiCard";
+import { RoomFeedback } from "./RoomFeedback";
 import { SavedSketch } from "./SavedSketch";
 import { FinalResults, RoundRecap } from "./Results";
 import "./room.css";
@@ -127,6 +129,9 @@ export default function RoomScreen() {
     [pendingDrawing, setPendingDrawing] = useState(0),
     [settingsPending, setSettingsPending] = useState(false),
     [settingsFailed, setSettingsFailed] = useState(false);
+  const [guessPending, setGuessPending] = useState(false);
+  const pendingGuess = useRef<{ canvasId: string; generation: number } | null>(null);
+  const lifecycle = useRef(0);
   const [aiPulse, setAiPulse] = useState<AiGuessEvent>();
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 250); return () => clearInterval(timer); }, []);
   const client = useRef<RoomClient | null>(null),
@@ -144,8 +149,12 @@ export default function RoomScreen() {
       return;
     }
     const c = createRoomClient();
+    const lifecycleRef = lifecycle;
     client.current = c;
     let alive = true;
+    let replayEpoch = 0;
+    let recoveringReplay = false;
+    const replayRecoveryMessage = "Drawing replay failed; restoring the authoritative canvas…";
     const unsubscribe = c.subscribe((event) => {
       if (!alive) return;
       if (event.type === "ai-guess") {
@@ -163,6 +172,11 @@ export default function RoomScreen() {
         const game = event.snapshot.game;
         const next = game ? { id: game.canvasId, generation: game.generation } : null;
         if (activeCanvas.current?.id !== next?.id || activeCanvas.current?.generation !== next?.generation) {
+          replayEpoch++;
+          recoveringReplay = false;
+          lifecycle.current++;
+          pendingGuess.current = null;
+          setGuessPending(false);
           activeCanvas.current = next;
           seenAiJobs.current.clear();
           if (aiPulseTimer.current) clearTimeout(aiPulseTimer.current);
@@ -190,22 +204,46 @@ export default function RoomScreen() {
           setSession(null);
           setError(event.message);
         }
-        if (event.status !== "connected") setCaughtUp(false);
+        if (event.status !== "connected") { replayEpoch++; recoveringReplay = false; lifecycle.current++; pendingGuess.current = null; setGuessPending(false); setCaughtUp(false); }
       }
       if (event.type === "drawing") {
         if (c.getSession()?.snapshot.phase === "interrupted") return;
         if (activeCanvas.current?.id !== event.canvasId || activeCanvas.current.generation !== event.generation) return;
-        if (event.reset) setCaughtUp(false);
+        if (event.reset) { replayEpoch++; setCaughtUp(false); }
+        const currentReplayEpoch = replayEpoch;
+        const currentLifecycle = lifecycle.current;
         const replay = event.reset
           ? canvas.current?.hydrate(event.operations)
           : canvas.current?.applyOperations(event.operations);
         void replay
           ?.then(() => {
-            if (alive && event.caughtUp && activeCanvas.current?.id === event.canvasId && activeCanvas.current.generation === event.generation) setCaughtUp(true);
+            if (alive && lifecycle.current === currentLifecycle && replayEpoch === currentReplayEpoch && activeCanvas.current?.id === event.canvasId && activeCanvas.current.generation === event.generation) {
+              if (event.reset) {
+                recoveringReplay = false;
+                setError(previous => previous === replayRecoveryMessage ? "" : previous);
+              }
+              if (event.caughtUp && !recoveringReplay) setCaughtUp(true);
+            }
           })
-          .catch(() =>
-            setError("Could not restore the drawing. Please retry."),
-          );
+          .catch((error: unknown) => {
+            if (!alive || lifecycle.current !== currentLifecycle || replayEpoch !== currentReplayEpoch || activeCanvas.current?.id !== event.canvasId || activeCanvas.current.generation !== event.generation) return;
+            if (!recoveringReplay) {
+              recoveringReplay = true;
+              const recoveryEpoch = ++replayEpoch;
+              setCaughtUp(false);
+              if (!(error instanceof ReplayQueueOverflowError)) setError(replayRecoveryMessage);
+              void c.resync().then(() => {
+                // A shared resync may have emitted the very prefix that failed.
+                // If no newer reset arrived, request one after that job settles.
+                if (alive && replayEpoch === recoveryEpoch && recoveringReplay) return c.resync();
+              }).catch(() => {
+                if (alive && replayEpoch === recoveryEpoch) setError("Could not restore the drawing. Please retry.");
+              });
+            } else if (!(error instanceof ReplayQueueOverflowError && recoveringReplay && !event.reset)) {
+              setCaughtUp(false);
+              setError("Could not restore the drawing. Please retry.");
+            }
+          });
       }
     });
     c.resume(code, saved.resumeToken)
@@ -215,7 +253,10 @@ export default function RoomScreen() {
           const game = s.snapshot.game;
           activeCanvas.current = game ? { id: game.canvasId, generation: game.generation } : null;
           setSession(s);
-          if (!s.snapshot.game) void c.resync().catch(e => setError(e instanceof Error ? e.message : "Could not restore this room."));
+          if (!s.snapshot.game) {
+            const currentLifecycle = lifecycle.current;
+            void c.resync().catch(e => { if (alive && lifecycle.current === currentLifecycle) setError(e instanceof Error ? e.message : "Could not restore this room."); });
+          }
         }
       })
       .catch((e) => {
@@ -228,6 +269,8 @@ export default function RoomScreen() {
       });
     return () => {
       alive = false;
+      lifecycleRef.current++;
+      pendingGuess.current = null;
       if (aiPulseTimer.current) clearTimeout(aiPulseTimer.current);
       unsubscribe();
       c.dispose();
@@ -243,6 +286,7 @@ export default function RoomScreen() {
     result = snap?.phase === "result",
     choosing = snap?.phase === "choosing",
     paused = !!game?.pause,
+    closing = game?.closing === true,
     promptsExhausted = snap?.startBlockers?.includes("Not enough unused prompts remain.") ?? false,
     teamDone = snap?.settings.mode === "team" && game?.teamProgress?.some(progress => progress.teamId === me?.teamId && (progress.status === "solved" || progress.status === "finished"));
   const seconds = game?.pause ? Math.ceil(game.pause.remainingMs / 1000) : game?.deadlineAt ? Math.max(0, Math.ceil((game.deadlineAt - clock - clockOffset) / 1000)) : null;
@@ -257,9 +301,10 @@ export default function RoomScreen() {
       generation: game.generation,
       transport: "room-client",
       send: (batch) => {
+        const currentLifecycle = lifecycle.current;
         void client.current
           ?.submitDrawing(batch)
-          .catch((e) => setError(e.message));
+          .catch((e) => { if (lifecycle.current === currentLifecycle) setError(e.message); });
       },
     });
     batcher.current = b;
@@ -270,13 +315,16 @@ export default function RoomScreen() {
   }, [code, game?.canvasId, game?.generation, streamVersion]);
   useEffect(() => {
     if (!game?.canvasId) return;
+    const currentLifecycle = lifecycle.current;
+    let current = true;
     if (snap?.phase === "interrupted") {
       void client.current?.getInterruptedSketch(game.canvasId, game.generation)
-        .then(sketch => canvas.current?.hydrate(sketch.operations))
-        .catch(() => setError("Could not load the saved drawing."));
+        .then(sketch => current && lifecycle.current === currentLifecycle ? canvas.current?.hydrate(sketch.operations) : undefined)
+        .catch(() => { if (current && lifecycle.current === currentLifecycle) setError("Could not load the saved drawing."); });
     } else {
-      void client.current?.resync().catch((e) => setError(e instanceof Error ? e.message : "Could not restore the drawing."));
+      void client.current?.resync().catch((e) => { if (current && lifecycle.current === currentLifecycle) setError(e instanceof Error ? e.message : "Could not restore the drawing."); });
     }
+    return () => { current = false; };
   }, [game?.canvasId, game?.generation, snap?.phase]);
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -284,7 +332,7 @@ export default function RoomScreen() {
       if (target?.closest("input, textarea, select, [contenteditable=true]"))
         return;
       if (
-        !drawing || paused || teamDone ||
+        !drawing || paused || closing || teamDone ||
         role !== "drawer" ||
         !caughtUp ||
         connection !== "connected" ||
@@ -315,13 +363,15 @@ export default function RoomScreen() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [drawing, paused, teamDone, role, caughtUp, connection, canvasStatus.busy]);
+  }, [drawing, paused, closing, teamDone, role, caughtUp, connection, canvasStatus.busy]);
   const getClient = useCallback(() => client.current, []);
   const action = useCallback(async (fn: () => Promise<void>) => {
     setError("");
+    const currentLifecycle = lifecycle.current;
     try {
       await fn();
     } catch (e) {
+      if (currentLifecycle !== lifecycle.current) return;
       setError(
         e instanceof Error
           ? e.message
@@ -332,12 +382,29 @@ export default function RoomScreen() {
   function send(event: FormEvent) {
     event.preventDefault();
     const text = message.trim();
-    if (!text) return;
-    void action(async () => {
-      if (drawing && role === "guesser")
-        await client.current?.submitGuess(text);
-      else await client.current?.sendChat(text);
-      setMessage("");
+    const roomClient = client.current;
+    if (!text || !roomClient) return;
+    if (!(drawing && role === "guesser")) {
+      void action(async () => {
+        await roomClient.sendChat(text);
+        setMessage(current => current.trim() === text ? "" : current);
+      });
+      return;
+    }
+    if (!game || closing || paused || teamDone || me?.solved || connection !== "connected" || pendingGuess.current) return;
+    // Claim synchronously so repeated Enter cannot race a React render.
+    const token = { canvasId: game.canvasId, generation: game.generation };
+    pendingGuess.current = token;
+    setGuessPending(true);
+    setError("");
+    void roomClient.submitGuess(text).then(() => {
+      if (pendingGuess.current === token) setMessage(current => current.trim() === text ? "" : current);
+    }).catch((reason: unknown) => {
+      if (pendingGuess.current === token) setError(reason instanceof Error ? reason.message : "Could not submit your guess.");
+    }).finally(() => {
+      if (pendingGuess.current !== token) return;
+      pendingGuess.current = null;
+      setGuessPending(false);
     });
   }
   function change(next: Partial<RoomSettings>) {
@@ -748,7 +815,8 @@ export default function RoomScreen() {
                 <strong>{choosing ? (session.privateState?.promptOptions?.length ? "Pick a word below" : `${snap.players.find(p => p.id === (game?.choosingPlayerId ?? game?.drawerId))?.profile.name ?? "The drawer"} is choosing`) : role === "drawer" ? session.privateState?.target : game?.hint}</strong>
               </div>
               <div className="room-time"><span>Time</span><strong>{displayTime}</strong></div>
-            </div></>}
+            </div>
+            <div className="room-feedback-slot"><RoomFeedback phase={snap.phase} role={role} pending={guessPending} solved={me.solved} closing={closing} saving={game?.saving} /></div></>}
             {snap.phase === "finished" && <FinalResults snapshot={snap} playerId={session.playerId} host={!!host} onReturn={() => void action(() => client.current!.returnToLobby())} />}
             {result && game?.result && <RoundRecap snapshot={snap} playerId={session.playerId} seconds={seconds} onReturn={() => void action(() => client.current!.returnToLobby())} />}
             <div className={`room-board${refereeWarning ? " room-board-warning" : ""}`} hidden={snap.phase === "finished"}>
@@ -756,14 +824,17 @@ export default function RoomScreen() {
               <DrawingCanvas
                 ref={canvas}
                 readOnly={
-                  !drawing || paused || teamDone ||
+                  !drawing || paused || closing || teamDone ||
                   role !== "drawer" ||
                   connection !== "connected" ||
                   !caughtUp
                 }
                 settings={settings}
                 onOperation={(op) => batcher.current?.enqueue(op)}
-                onStatusChange={setCanvasStatus}
+                onStatusChange={status => {
+                  if (role !== "drawer") return;
+                  setCanvasStatus(previous => previous.canUndo === status.canUndo && previous.canRedo === status.canRedo && previous.busy === status.busy && previous.hasInk === status.hasInk ? previous : status);
+                }}
                 onError={setError}
               />
             {choosing && <section className="room-panel room-result-overlay"><h2>{session.privateState?.promptOptions?.length ? "Choose a word" : "Waiting for the drawer"}</h2><div className="room-modal-actions">{session.privateState?.promptOptions?.map(option => <button className="room-button" key={option.id} onClick={() => void action(() => client.current!.choosePrompt(option.id))}>{option.label}</button>)}</div></section>}
@@ -774,7 +845,7 @@ export default function RoomScreen() {
               <fieldset
                 className="room-tools"
                 disabled={
-                  !caughtUp || paused || teamDone || connection !== "connected" || canvasStatus.busy
+                  !caughtUp || paused || closing || teamDone || connection !== "connected" || canvasStatus.busy
                 }
               >
                 <div className="room-tool-row">
@@ -872,7 +943,7 @@ export default function RoomScreen() {
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     disabled={
-                      snap.phase !== "drawing" || paused || teamDone || connection !== "connected" || !!me.solved || role !== "guesser"
+                      snap.phase !== "drawing" || paused || closing || teamDone || connection !== "connected" || !!me.solved || role !== "guesser"
                     }
                     placeholder={
                       drawing && role === "guesser"
@@ -883,7 +954,7 @@ export default function RoomScreen() {
                   <button
                     className="room-button"
                     disabled={
-                      snap.phase !== "drawing" || paused || teamDone || connection !== "connected" || !!me.solved || role !== "guesser"
+                      snap.phase !== "drawing" || paused || closing || teamDone || connection !== "connected" || !!me.solved || role !== "guesser" || guessPending
                     }
                   >
                     Send

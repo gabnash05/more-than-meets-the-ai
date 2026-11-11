@@ -6,12 +6,14 @@ import { createUuid as uid } from "@/lib/uuid";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  MAX_STROKE_APPEND_POINTS,
   type CanvasOperation,
   type CanvasPoint,
   type DrawingCanvasHandle,
   type DrawingCanvasProps,
 } from "../../contracts/drawing";
 import { BitmapHistory, type Snapshot } from "./history";
+import { ReplayQueue } from "./replayQueue";
 import styles from "./DrawingCanvas.module.css";
 
 type Engine = { undo(): void; redo(): void; clear(): void; finish(): void; hydrate(operations: CanvasOperation[]): Promise<void>; applyOperations(operations: CanvasOperation[]): Promise<void> };
@@ -39,7 +41,6 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       let history = new BitmapHistory();
       let replaying = false;
       let replayPending = 0;
-      let replayQueue = Promise.resolve();
       const seen = new Set<string>();
       let readyResolve!: () => void;
       let readyReject!: (error: Error) => void;
@@ -301,8 +302,10 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           active.last = p;
           points.push(p);
         }
-        if (points.length)
-          emit({ ...base(active.actionId), type: "stroke.append", points });
+        // Chunk coalesced input before assigning operation identities. Every
+        // sample keeps its exact value and order within the server's append cap.
+        for (let offset = 0; offset < points.length; offset += MAX_STROKE_APPEND_POINTS)
+          emit({ ...base(active.actionId), type: "stroke.append", points: points.slice(offset, offset + MAX_STROKE_APPEND_POINTS) });
       };
       const up = (e: PointerEvent) => {
         e.stopImmediatePropagation();
@@ -338,6 +341,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       let replayStroke: { actionId: string; before: Snapshot; last: CanvasPoint; previousX: number; previousY: number } | undefined;
       const replay = async (operations: CanvasOperation[], reset: boolean) => {
         await ready;
+        if (!alive) throw new Error("Canvas was disposed");
         if (busy) await new Promise<void>((resolve, reject) => {
           pendingFillWaiters.add(reject);
           queue.push(() => { pendingFillWaiters.delete(reject); resolve(); });
@@ -391,15 +395,22 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
                 restore(entry.snapshot);
               }
             }
+            if (!alive) throw new Error("Canvas was disposed");
             seen.add(op.opId);
           }
         } finally { replaying = false; status(); }
       };
+      const replayQueue = new ReplayQueue(replay, {
+        frame: callback => requestAnimationFrame(callback),
+        cancelFrame: id => cancelAnimationFrame(id),
+        // Background tabs can throttle animation frames indefinitely.
+        timer: callback => window.setTimeout(callback, 50),
+        cancelTimer: id => window.clearTimeout(id),
+      }, pending => { replayPending = pending; if (alive) status(); });
       const scheduleReplay = (operations: CanvasOperation[], reset: boolean) => {
-        replayPending++; status();
-        const result = replayQueue.then(() => replay(operations, reset)).finally(() => { replayPending--; status(); });
-        replayQueue = result.catch(() => {});
-        return result;
+        // A fully seen echo needs no replay unless other canvas work is pending.
+        if (!reset && !replayQueue.requiresReset && replayPending === 0 && !busy && operations.every(operation => seen.has(operation.opId))) return Promise.resolve();
+        return replayQueue.add(operations, reset);
       };
       const engine: Engine = {
         finish,
@@ -481,6 +492,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       return () => {
         finish();
         alive = false;
+        replayQueue.dispose();
         cancelFill?.();
         for (const reject of pendingFillWaiters) reject(new Error("Canvas was disposed"));
         pendingFillWaiters.clear();
