@@ -22,6 +22,14 @@
 **/.ruff_cache/
 **/.coverage*
 **/.cache/
+**/.mypy_cache/
+**/.pyright/
+htmlcov/
+
+# JavaScript tooling caches
+**/.turbo/
+**/.eslintcache
+**/*.tsbuildinfo
 
 # Build artifacts
 **/build/
@@ -30,13 +38,18 @@
 
 # Repository-local state and incomplete atomic outputs
 /.local/
+**/.local/
 *.part
 
 # Local OS/editor/temp files
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
 *.swp
 *.swo
 *~
 *.tmp
 *.log
+*.orig
+*.rej
