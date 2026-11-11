@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "role": "referee",
+  "jobId": "job-0002",
+  "turnId": "turn-0001",
+  "canvasId": "canvas-0001",
+  "generation": 2,
+  "sequence": 6,
+  "deadlineAt": 1762771200000,
+  "modelId": "referee-vit-a-v1",
+  "artifactRevision": "referee-vit-a-v1-e6236a3b",
+  "status": "evidence",
+  "scores": [0.82, 0.21]
+}
