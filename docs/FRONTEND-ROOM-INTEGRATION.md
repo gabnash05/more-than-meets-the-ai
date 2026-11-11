@@ -55,7 +55,7 @@ The 348-word API-owned catalogue does not load model resources at runtime. No ne
 
 ## Complete remote session
 
-The shared source of truth is `packages/game-contracts/src`; the frontend's existing `src/contracts` paths re-export it. A room progresses through `lobby`, `choosing`, `drawing`, `result`, and `finished`, with `interrupted` for an unfinished generation recovered after restart. The configured rounds count is total prompts, not complete rotations.
+The shared source of truth is `packages/game-contracts/src`; the frontend's existing `src/contracts` paths re-export it. A room progresses through `lobby`, `starting`, `choosing`, `drawing`, `result`, and `finished`, with `interrupted` for an unfinished generation recovered after restart. The configured rounds count is total prompts, not complete rotations.
 
 `room:choose-prompt` accepts `{id}` from the selecting drawer, using private `promptOptions: {id,label}[]`. The default choice window is 15 seconds, followed by an automatic available option; drawing lasts 60 seconds and recap lasts 8 seconds. Those are server configuration values. `deadlineAt`, `serverTime` and optional pause metadata drive the display; a browser never decides a score or phase transition. Hints progress on the authoritative drawing clock. AI status is `unavailable`, and AI-related bonuses/reductions remain neutral.
 
@@ -70,3 +70,11 @@ Socket membership is authenticated before the server assigns room/player/team ch
 ## Retained Team design — deferred
 
 The earlier approved Team design uses one shared target: the selecting team rotates each prompt round, and its drawer chooses from three private words. All team drawers then privately receive the chosen target. Each team has its own canvas and first-human-solve closure; only progress is shared across teams. Individual remains the room default.
+
+## UX and fairness contract — 11 November 2026
+
+Host Start enters `starting` for three seconds once per game, before first word selection. The server owns `startDeadlineAt`; refresh and reconnect use that same deadline. Drawing timers, guesses and inference do not run during this phase. Eligibility is checked again before selection.
+
+The mounted composer sends general chat between turns and when a drawing is authoritatively closed. During active drawing it submits guesses only for eligible unsolved guessers; drawer/solved-player answer protections remain. Connection and pending-command safeguards are preserved. Desktop focus occurs once per newly eligible drawing generation; phones open the keyboard on tap. Mobile guessers have a compact canvas/composer layout and may scroll over a read-only canvas. Drafts survive transient updates, while a new drawing turn clears the previous guess draft.
+
+`AiGuess` adds optional `elapsedMs` and `submitted` fields. Newly recorded low-confidence predictions are marked unsubmitted; legacy records retain unknown details rather than fabricated timestamps or eligibility. `RoomSnapshot.aiHistory` exposes only committed completed rounds with the revealed target, drawer, benchmark and prediction list. Active predictions and secret targets remain private. The recap and final expandable history share the same chronological view, including repeated and greyed-out low-confidence predictions. Human scoring and winners are unchanged.

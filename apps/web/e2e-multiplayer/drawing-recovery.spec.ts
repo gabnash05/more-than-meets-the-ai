@@ -72,6 +72,7 @@ test("multiplayer replay overflow resyncs once and restores every pixel", async 
     const command = async (name: string, request: object) => socket!.timeout(5000).emitWithAck(name, request) as Promise<{ ok: boolean; code?: string }>;
     const start = await command("room:start", { requestId: randomUUID(), expectedRevision: (await resume()).snapshot.revision });
     expect(start.ok, `Start acknowledgement: ${JSON.stringify(start)}; blockers: ${JSON.stringify((await resume()).snapshot.startBlockers)}`).toBe(true);
+    await expect.poll(async () => (await resume()).snapshot.phase).toBe("choosing");
     const choosing = await resume();
     const generation = choosing.snapshot.game!.generation;
     const option = choosing.privateState!.promptOptions![0];

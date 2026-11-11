@@ -166,3 +166,12 @@ An unverifiable competitive turn/round whose provisional scores are discarded. D
 
 ## AI guesser unavailable
 A required AI attempt missing because of a service fault, distinct from a wrong guess or normal cancellation. Default play uses human-only turn scoring with all AI adjustments neutralized; optional team mode removes AI bonuses across its affected round.
+
+## Game start countdown
+Host Start enters a shared three-second countdown before the first private word selection. The authority publishes its deadline and checks connected-player eligibility again before advancing. Later drawing turns retain normal selection and recap timing.
+
+## Prediction versus submitted AI guess
+A valid prediction is the model answer and confidence from a permitted observation. Only confidence strictly greater than 0.5 makes it a submitted answer eligible to solve or score. Low-confidence predictions remain recorded for revealed history, use the same call budget/cooldown and do not trigger an answer pulse. Missing confidence does not qualify. Legacy recorded guesses retain their historical meaning.
+
+## Completed-round AI history
+The authorized snapshot exposes committed rounds with the revealed target, drawer, AI benchmark and chronological prediction list. Predictions include active elapsed time and submission status when recorded by the current implementation. Active targets/predictions and interrupted generations are excluded. Final results let players expand each completed round; this is a game retrospective, not a controlled model evaluation.

@@ -40,6 +40,17 @@ export async function seedReviewScenario(name: ReviewScenario): Promise<RoomSess
       session.snapshot.winners = [playerId, 'review-friend'];
     }
   }
+  if (name.startsWith('benchmark-')) {
+    const result = session.snapshot.game!.result!;
+    result.aiGuesses = [
+      { answer: 'dog', confidence: 0.74, elapsedMs: 2000, submitted: true },
+      { answer: 'cat', confidence: 0.50, elapsedMs: 4000, submitted: false },
+      ...(result.aiBenchmark?.status === 'solved' ? [{ answer: 'cat', confidence: 0.95, elapsedMs: 15000, submitted: true }] : []),
+    ];
+    result.aiAnswers = result.aiGuesses.map(guess => guess.answer);
+    result.finalAnswer = result.aiGuesses.filter(guess => guess.submitted).at(-1)?.answer;
+    session.snapshot.aiHistory = [{ round: 1, drawerId: session.snapshot.game!.drawerId, word: result.word, aiBenchmark: result.aiBenchmark!, aiGuesses: result.aiGuesses }];
+  }
   if (name.startsWith('standings-')) {
     const allScores = [500, 500, 350, 300, 250, 200, 100, 0];
     const count = name === 'standings-eight' ? 8 : name === 'standings-zero' ? 3 : Number(name.slice('standings-'.length));

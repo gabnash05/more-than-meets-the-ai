@@ -134,8 +134,8 @@ function positiveSetting(name: string, fallback: number, max: number) {
 
 function inferenceOptions(): InferenceOptions {
   return {
-    firstGuessMs: positiveSetting("AI_FIRST_GUESS_MS", 1500, 60000),
-    guessCooldownMs: positiveSetting("AI_GUESS_COOLDOWN_MS", 2000, 60000),
+    firstGuessMs: positiveSetting("AI_FIRST_GUESS_MS", 3000, 60000),
+    guessCooldownMs: positiveSetting("AI_GUESS_COOLDOWN_MS", 3000, 60000),
     maxGuesses: positiveSetting("AI_MAX_GUESSES_PER_TURN", 24, 24),
     requestTimeoutMs: positiveSetting("AI_REQUEST_TIMEOUT_MS", 2500, 2500),
   };

@@ -47,6 +47,15 @@ export interface AiBenchmarkSummary {
 export interface AiGuess {
   answer: string;
   confidence?: number;
+  elapsedMs?: number;
+  submitted?: boolean;
+}
+export interface AiRoundHistory {
+  round: number;
+  drawerId: string;
+  word: string;
+  aiBenchmark: AiRoundResult;
+  aiGuesses?: AiGuess[];
 }
 export interface AiGuessEvent {
   type: "ai-guess";
@@ -102,13 +111,15 @@ export interface RoomGame {
 }
 export interface RoomSnapshot {
   aiBenchmark?: AiBenchmarkSummary;
+  aiHistory?: AiRoundHistory[];
+  startDeadlineAt?: number;
   code: string;
   revision: number;
   settings: RoomSettings;
   players: RoomPlayer[];
   teams: RoomTeam[];
   hostId: string;
-  phase: "lobby" | "choosing" | "drawing" | "result" | "finished" | "interrupted" | "closed";
+  phase: "lobby" | "starting" | "choosing" | "drawing" | "result" | "finished" | "interrupted" | "closed";
   serverTime?: number;
   interruptedSketches?: { canvasId: string; generation: number; sequence?: number }[];
   finalStandings?: { playerId?: string; teamId?: string; score: number }[];

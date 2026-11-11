@@ -115,7 +115,7 @@ export class RemoteRoomClient implements RoomClient {
       !Array.isArray(snapshot.teams) ||
       !Array.isArray(snapshot.chat) ||
       typeof snapshot.hostId !== "string" ||
-      !["lobby", "choosing", "drawing", "result", "finished", "interrupted", "closed"].includes(snapshot.phase)
+      !["lobby", "starting", "choosing", "drawing", "result", "finished", "interrupted", "closed"].includes(snapshot.phase)
     ) {
       throw new RoomClientError(
         "malformed",

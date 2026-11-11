@@ -64,7 +64,7 @@ for (const width of [360, 1440]) {
           const chat = page.getByTestId("room-chat");
           await expect(final).toContainText("final-sentinel");
           await expect(final.getByLabel(label === "correct" ? "Correct" : "Incorrect")).toBeVisible();
-          await expect(history.getByRole("listitem")).toHaveCount(count);
+          await expect(history.getByRole("listitem")).toHaveCount(count + 1);
           const [cardBox, finalBox, historyBox, chatBox] = await Promise.all([card.boundingBox(), final.boundingBox(), history.boundingBox(), chat.boundingBox()]);
           expect(cardBox!.height).toBe(224);
           expect(finalBox!.y + finalBox!.height).toBeLessThanOrEqual(historyBox!.y + 1);

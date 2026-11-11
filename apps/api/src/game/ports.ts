@@ -46,7 +46,7 @@ export interface GuesserObservation {
   sequence: number;
   hint: string;
 }
-export type GuesserResult = { jobId: string; status: "answer"; answer: string } | { jobId: string; status: "unavailable"; reason?: string };
+export type GuesserResult = { jobId: string; status: "answer"; answer: string; confidence?: number } | { jobId: string; status: "unavailable"; reason?: string };
 export interface GuesserProvider {
   guess(observation: GuesserObservation): Promise<GuesserResult>;
 }

@@ -36,13 +36,15 @@ test("actual server restart restores durable interrupted sketch and committed sc
     const a = await socket(code!, host.resumeToken); const b = await socket(code!, other.resumeToken); clients.push(a, b);
     let state = await resume(code!, host.resumeToken);
     assert.equal((await command(a, "room:start", { requestId: "start", expectedRevision: state.snapshot.revision })).ok, true);
-    state = await resume(code!, host.resumeToken); assert.equal(state.snapshot.phase, "choosing"); assert.equal(state.privateState.promptOptions.length, 3);
+    state = await eventually(() => resume(code!, host.resumeToken), s => s.snapshot.phase === "choosing"); assert.equal(state.snapshot.phase, "choosing"); assert.equal(state.privateState.promptOptions.length, 3);
     let generation = state.snapshot.game.generation; let word = state.privateState.promptOptions[0].id;
     assert.equal((await command(a, "room:choose-prompt", { requestId: "choose1", generation, payload: { id: word } })).ok, true);
     assert.equal((await command(b, "room:guess", { requestId: "solve1", generation, payload: { text: word } })).ok, true);
     const choosing2 = await eventually(() => resume(code!, other.resumeToken), s => s.snapshot.phase === "choosing" && s.snapshot.game.position.round === 2);
     assert.equal(choosing2.privateState.promptOptions.length, 3); generation = choosing2.snapshot.game.generation; word = choosing2.privateState.promptOptions[0].id;
     const scores = choosing2.snapshot.game.scores;
+    const history = choosing2.snapshot.aiHistory;
+    assert.equal(history.length, 1);
     assert.equal(await store.db.turnResult.count({ where: { roomCode: code } }), 1);
     assert.ok(Object.values(scores).some(value => typeof value === "number" && value > 0));
     assert.equal((await command(b, "room:choose-prompt", { requestId: "choose2", generation, payload: { id: word } })).ok, true);
@@ -54,6 +56,7 @@ test("actual server restart restores durable interrupted sketch and committed sc
     current = child(); await ready();
     const restoredHost = await resume(code!, host.resumeToken); const restoredOther = await resume(code!, other.resumeToken);
     assert.equal(await store.db.turnResult.count({ where: { roomCode: code } }), 1);
+    assert.deepEqual(restoredHost.snapshot.aiHistory, history);
     assert.equal(restoredHost.snapshot.phase, "interrupted"); assert.equal(restoredOther.snapshot.game.position.round, 2); assert.equal(restoredOther.snapshot.game.drawerId, other.playerId); assert.deepEqual(restoredOther.snapshot.game.scores, scores);
     const saved = await request(`/api/rooms/${code}/interrupted/${game.canvasId}/${generation}`, { headers: { authorization: `Bearer ${other.resumeToken}` } }); assert.equal(saved.sequence, 1); assert.deepEqual(saved.operations, [operation]);
     const forbidden = await fetch(`${base}/api/rooms/${code}/interrupted/${game.canvasId}/${generation}`, { headers: { authorization: "Bearer invalid" } }); assert.equal(forbidden.status, 401);
