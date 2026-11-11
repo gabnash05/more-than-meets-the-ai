@@ -126,6 +126,23 @@ function answerFor(value: Job) {
   };
 }
 
+function evidenceFor(value: Job) {
+  return {
+    version: 1,
+    role: "referee",
+    jobId: value.jobId,
+    turnId: value.turnId,
+    canvasId: value.canvasId,
+    generation: value.generation,
+    sequence: value.sequence,
+    deadlineAt: value.deadlineAt,
+    modelId: value.modelId,
+    artifactRevision: value.artifactRevision,
+    status: "evidence",
+    scores: [0.82, 0.21],
+  };
+}
+
 test("submit writes the payload before appending and resolves its bound result", async () => {
   const { connection, queue } = queueFixture();
   try {
@@ -136,7 +153,7 @@ test("submit writes the payload before appending and resolves its bound result",
     assert.equal(queue.ready()?.labels?.length, 345);
 
     const value = job();
-    const pending = queue.submit(value, Buffer.from("png"), signal());
+    const pending = queue.submit("guesser", value, Buffer.from("png"), signal());
     await waitFor(() => connection.jobs.length === 1);
     assert.deepEqual(connection.events.slice(-2), ["set:mmtai:ai:payload:job-1", `append:${GUESS_JOBS_STREAM}`]);
     const envelope = JSON.parse(connection.jobs[0].value) as Record<string, unknown>;
@@ -148,6 +165,43 @@ test("submit writes the payload before appending and resolves its bound result",
     assert.equal(queue.acceptResult(result), true);
     assert.deepEqual(await pending, { status: "answer", answer: "zigzag", confidence: 0.8 });
     assert.equal(queue.acceptResult(result), false);
+  } finally {
+    await queue.close();
+  }
+});
+
+test("referee registrations and evidence results resolve independently", async () => {
+  const connection = new FakeConnection();
+  const queue = new GuesserQueue({
+    modelIds: { guesser: "guesser-vit-a-v1", referee: "referee-vit-a-v1" },
+    connection,
+    consumerId: "api-test",
+    now,
+  });
+  try {
+    connection.values.set(`${GUESS_WORKER_PREFIX}w1`, { value: registration(), ttl: 15000 });
+    connection.values.set(`${GUESS_WORKER_PREFIX}w1:referee`, {
+      value: JSON.stringify({
+        role: "referee",
+        modelId: "referee-vit-a-v1",
+        artifactRevision: "e6236a3b",
+        heartbeatAt: now(),
+      }),
+      ttl: 15000,
+    });
+    await queue.refresh();
+    assert.equal(queue.ready("guesser")?.labels?.length, 345);
+    assert.equal(queue.ready("referee")?.modelId, "referee-vit-a-v1");
+
+    const value = job({ jobId: "job-referee", modelId: "referee-vit-a-v1", artifactRevision: "e6236a3b" });
+    const pending = queue.submit("referee", value, Buffer.from("png"), signal());
+    await waitFor(() => connection.jobs.length === 1);
+    const envelope = JSON.parse(connection.jobs[0].value) as Record<string, unknown>;
+    assert.equal(envelope.role, "referee");
+    assert.equal("hint" in envelope, false);
+
+    assert.equal(queue.acceptResult(evidenceFor(value)), true);
+    assert.deepEqual(await pending, { status: "evidence", scores: [0.82, 0.21] });
   } finally {
     await queue.close();
   }
@@ -188,7 +242,7 @@ test("a job past its deadline becomes unavailable and leaves a cancel marker", a
   const { connection, queue } = queueFixture();
   try {
     const value = job({ jobId: "job-timeout", deadlineAt: now() + 25 });
-    const outcome = await queue.submit(value, Buffer.from("png"), signal());
+    const outcome = await queue.submit("guesser", value, Buffer.from("png"), signal());
     assert.deepEqual(outcome, { status: "unavailable", reason: "request-timeout" });
     assert.ok(connection.values.has(`${GUESS_CANCEL_PREFIX}job-timeout`));
   } finally {
@@ -200,7 +254,7 @@ test("aborting a submit rejects it and writes a cancel marker", async () => {
   const { connection, queue } = queueFixture();
   try {
     const controller = new AbortController();
-    const pending = queue.submit(job({ jobId: "job-abort" }), Buffer.from("png"), controller.signal);
+    const pending = queue.submit("guesser", job({ jobId: "job-abort" }), Buffer.from("png"), controller.signal);
     await waitFor(() => connection.jobs.length === 1);
     controller.abort(new Error("invalidated"));
     await assert.rejects(pending, /invalidated/);
@@ -214,7 +268,7 @@ test("results with drifted identity are ignored and do not resolve the waiter", 
   const { connection, queue } = queueFixture();
   try {
     const value = job({ jobId: "job-binding" });
-    const pending = queue.submit(value, Buffer.from("png"), signal());
+    const pending = queue.submit("guesser", value, Buffer.from("png"), signal());
     await waitFor(() => connection.jobs.length === 1);
     assert.equal(queue.acceptResult({ ...answerFor(value), canvasId: "other-canvas" }), false);
     assert.equal(queue.acceptResult({ ...answerFor(value), jobId: "job-elsewhere" }), false);
@@ -227,12 +281,12 @@ test("results with drifted identity are ignored and do not resolve the waiter", 
 
 test("close rejects live waiters and refuses further submissions", async () => {
   const { connection, queue } = queueFixture();
-  const pending = queue.submit(job({ jobId: "job-close" }), Buffer.from("png"), signal());
+  const pending = queue.submit("guesser", job({ jobId: "job-close" }), Buffer.from("png"), signal());
   await waitFor(() => connection.jobs.length === 1);
   await queue.close();
   await assert.rejects(pending, /queue-closed/);
   assert.equal(connection.closed, true);
-  await assert.rejects(queue.submit(job({ jobId: "job-after-close" }), Buffer.from("png"), signal()), /queue-closed/);
+  await assert.rejects(queue.submit("guesser", job({ jobId: "job-after-close" }), Buffer.from("png"), signal()), /queue-closed/);
 });
 
 test("invalid queue configuration keeps the game human-playable", () => {
@@ -280,7 +334,7 @@ test("real Redis round-trip resolves a submitted job", { skip: !process.env.REDI
     assert.equal(queue.ready()?.labels?.length, 345);
 
     const value = job({ jobId: `job-int-${randomUUID()}`, deadlineAt: Date.now() + 5000 });
-    const pending = queue.submit(value, Buffer.from("png"), signal());
+    const pending = queue.submit("guesser", value, Buffer.from("png"), signal());
     let received: Record<string, unknown> | undefined;
     for (let attempt = 0; attempt < 20 && !received; attempt++) {
       const reply = await raw.xReadGroup(GUESS_WORKER_GROUP, workerId, [{ key: GUESS_JOBS_STREAM, id: ">" }], { COUNT: 10, BLOCK: 500 });
