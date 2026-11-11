@@ -24,6 +24,7 @@ import torch
 from guesser_data import IndexedDrawings
 from guesser_data.common import load_step
 from safetensors.torch import load_file
+from torch.utils.data import DataLoader, Dataset
 from training.export_bundle import BACKBONE, BUNDLE_FILES, MODEL_ID
 
 from . import metrics, report
@@ -32,6 +33,10 @@ STAGES = 10
 DEFAULT_PREPARED_DIR = Path("data/.local/data/production/prepared")
 DEFAULT_BUNDLE_ROOT = Path("checkpoints/notebook-production-full/bundles")
 DEFAULT_MODEL_IDS = ("guesser-vit-a-v1", "guesser-vit-b-v1")
+DEFAULT_WORKERS = 0
+DEFAULT_MANIFEST_CACHE = (
+    Path(__file__).resolve().parents[1] / ".local" / "cache" / "manifests"
+)
 CALIBRATION_CHUNK = 16384
 DEFAULT_CALIBRATION_SAMPLES = 50000
 
@@ -158,6 +163,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Inference device (default: cuda when available).",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=(
+            "Render worker processes. Rendering and preprocessing dominate the "
+            "run and are CPU-bound, so workers overlap them with GPU inference "
+            "(0 renders in-process). Past the physical core count throughput "
+            "stops improving; each worker holds one batch of views in memory."
+        ),
+    )
+    parser.add_argument(
+        "--manifest-cache-dir",
+        type=Path,
+        default=DEFAULT_MANIFEST_CACHE,
+        help="Shared memory-mapped manifest cache for the render workers.",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress per-class progress messages.",
@@ -169,6 +191,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise ValueError("--limit-per-class must be positive")
     if args.batch_size < 1:
         raise ValueError("--batch-size must be positive")
+    if args.workers < 0:
+        raise ValueError("--workers must be non-negative")
     if args.bootstrap < 0:
         raise ValueError("--bootstrap must be non-negative")
     if args.calibration_samples < 1:
@@ -503,23 +527,31 @@ def _check_test_guard(args: argparse.Namespace, bundles: list[Bundle]) -> dict |
 
 
 def _flush(
-    ok_images: list[np.ndarray],
-    ok_view_indices: list[int],
+    images: torch.Tensor | None,
+    view_indices: np.ndarray,
     pending: dict[str, list[tuple[dict, int]]],
     bundles: list[Bundle],
     models: dict[str, torch.nn.Module],
     device: torch.device,
     logits_memmaps: dict[str, np.memmap] | None,
 ) -> None:
-    if not ok_images:
+    """Score one batch of usable views on every arm and fill its rows.
+
+    ``images`` holds only the usable views of the batch and ``view_indices``
+    names the logits row of each one, so a resumed run writes exactly the rows
+    an uninterrupted run would. Unusable views never reach a model: their rows
+    keep the sentinel prediction and are counted as unsuccessful by the stage
+    curve. ``pending`` pairs each row with its position inside ``images``.
+    """
+    if images is None:
         return
-    batch = torch.from_numpy(np.stack(ok_images)).to(device)
-    indices = np.asarray(ok_view_indices, dtype=np.int64)
+    batch = images.to(device)
+    indices = np.asarray(view_indices, dtype=np.int64)
     for bundle in bundles:
         model = models[bundle.model_id]
         with torch.inference_mode():
             logits = model(batch)
-        if tuple(logits.shape) != (len(ok_images), len(bundle.labels)):
+        if tuple(logits.shape) != (batch.shape[0], len(bundle.labels)):
             raise ValueError(
                 f"unexpected output shape from {bundle.model_id}: {tuple(logits.shape)}"
             )
@@ -551,85 +583,352 @@ def _flush(
                 }
             )
         pending[bundle.model_id].clear()
-    ok_images.clear()
-    ok_view_indices.clear()
 
 
-def _process_class(
-    drawings: IndexedDrawings,
-    bundle: Bundle,
-    class_id: int,
-    manifest_indices: list[int],
-    class_offset: int,
-    batch_size: int,
-    device: torch.device,
-    models: dict[str, torch.nn.Module],
-    bundles: list[Bundle],
-    logits_memmaps: dict[str, np.memmap] | None,
-) -> dict[str, list[dict]]:
-    rows_by_model: dict[str, list[dict]] = {item.model_id: [] for item in bundles}
-    pending: dict[str, list[tuple[dict, int]]] = {item.model_id: [] for item in bundles}
-    ok_images: list[np.ndarray] = []
-    ok_view_indices: list[int] = []
-    for local_index, manifest_index in enumerate(manifest_indices):
+class TenStageViewDataset(Dataset):
+    """Render the ten fixed time views of each selected original.
+
+    One item is one original together with all ten of its stages, so a record is
+    read once and every cut prefix matches a serial run exactly. Workers use
+    this to overlap CPU rendering and preprocessing with GPU inference.
+    """
+
+    def __init__(
+        self,
+        prepared_dir: Path,
+        split: str,
+        global_indices: list[int],
+        manifest_indices: list[int],
+        class_ids: list[int],
+        candidate: str,
+        manifest_cache_dir: Path | None,
+    ) -> None:
+        if not len(global_indices) == len(manifest_indices) == len(class_ids):
+            raise ValueError("served positions, manifest rows and classes must align")
+        self.global_indices = global_indices
+        self.manifest_indices = manifest_indices
+        self.class_ids = class_ids
+        self.candidate = candidate
+        # IndexedDrawings reopens per PID, so forked workers map the shared
+        # manifest cache instead of decoding the split into private memory.
+        self.drawings = IndexedDrawings(
+            str(prepared_dir), split, manifest_cache_dir=manifest_cache_dir
+        )
+
+    def __len__(self) -> int:
+        return len(self.manifest_indices)
+
+    def __getitem__(self, position: int) -> list[tuple[dict, np.ndarray | None]]:
+        """Return this original's ten stages in order with their view metadata.
+
+        ``global_indices`` fixes the logits row of the first stage, and stage
+        order advances it by one, matching the serial runner's view numbering.
+        """
+        base = self.global_indices[position] * STAGES
+        class_id = self.class_ids[position]
+        views: list[tuple[dict, np.ndarray | None]] = []
         for stage, view in enumerate(
-            drawings.evaluation_images(manifest_index, candidate=bundle.preprocessing)
+            self.drawings.evaluation_images(
+                self.manifest_indices[position], candidate=self.candidate
+            )
         ):
-            view_index = (class_offset + local_index) * STAGES + stage
             status = view["status"]
             coverage = view["diagnostics"].get("coverage")
-            input_sha256 = None
-            if status == "ok":
-                input_sha256 = _sha256_bytes(
+            usable = status == "ok"
+            metadata = {
+                "viewIndex": base + stage,
+                "drawingId": view["drawing_id"],
+                "classId": class_id,
+                "stage": stage + 1,
+                "fraction": float(view["fraction"]),
+                "unchanged": bool(view["unchanged"]),
+                "preprocessStatus": status,
+                "coverage": float(coverage) if coverage is not None else None,
+                "inputSha256": _sha256_bytes(
                     np.ascontiguousarray(view["image"]).tobytes()
                 )
-            for item in bundles:
-                row = {
-                    "viewIndex": view_index,
-                    "drawingId": view["drawing_id"],
-                    "classId": class_id,
-                    "className": item.labels[class_id],
-                    "stage": stage + 1,
-                    "fraction": float(view["fraction"]),
-                    "unchanged": bool(view["unchanged"]),
-                    "preprocessStatus": status,
-                    "coverage": float(coverage) if coverage is not None else None,
-                    "inputSha256": input_sha256,
-                    "top1Id": -1,
-                    "top1Label": None,
-                    "top1Prob": 0.0,
-                    "top3Ids": [],
-                    "top3Labels": [],
-                    "top3Probs": [],
-                    "top1Correct": False,
-                    "top3Correct": False,
-                }
-                rows_by_model[item.model_id].append(row)
-                if status == "ok":
-                    pending[item.model_id].append((row, len(ok_images)))
-            if status == "ok":
-                ok_images.append(view["image"])
-                ok_view_indices.append(view_index)
-            if len(ok_images) >= batch_size:
-                _flush(
-                    ok_images,
-                    ok_view_indices,
-                    pending,
-                    bundles,
-                    models,
-                    device,
-                    logits_memmaps,
-                )
-    _flush(
-        ok_images,
-        ok_view_indices,
-        pending,
-        bundles,
-        models,
-        device,
-        logits_memmaps,
+                if usable
+                else None,
+            }
+            views.append((metadata, view["image"] if usable else None))
+        if len(views) != STAGES:
+            raise ValueError(
+                f"original {self.manifest_indices[position]} produced "
+                f"{len(views)} views, expected {STAGES}"
+            )
+        return views
+
+
+def _collate_views(
+    batch: list[list[tuple[dict, np.ndarray | None]]],
+) -> tuple[list[dict], torch.Tensor | None, list[int]]:
+    """Flatten drawing items into ordered view metadata and one image tensor.
+
+    The tensor carries usable views only; ``ok_positions`` names the flattened
+    position of each tensor row so rows and predictions stay aligned.
+    """
+    metadata: list[dict] = []
+    images: list[np.ndarray] = []
+    ok_positions: list[int] = []
+    for views in batch:
+        for item, image in views:
+            if image is not None:
+                ok_positions.append(len(metadata))
+                images.append(image)
+            metadata.append(item)
+    tensor = torch.from_numpy(np.stack(images)) if images else None
+    return metadata, tensor, ok_positions
+
+
+def _build_row(metadata: dict, bundle: Bundle) -> dict:
+    """Seed one prediction row from a view; ``_flush`` fills the predictions."""
+    class_id = metadata["classId"]
+    return {
+        "viewIndex": metadata["viewIndex"],
+        "drawingId": metadata["drawingId"],
+        "classId": class_id,
+        "className": bundle.labels[class_id],
+        "stage": metadata["stage"],
+        "fraction": metadata["fraction"],
+        "unchanged": metadata["unchanged"],
+        "preprocessStatus": metadata["preprocessStatus"],
+        "coverage": metadata["coverage"],
+        "inputSha256": metadata["inputSha256"],
+        "top1Id": -1,
+        "top1Label": None,
+        "top1Prob": 0.0,
+        "top3Ids": [],
+        "top3Labels": [],
+        "top3Probs": [],
+        "top1Correct": False,
+        "top3Correct": False,
+    }
+
+
+def _finish_class(
+    class_id: int,
+    rows_by_model: dict[str, list[dict]],
+    subset: dict,
+    bundles: list[Bundle],
+    progress: dict[str, dict[str, str]],
+    progress_path: Path,
+    output_dir: Path,
+    quiet: bool,
+) -> None:
+    """Write one completed class's shards, record their hashes, announce it."""
+    for bundle in bundles:
+        digest = _write_shard(
+            _shard_path(output_dir, bundle.model_id, class_id),
+            rows_by_model[bundle.model_id],
+            bundle,
+        )
+        progress[bundle.model_id][str(class_id)] = digest
+    _write_progress(progress_path, subset["sha256"], progress)
+    if not quiet:
+        print(
+            f"class {class_id + 1:03d}/345: "
+            f"{len(subset['indices'][str(class_id)])} originals",
+            flush=True,
+        )
+
+
+def _score_subset(
+    prepared_dir: Path,
+    split: str,
+    subset: dict,
+    bundles: list[Bundle],
+    models: dict[str, torch.nn.Module],
+    device: torch.device,
+    output_dir: Path,
+    progress: dict[str, dict[str, str]],
+    progress_path: Path,
+    resuming: bool,
+    batch_size: int,
+    workers: int,
+    manifest_cache_dir: Path,
+    logits_memmaps: dict[str, np.memmap] | None,
+    quiet: bool,
+) -> None:
+    """Render, score and shard every selected original, class shard by shard.
+
+    The plan fixes three numbers per original before any rendering starts: its
+    position inside the subset (the logits row), its manifest row (the record),
+    and its class (the output shard). Positions advance across classes exactly
+    as in a serial run, so shards, logits and reported metrics do not depend on
+    how the rendering is split across workers.
+    """
+    model_ids = [bundle.model_id for bundle in bundles]
+    global_indices: list[int] = []
+    manifest_indices: list[int] = []
+    class_ids: list[int] = []
+    offsets: dict[int, int] = {}
+    offset = 0
+    for class_id in subset["classIds"]:
+        class_id = int(class_id)
+        offsets[class_id] = offset
+        for local_index, manifest_index in enumerate(
+            subset["indices"][str(class_id)]
+        ):
+            global_indices.append(offset + local_index)
+            manifest_indices.append(int(manifest_index))
+            class_ids.append(class_id)
+        offset += len(subset["indices"][str(class_id)])
+
+    # A class counts as done only when every arm's shard still hashes to the
+    # value recorded for it, so nothing partially written is ever reused.
+    completed = {
+        class_id
+        for class_id in offsets
+        if all(
+            _shard_path(output_dir, model_id, class_id).is_file()
+            and _sha256_file(_shard_path(output_dir, model_id, class_id))
+            == progress[model_id].get(str(class_id))
+            for model_id in model_ids
+        )
+    }
+    if resuming:
+        for class_id in sorted(completed):
+            if not quiet:
+                print(f"class {class_id + 1:03d}/345: resumed", flush=True)
+
+    served = [
+        position
+        for position, class_id in enumerate(class_ids)
+        if class_id not in completed
+    ]
+    if not served:
+        return
+
+    dataset = TenStageViewDataset(
+        prepared_dir,
+        split,
+        [global_indices[position] for position in served],
+        [manifest_indices[position] for position in served],
+        [class_ids[position] for position in served],
+        bundles[0].preprocessing,
+        manifest_cache_dir,
     )
-    return rows_by_model
+    loader = DataLoader(
+        dataset,
+        # One item is one original. This only bounds how much a worker renders
+        # and ships per message; model batching is governed by --batch-size.
+        batch_size=max(1, batch_size // STAGES),
+        shuffle=False,
+        num_workers=workers,
+        collate_fn=_collate_views,
+        prefetch_factor=1 if workers else None,
+    )
+
+    open_rows: dict[int, dict[str, list[dict]]] = {}
+    buffered_images: list[np.ndarray | None] = []
+    buffered_indices: list[int] = []
+    buffered_rows: list[dict[str, dict]] = []
+    buffered_usable = 0
+    latest_class: int | None = None
+
+    def flush_buffer() -> None:
+        """Score the buffered views on every arm and empty the buffer.
+
+        Views are buffered across render batches so a model forward sees
+        exactly ``--batch-size`` usable views, which is what the serial runner
+        did. Batch composition decides GPU kernel selection, so matching it
+        keeps logits reproducible across runner versions.
+        """
+        nonlocal buffered_usable
+        usable = [
+            index for index, image in enumerate(buffered_images) if image is not None
+        ]
+        if usable:
+            tensor = torch.from_numpy(
+                np.stack([buffered_images[index] for index in usable])
+            )
+            indices = np.asarray(
+                [buffered_indices[index] for index in usable], dtype=np.int64
+            )
+            pending = {
+                model_id: [
+                    (buffered_rows[index][model_id], rank)
+                    for rank, index in enumerate(usable)
+                ]
+                for model_id in model_ids
+            }
+            _flush(
+                tensor, indices, pending, bundles, models, device, logits_memmaps
+            )
+        buffered_images.clear()
+        buffered_indices.clear()
+        buffered_rows.clear()
+        buffered_usable = 0
+
+    def close_before(latest: int | None) -> None:
+        """Write every open class older than ``latest``; the buffer must be empty."""
+        if latest is None:
+            return
+        for class_id in sorted(open_rows):
+            if class_id == latest:
+                continue
+            _finish_class(
+                class_id,
+                open_rows.pop(class_id),
+                subset,
+                bundles,
+                progress,
+                progress_path,
+                output_dir,
+                quiet,
+            )
+
+    for metadata, images, ok_positions in loader:
+        # Position of a view inside ``images``, so a usable view keeps the
+        # logits row an uninterrupted serial run would have written.
+        row_of_view = {position: row for row, position in enumerate(ok_positions)}
+        pixels = images.numpy() if images is not None else None
+        for position, item in enumerate(metadata):
+            class_id = item["classId"]
+            if class_id != latest_class:
+                # The serial runner scored one class at a time and flushed the
+                # remainder when that class ended. Flushing here keeps model
+                # batches -- and therefore logits -- identical to it.
+                if buffered_rows:
+                    flush_buffer()
+                close_before(class_id)
+                latest_class = class_id
+            rows = open_rows.get(class_id)
+            if rows is None:
+                rows = {model_id: [] for model_id in model_ids}
+                open_rows[class_id] = rows
+            view_rows: dict[str, dict] = {}
+            for bundle in bundles:
+                row = _build_row(item, bundle)
+                rows[bundle.model_id].append(row)
+                view_rows[bundle.model_id] = row
+            buffered_rows.append(view_rows)
+            buffered_indices.append(item["viewIndex"])
+            if position in row_of_view:
+                assert pixels is not None
+                buffered_images.append(pixels[row_of_view[position]])
+                buffered_usable += 1
+            else:
+                buffered_images.append(None)
+            if buffered_usable >= batch_size:
+                flush_buffer()
+                # The buffer is empty, so every row received so far is scored
+                # and any class older than the current one is complete.
+                close_before(latest_class)
+
+    flush_buffer()
+    close_before(None)
+    for class_id in sorted(open_rows):
+        _finish_class(
+            class_id,
+            open_rows.pop(class_id),
+            subset,
+            bundles,
+            progress,
+            progress_path,
+            output_dir,
+            quiet,
+        )
 
 
 def _load_arrays(
@@ -963,60 +1262,23 @@ def run(args: argparse.Namespace) -> dict:
     progress = _load_progress(
         progress_path, subset["sha256"], [bundle.model_id for bundle in bundles]
     )
-    drawings = IndexedDrawings(prepared_dir, args.split)
-    class_offsets: dict[int, int] = {}
-    offset = 0
-    for class_id in subset["classIds"]:
-        class_offsets[int(class_id)] = offset
-        offset += len(subset["indices"][str(class_id)])
-
-    try:
-        for class_id in subset["classIds"]:
-            class_id = int(class_id)
-            shard_paths = {
-                bundle.model_id: _shard_path(output_dir, bundle.model_id, class_id)
-                for bundle in bundles
-            }
-            if resuming and all(
-                shard_paths[bundle.model_id].is_file()
-                and _sha256_file(shard_paths[bundle.model_id])
-                == progress[bundle.model_id].get(str(class_id))
-                for bundle in bundles
-            ):
-                if not args.quiet:
-                    print(
-                        f"class {class_id + 1:03d}/345: resumed",
-                        flush=True,
-                    )
-                continue
-            rows_by_model = _process_class(
-                drawings,
-                bundles[0],
-                class_id,
-                subset["indices"][str(class_id)],
-                class_offsets[class_id],
-                args.batch_size,
-                device,
-                models,
-                bundles,
-                logits_memmaps,
-            )
-            for bundle in bundles:
-                digest = _write_shard(
-                    shard_paths[bundle.model_id],
-                    rows_by_model[bundle.model_id],
-                    bundle,
-                )
-                progress[bundle.model_id][str(class_id)] = digest
-            _write_progress(progress_path, subset["sha256"], progress)
-            if not args.quiet:
-                print(
-                    f"class {class_id + 1:03d}/345: "
-                    f"{subset['perClass'][str(class_id)]} originals",
-                    flush=True,
-                )
-    finally:
-        drawings.close()
+    _score_subset(
+        prepared_dir=prepared_dir,
+        split=args.split,
+        subset=subset,
+        bundles=bundles,
+        models=models,
+        device=device,
+        output_dir=output_dir,
+        progress=progress,
+        progress_path=progress_path,
+        resuming=resuming,
+        batch_size=args.batch_size,
+        workers=args.workers,
+        manifest_cache_dir=args.manifest_cache_dir.resolve(),
+        logits_memmaps=logits_memmaps,
+        quiet=args.quiet,
+    )
 
     class_ids = _class_ids_for_subset(subset)
     n_classes = len(bundles[0].labels)
