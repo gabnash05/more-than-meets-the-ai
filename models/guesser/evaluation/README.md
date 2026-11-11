@@ -204,12 +204,18 @@ temperature per arm on validation views, and writes class shards, per-class
 CSV, confusion matrices, `metrics.json`, `summary.json`, and `report.md` under
 `<checkpoint-root>/evaluation/ten-stage/`.
 
-Rendering is the bottleneck: on the current development machine it produces
-roughly 17 views per second, so the default 50-per-class run takes about 3
-hours and `--full` about 28 hours. Model inference itself is only a few minutes
-for the default run. `--resume` is safe on a fresh output root: when
-`subset.json` is absent, the runner starts a new run; when a valid run exists,
-it continues matching shards. Use `--overwrite` to force a clean restart.
+Rendering and preprocessing dominate the run and are CPU-bound, so a full pass is
+a long job and exact wall time depends on the machine, the split size and the
+preprocessing candidate. Budget hours for `--full` and leave the host otherwise
+idle. `--workers N` renders in `N` worker processes and overlaps that work with
+GPU inference; throughput stops improving past the physical core count and every
+worker holds one batch of views, so the worker count trades memory for time.
+Model inference itself is a small fraction of the total. `--batch-size` counts
+usable views per model forward, and views are buffered across render batches so a
+forward sees exactly that many; it also bounds per-worker memory. `--resume` is
+safe on a fresh output root: when `subset.json` is absent, the runner starts a
+new run; when a valid run exists, it continues matching shards. Use `--overwrite`
+to force a clean restart.
 
 The ten-stage curve counts blank, uncertain and unchanged views as unsuccessful.
 The policy table treats those views as not emitted and reports coverage,
@@ -228,12 +234,13 @@ To launch the runner directly from the model project:
 
 ```sh
 cd models/guesser
-uv run --frozen --no-sync python -m recognition.evaluate --limit-per-class 1 --quiet
+uv run --frozen --no-sync python -m recognition.evaluate --limit-per-class 1 --workers 6 --quiet
 ```
 
-Omit `--limit-per-class` and add `--full` for the complete validation run. The
-notebook is the reviewed launcher; this command is the same entry point for a
-terminal run.
+Omit `--limit-per-class` and add `--full` for the complete validation run.
+`--workers` defaults to `0` (render in the launching process); raise it for a
+long run. The notebook is the reviewed launcher; this command is the same entry
+point for a terminal run.
 
 ## Notebook workflow and merge conflicts
 
