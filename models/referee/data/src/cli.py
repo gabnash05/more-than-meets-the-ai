@@ -22,6 +22,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     helps = {name: spec[2] for name, spec in _COMMANDS.items()}
+    helps["preflight"] = "Audit prepared data and production readiness."
     helps["example"] = "Run the complete synthetic workflow without source downloads."
     for name, description in helps.items():
         step = commands.add_parser(name, help=description, description=description)
@@ -33,6 +34,12 @@ def _parser() -> argparse.ArgumentParser:
             choices=("sample",) if name == "example" else PROFILES,
             default="sample",
         )
+        if name == "preflight":
+            step.add_argument(
+                "--sample",
+                action="store_true",
+                help="Report sample readiness without requiring production support.",
+            )
         step.add_argument(
             "--json", action="store_true", help="Print the stage result as JSON."
         )
@@ -76,7 +83,11 @@ def main(argv: list[str] | None = None) -> int:
     root = args.data_root / "example" if args.command == "example" else args.data_root
     settings = Settings(data_root=root, profile=args.profile)
     try:
-        if args.command == "example":
+        if args.command == "preflight":
+            result = load_step("04-export").preflight(
+                settings.prepared, production=not args.sample
+            )
+        elif args.command == "example":
             result = _example(settings)
         else:
             step, method, _ = _COMMANDS[args.command]

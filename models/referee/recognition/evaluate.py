@@ -51,7 +51,7 @@ def choose_preprocessing(
     Ambiguity is an error. The caller must ask the training owner or pass an
     explicit candidate rather than silently choosing a preprocessing path.
     """
-    if set(scores) != set(PREPROCESSORS):
+    if set(scores) != {"foreground", "rgb_resize"}:
         raise ValueError(f"Expected scores for {PREPROCESSORS}")
     ranked = sorted(scores.items(), key=lambda item: abs(item[1] - target))
     best_name, best_score = ranked[0]
@@ -76,7 +76,7 @@ def _channel(
 ) -> dict:
     scored = [row for row in predictions if row["status"] == "ok"]
     scores = np.asarray([row["scores"][index] for row in scored], dtype=np.float64)
-    encoded = np.asarray([row["encoded"][index] for row in scored], dtype=bool)
+    encoded = np.asarray([row["encoded"][index] for row in scored])
     encoded_ap = average_precision(scores, encoded)
 
     known_scores, known_labels = [], []
@@ -87,6 +87,8 @@ def _channel(
         label = row[known_key]
         if not row[f"{known_key}_known"] or label is None:
             continue
+        if type(label) not in (bool, int) or label not in (0, 1):
+            raise ValueError(f"Invalid {known_key} label: {label!r}")
         label = bool(label)
         known_scores.append(row["scores"][index])
         known_labels.append(label)
@@ -111,7 +113,31 @@ def _channel(
         if known_has_both_classes and allow_threshold_sweep
         else []
     )
+
+    def support_details(labels: list | np.ndarray) -> dict:
+        positive = int(np.sum(labels))
+        negative = len(labels) - positive
+        reason = (
+            "no_positive_or_negative"
+            if not labels_any(labels)
+            else "no_positive"
+            if positive == 0
+            else "no_negative"
+            if negative == 0
+            else None
+        )
+        return {"positive": positive, "negative": negative, "undefinedReason": reason}
+
+    def labels_any(labels: list | np.ndarray) -> bool:
+        return len(labels) > 0
+
     return {
+        "apSupport": {
+            "encoded": support_details(encoded),
+            "known": support_details(known_labels),
+            "reviewed": support_details(reviewed_labels),
+            "proxy": support_details(proxy_labels),
+        },
         "encodedAp": encoded_ap,
         "knownAp": average_precision(known_scores_array, known_labels_array)
         if known_has_both_classes
@@ -127,6 +153,8 @@ def _channel(
             "known": len(known_labels),
             "positive": positives,
             "negative": negatives,
+            "reviewed": len(reviewed_labels),
+            "proxy": len(proxy_labels),
         },
         "thresholds": thresholds,
         "bestF1": best_f1(thresholds) if allow_threshold_sweep else None,
@@ -142,10 +170,23 @@ def _channel(
 def _encoded_channel(predictions: list[dict], index: int) -> dict:
     scored = [row for row in predictions if row["status"] == "ok"]
     scores = np.asarray([row["scores"][index] for row in scored], dtype=np.float64)
-    encoded = np.asarray([row["encoded"][index] for row in scored], dtype=bool)
+    encoded = np.asarray([row["encoded"][index] for row in scored])
     return {
         "encodedAp": average_precision(scores, encoded),
-        "support": {"scored": len(scored), "positive": int(encoded.sum())},
+        "support": {
+            "scored": len(scored),
+            "positive": int(encoded.sum()),
+            "negative": len(encoded) - int(encoded.sum()),
+        },
+        "undefinedReason": (
+            "no_positive_or_negative"
+            if not len(encoded)
+            else "no_positive"
+            if not encoded.sum()
+            else "no_negative"
+            if encoded.sum() == len(encoded)
+            else None
+        ),
     }
 
 
@@ -209,8 +250,17 @@ def summarize_predictions(
                 allow_threshold_sweep=split != "test",
                 frozen_threshold=(frozen_thresholds or {}).get("number"),
             ),
-            "symbol": _encoded_channel(predictions, 2),
-            "circle": _encoded_channel(predictions, 3),
+            **(
+                {
+                    "symbol": _encoded_channel(predictions, 2),
+                    "circle": _encoded_channel(predictions, 3),
+                }
+                if any(
+                    row["status"] == "ok" and len(row["scores"]) == 4
+                    for row in predictions
+                )
+                else {}
+            ),
         },
         "meanEncodedApTextNumber": None,
         "probe": probe,
@@ -228,6 +278,34 @@ def summarize_predictions(
             ),
             "Original source session IDs are unavailable; session-level split independence is unverified.",
             "No replay or persistence timing is measured by this runner.",
+        ],
+    }
+    # Cross-channel errors use only examples where both labels are known.
+    paired = [
+        row
+        for row in predictions
+        if row["status"] == "ok"
+        and row["text_known"]
+        and row["number_known"]
+        and row["text"] is not None
+        and row["number"] is not None
+    ]
+    number_only = [row for row in paired if row["number"] == 1 and row["text"] == 0]
+    text_only = [row for row in paired if row["text"] == 1 and row["number"] == 0]
+    summary["crossChannelConfusion"] = {
+        "numberOnlySupport": len(number_only),
+        "textOnlySupport": len(text_only),
+        "thresholds": [
+            {
+                "threshold": point["threshold"],
+                "numberOnlyFlaggedText": sum(
+                    row["scores"][0] >= point["threshold"] for row in number_only
+                ),
+                "textOnlyFlaggedNumber": sum(
+                    row["scores"][1] >= point["threshold"] for row in text_only
+                ),
+            }
+            for point in summary["channels"]["text"]["thresholds"]
         ],
     }
     summary["meanEncodedApTextNumber"] = _mean_encoded(summary)
@@ -270,6 +348,8 @@ def render_report(summary: dict) -> str:
             f"{support['known']} / {support['positive']} / {support['negative']} |"
         )
     for name in ("symbol", "circle"):
+        if name not in summary["channels"]:
+            continue
         channel = summary["channels"][name]
         lines.append(f"| {name} (diagnostic) | {channel['encodedAp']} | — | — | — | — |")
     if summary.get("split") == "test":
@@ -293,6 +373,7 @@ def render_report(summary: dict) -> str:
             "",
             "## Limits",
             "",
+            "- AP is undefined when a slice has no positives or no negatives; JSON apSupport records class counts and the reason.",
             "- Encoded ATYPICT bits are proxies; reviewed-label and proxy metrics are reported separately.",
             "- The filename score is a training-validation metric, not reviewed-label accuracy or gameplay precision.",
             (
@@ -339,8 +420,12 @@ def _score_dataset(
                 "status": "ok",
                 "scores": [float(value) for value in scores],
                 "encoded": [int(value) for value in sample["encoded"].tolist()],
-                "text": None if np.isnan(sample["labels"][0].item()) else int(sample["labels"][0].item()),
-                "number": None if np.isnan(sample["labels"][1].item()) else int(sample["labels"][1].item()),
+                "text": None
+                if np.isnan(sample["labels"][0].item())
+                else int(sample["labels"][0].item()),
+                "number": None
+                if np.isnan(sample["labels"][1].item())
+                else int(sample["labels"][1].item()),
                 "text_known": bool(sample["known"][0].item()),
                 "number_known": bool(sample["known"][1].item()),
                 "text_origin": sample["origins"][0],
@@ -387,7 +472,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--prepared-dir", type=Path, required=True)
     parser.add_argument("--split", choices=("validation", "test"), default="validation")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--preprocessing", choices=("auto",) + PREPROCESSORS, default="auto")
+    parser.add_argument(
+        "--preprocessing", choices=("auto",) + PREPROCESSORS, default="auto"
+    )
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--bootstrap", type=int, default=1000)
@@ -405,7 +492,9 @@ def main() -> None:
         raise ValueError("batch-size must be positive")
     if args.limit is not None and args.limit < 1:
         raise ValueError("limit must be positive")
-    if args.split == "test" and (args.freeze_record is None or args.validation_report is None):
+    if args.split == "test" and (
+        args.freeze_record is None or args.validation_report is None
+    ):
         raise ValueError("A test run requires --freeze-record and --validation-report")
 
     freeze: dict | None = None
@@ -436,9 +525,35 @@ def main() -> None:
 
     started = time.perf_counter()
     info = inspect_checkpoint(args.checkpoint)
-    target = args.target_score if args.target_score is not None else info.best_model_score
-    if target is None:
-        raise ValueError("Set --target-score; the checkpoint filename has no score")
+    target = (
+        args.target_score if args.target_score is not None else info.best_model_score
+    )
+    checkpoint_payload = torch.load(
+        args.checkpoint, map_location="cpu", weights_only=False
+    )
+    provenance = checkpoint_payload.get("hyper_parameters", {}).get("provenance")
+    if info.num_classes == 2:
+        if (
+            not isinstance(provenance, dict)
+            or provenance.get("model_id") != "referee-vit-v2"
+        ):
+            raise ValueError("Two-output checkpoint is missing v2 provenance")
+        from referee_data import preprocessing_hash
+
+        if provenance.get("preprocessing_hash") != preprocessing_hash():
+            raise ValueError(
+                "Checkpoint preprocessing does not match installed referee-data"
+            )
+        if args.preprocessing in ("auto", "foreground"):
+            args.preprocessing = "referee_foreground"
+        if args.preprocessing != "referee_foreground":
+            raise ValueError(
+                "v2 requires its recorded referee foreground preprocessing"
+            )
+    if target is None and args.preprocessing == "auto":
+        raise ValueError(
+            "Set --target-score for legacy auto preprocessing, or select preprocessing explicitly"
+        )
 
     if args.freeze_record is not None:
         freeze = freeze or json.loads(args.freeze_record.read_text(encoding="utf-8"))
@@ -472,7 +587,10 @@ def main() -> None:
             args.preprocessing = freeze["preprocessing"]
 
     device = torch.device(
-        "cuda" if args.device == "cuda" or (args.device == "auto" and torch.cuda.is_available()) else "cpu"
+        "cuda"
+        if args.device == "cuda"
+        or (args.device == "auto" and torch.cuda.is_available())
+        else "cpu"
     )
     model = load_model(args.checkpoint).to(device)
 
@@ -481,9 +599,15 @@ def main() -> None:
     if args.preprocessing == "auto":
         probe = {}
         probe_limit = min(200, args.limit) if args.limit else 200
-        for candidate in PREPROCESSORS:
+        for candidate in ("foreground", "rgb_resize"):
             probe_predictions = _score_dataset(
-                model, args.prepared_dir, args.split, candidate, device, probe_limit, args.batch_size
+                model,
+                args.prepared_dir,
+                args.split,
+                candidate,
+                device,
+                probe_limit,
+                args.batch_size,
             )
             probe_summary = summarize_predictions(
                 probe_predictions,
@@ -501,7 +625,13 @@ def main() -> None:
         preprocessing = str(args.preprocessing)
 
     predictions = _score_dataset(
-        model, args.prepared_dir, args.split, preprocessing, device, args.limit, args.batch_size
+        model,
+        args.prepared_dir,
+        args.split,
+        preprocessing,
+        device,
+        args.limit,
+        args.batch_size,
     )
     predictions_path = output_dir / "predictions.jsonl"
     with predictions_path.open("w", encoding="utf-8") as stream:
@@ -513,7 +643,9 @@ def main() -> None:
         checkpoint=_checkpoint_payload(info),
         prepared={
             "summarySha256": _sha256(args.prepared_dir.parent / "dataset-summary.json"),
-            "manifestSha256": _sha256(args.prepared_dir / "manifests" / f"{args.split}.jsonl"),
+            "manifestSha256": _sha256(
+                args.prepared_dir / "manifests" / f"{args.split}.jsonl"
+            ),
         },
         preprocessing=preprocessing,
         probe=probe,

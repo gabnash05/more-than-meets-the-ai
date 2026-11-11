@@ -147,7 +147,6 @@ def build_example_files(root: Path) -> dict[str, Path]:
         _sample(archive, "train/real", 701, _canvas(701), 0, 0)
         _sample(archive, "train/real", 702, _canvas(702, blank=True), 0, 0)
         review("train", "real", 702, 0, 0)
-        _sample(archive, "train/real", 703, _canvas(703), 0, 0, invalid=True)
         duplicate = _canvas(704, 1)
         _sample(archive, "train/text", 704, duplicate, 1, 0)
         _sample(archive, "train/text", 705, duplicate, 1, 0, compression=9)

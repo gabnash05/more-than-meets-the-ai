@@ -53,7 +53,10 @@ def inspect_checkpoint(path: Path) -> CheckpointInfo:
     head = state.get("model.head.weight")
     if head is None or head.ndim != 2:
         raise ValueError("Checkpoint has no 2-D model.head.weight")
-    name = parse_checkpoint_name(path)
+    try:
+        name = parse_checkpoint_name(path)
+    except ValueError:
+        name = None
     return CheckpointInfo(
         path=str(path.resolve()),
         sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -63,7 +66,7 @@ def inspect_checkpoint(path: Path) -> CheckpointInfo:
         num_classes=int(head.shape[0]),
         head_in_features=int(head.shape[1]),
         hyper_parameters=dict(checkpoint.get("hyper_parameters") or {}),
-        best_model_score=name.best_model_score,
+        best_model_score=name.best_model_score if name else None,
     )
 
 

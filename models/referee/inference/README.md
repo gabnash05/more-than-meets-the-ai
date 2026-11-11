@@ -1,5 +1,5 @@
 # Referee inference
 
-The Referee reports readiness independently of the Guesser and uses the same rendered canvas. Enable the synthetic fixture in a private test stack to exercise the two ordered evidence scores, text and number. Persistent text evidence shows a confidence badge on the board. The number score stays internal.
+`vit.RefereeViT` supports legacy v1 four-output bundles and `referee-vit-v2` two-output bundles. V2 validates preprocessing config/hash, provenance, and bundle file hashes and returns text and number scores in that order. Canvas preprocessing comes from `referee_data` for v2. Blank/uncertain inputs report no evidence.
 
-See the [deployment runbook](../../../deploy/README.md) for fixture configuration.
+The service-level loader in `apps/ai` must separately accept and validate manifest version 2 before it can serve these bundles. This adapter change alone does not enable production serving. Referee output remains advisory; number scores do not affect game scoring.

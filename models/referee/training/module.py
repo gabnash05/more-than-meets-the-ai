@@ -19,13 +19,15 @@ class RefereeViTModule(L.LightningModule):
         backbone_lr: float = 1e-4,
         weight_decay: float = 0.01,
         warmup_fraction: float = 0.05,
+        pretrained: bool = True,
+        provenance: dict | None = None,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
 
         self.model = timm.create_model(
             "vit_tiny_patch16_224.augreg_in21k_ft_in1k",
-            pretrained=True,
+            pretrained=pretrained,
             num_classes=num_classes,
         )
 
@@ -41,49 +43,77 @@ class RefereeViTModule(L.LightningModule):
         if train_dataset is not None and hasattr(train_dataset, "set_epoch"):
             train_dataset.set_epoch(self.current_epoch)
 
-    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        images, targets = batch["image"], batch["target"]
-        logits = self(images)
-        # Handle multi-task or binary outputs based on your referee target schema
-        loss = F.cross_entropy(logits, targets)
-        self.log("train_loss", loss, prog_bar=True)
+    @staticmethod
+    def masked_loss(
+        logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor
+    ) -> torch.Tensor | None:
+        if (
+            logits.ndim != 2
+            or logits.shape[1] != 2
+            or targets.shape != logits.shape
+            or mask.shape != logits.shape
+        ):
+            raise ValueError(
+                "Expected matching [batch, 2] logits, targets and known mask"
+            )
+        if not torch.isfinite(logits).all() or not torch.isfinite(targets).all():
+            raise ValueError("Nonfinite logits or targets")
+        if not torch.all((mask == 0) | (mask == 1)):
+            raise ValueError("Known mask must be binary")
+        if not torch.all((targets == 0) | (targets == 1)):
+            raise ValueError("Targets must be binary")
+        mask = mask.bool()
+        if not mask.any():
+            return None
+        return (
+            F.binary_cross_entropy_with_logits(
+                logits[mask], targets[mask], reduction="sum"
+            )
+            / mask.sum()
+        )
+
+    def training_step(
+        self, batch: dict[str, torch.Tensor], batch_idx: int
+    ) -> torch.Tensor | None:
+        loss = self.masked_loss(
+            self(batch["image"]), batch["target"], batch["known_mask"]
+        )
+        if loss is not None:
+            self.log("train_loss", loss, prog_bar=True)
         return loss
 
-    def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-            images, targets = batch["image"], batch["target"]
-            logits = self(images)
-            
-            # Change this from F.cross_entropy to BCE with logits
-            loss = F.binary_cross_entropy_with_logits(logits, targets)
-            
-            probs = torch.sigmoid(logits)
-            
-            if probs.shape[1] >= 2 and targets.shape[1] >= 2:
-                self.val_ap_text.update(probs[:, 0], targets[:, 0].long())
-                self.val_ap_number.update(probs[:, 1], targets[:, 1].long())
+    def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> None:
+        logits = self(batch["image"])
+        targets, mask = batch["target"], batch["known_mask"].bool()
+        loss = self.masked_loss(logits, targets, mask)
+        if loss is not None:
+            self.log("val_loss", loss, on_step=False, on_epoch=True)
+        probabilities = torch.sigmoid(logits)
+        for index, metric in enumerate((self.val_ap_text, self.val_ap_number)):
+            known = mask[:, index]
+            if known.any():
+                metric.update(probabilities[known, index], targets[known, index].long())
+                self._val_positive[index] += int(targets[known, index].sum())
+                self._val_negative[index] += int(
+                    known.sum() - targets[known, index].sum()
+                )
 
-            self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
-            return loss
+    def on_validation_epoch_start(self) -> None:
+        self._val_positive = [0, 0]
+        self._val_negative = [0, 0]
 
     def on_validation_epoch_end(self) -> None:
-        try:
-            ap_text = self.val_ap_text.compute()
-        except ValueError:
-            ap_text = torch.tensor(0.0, device=self.device)
-
-        try:
-            ap_number = self.val_ap_number.compute()
-        except ValueError:
-            ap_number = torch.tensor(0.0, device=self.device)
-
-        mean_ap = (ap_text + ap_number) / 2.0
-
-        self.log("val_ap_text", ap_text, prog_bar=True, sync_dist=True)
-        self.log("val_ap_number", ap_number, prog_bar=True, sync_dist=True)
-        self.log("val_mean_ap", mean_ap, prog_bar=True, sync_dist=True)
-
-        self.val_ap_text.reset()
-        self.val_ap_number.reset()
+        values = []
+        for index, (name, metric) in enumerate(
+            (("text", self.val_ap_text), ("number", self.val_ap_number))
+        ):
+            if self._val_positive[index] and self._val_negative[index]:
+                value = metric.compute()
+                self.log(f"val_ap_{name}", value, prog_bar=True)
+                values.append(value)
+            metric.reset()
+        if len(values) == 2:
+            self.log("val_mean_ap", torch.stack(values).mean(), prog_bar=True)
 
     def configure_optimizers(self):
         head_params: list[torch.nn.Parameter] = []

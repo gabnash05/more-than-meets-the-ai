@@ -151,3 +151,15 @@ def test_mocked_download_sample_and_train(tmp_path: Path, monkeypatch) -> None:
     assert acquire.read_member(
         train_settings.source, TRAIN_ARCHIVE, rows[0]["png_member"]
     ).startswith(b"\x89PNG")
+
+
+def test_missing_pairs_prevent_complete_receipt(tmp_path: Path) -> None:
+    settings = Settings(tmp_path, "train")
+    receipt = acquire._receipt(
+        settings, "atypict_range_multiclass", [], missing_pairs=1
+    )
+    assert not receipt["complete"]
+    receipt = acquire._receipt(
+        settings, "atypict_range_multiclass", [], missing_pairs=0
+    )
+    assert receipt["complete"]

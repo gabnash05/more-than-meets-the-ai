@@ -5,6 +5,7 @@ import json
 import os
 import zipfile
 from pathlib import Path
+from typing import NoReturn
 
 from PIL import Image
 
@@ -29,7 +30,7 @@ from .settings import (
 )
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     raise DataError(message, "audit_failed")
 
 
@@ -84,6 +85,7 @@ def audit(settings: Settings) -> dict:
     seen_ids, seen_groups, seen_pixels = {}, {}, {}
     support = {}
     statuses = {}
+    status_ids = {}
     preprocess = load_step("06-images").preprocess
     for split in splits:
         manifest_rel = f"manifests/{split}.jsonl"
@@ -100,6 +102,7 @@ def audit(settings: Settings) -> dict:
             head: {"positive": 0, "negative": 0, "unknown": 0} for head in LABEL_ORDER
         }
         statuses[split] = {"ok": 0, "blank": 0, "uncertain": 0}
+        status_ids[split] = {"blank": [], "uncertain": []}
         for row in rows:
             required = (
                 "sample_id",
@@ -229,6 +232,8 @@ def audit(settings: Settings) -> dict:
             if status not in statuses[split]:
                 _fail("Unexpected preprocessing status")
             statuses[split][status] += 1
+            if status != "ok":
+                status_ids[split][status].append(row["sample_id"])
         if summary.get("counts", {}).get(split) != counts:
             _fail(f"Count mismatch for {split}")
         support[split] = usable
@@ -237,16 +242,21 @@ def audit(settings: Settings) -> dict:
     for rel in sorted(expected_paths):
         if file_hash(resolve_relative(settings.prepared, rel)) != recorded_hashes[rel]:
             _fail(f"File hash mismatch: {rel}")
-    from guesser_data.common import load_step as guesser_step
-
-    config_hash = guesser_step("06-images").candidate_hash("foreground")
+    config_hash = load_step("06-images").preprocessing_hash()
     guesser = PACKAGE_ROOT.parents[1] / "guesser" / "data"
     package_files = _package_files(guesser, False)
     fingerprint = object_hash(
         {
-            p.relative_to(guesser).as_posix(): file_hash(p)
-            for p in package_files
-            if p.suffix != ".md"
+            "guesser": {
+                p.relative_to(guesser).as_posix(): file_hash(p)
+                for p in package_files
+                if p.suffix != ".md"
+            },
+            "referee": {
+                p.relative_to(PACKAGE_ROOT).as_posix(): file_hash(p)
+                for p in _package_files(PACKAGE_ROOT, True)
+                if p.suffix != ".md"
+            },
         }
     )
     identity = {
@@ -263,6 +273,8 @@ def audit(settings: Settings) -> dict:
         settings.profile == "train"
         and receipt.get("source_kind") == "atypict_range_multiclass"
         and receipt.get("complete") is True
+        and type(receipt.get("missing_pairs")) is int
+        and receipt.get("missing_pairs") == 0
         and all(
             support[s][h][v] > 0
             for s in ("train", "validation")
@@ -275,6 +287,7 @@ def audit(settings: Settings) -> dict:
         "rows": rows_by_split,
         "support": support,
         "statuses": statuses,
+        "status_ids": status_ids,
         "config_hash": config_hash,
         "fingerprint": fingerprint,
         "trainer_ready": ready,
@@ -320,6 +333,7 @@ def export_dataset(settings: Settings) -> dict:
                     "record_id",
                     "source_kind",
                     "complete",
+                    "missing_pairs",
                     "full_source_verified",
                     "response_bytes",
                 )
@@ -387,3 +401,254 @@ def export_dataset(settings: Settings) -> dict:
         checksums[role] = {"file": output.name, "sha256": file_hash(output)}
     atomic_json(settings.exports / "checksums.json", checksums)
     return checksums
+
+
+def _portable_preflight(prepared: Path, summary: dict, production: bool) -> dict:
+    labels = read_json(prepared.parent / "labels.json")
+    expected = {
+        "label_order": list(LABEL_ORDER),
+        "policy_version": POLICY_VERSION,
+        "schema_version": SCHEMA_VERSION,
+    }
+    if labels != expected or any(summary.get(k) != v for k, v in expected.items()):
+        _fail("Portable label schema mismatch")
+    splits = summary.get("splits")
+    if summary.get("role") != "trainer" or splits != ["train", "validation"]:
+        _fail("Portable preflight requires the trainer train/validation bundle")
+    splits = ["train", "validation"]
+    hashes = summary.get("hashes")
+    if not isinstance(hashes, dict):
+        _fail("Missing portable hash inventory")
+    seen_ids, seen_groups, seen_pixels, paths = set(), {}, {}, set()
+    support, statuses, status_ids, counts = {}, {}, {}, {}
+    for split in splits:
+        rel = f"manifests/{split}.jsonl"
+        paths.add(rel)
+        rows = list(iter_jsonl(resolve_relative(prepared, rel)))
+        support[split] = {
+            head: {"positive": 0, "negative": 0, "unknown": 0} for head in LABEL_ORDER
+        }
+        counts[split] = {
+            "rows": len(rows),
+            **{
+                head: {"positive": 0, "negative": 0, "unknown": 0}
+                for head in LABEL_ORDER
+            },
+        }
+        statuses[split] = {"ok": 0, "blank": 0, "uncertain": 0}
+        status_ids[split] = {"blank": [], "uncertain": []}
+        for row in rows:
+            if not isinstance(row, dict):
+                _fail(f"Invalid row in {rel}")
+            sid = row.get("sample_id")
+            if (
+                not isinstance(sid, str)
+                or not sid
+                or sid in seen_ids
+                or row.get("split") != split
+                or row.get("policy_version") != POLICY_VERSION
+            ):
+                _fail(f"Invalid or duplicate sample_id: {sid}")
+            seen_ids.add(sid)
+            for key, seen in (("group_id", seen_groups), ("pixel_sha256", seen_pixels)):
+                value = row.get(key)
+                if (
+                    not isinstance(value, str)
+                    or not value
+                    or (
+                        value in seen
+                        and (key == "pixel_sha256" or seen[value] != split)
+                    )
+                ):
+                    _fail(f"Duplicate or cross-split {key} for {sid}: {value}")
+                seen[value] = split
+            image_rel = row.get("image_path")
+            if (
+                not isinstance(image_rel, str)
+                or not image_rel.startswith("images/")
+                or not image_rel.endswith(".png")
+            ):
+                _fail(f"Invalid image path for {sid}")
+            paths.add(image_rel)
+            try:
+                with Image.open(resolve_relative(prepared, image_rel)) as image:
+                    if (
+                        image.format != "PNG"
+                        or image.mode != "L"
+                        or image.size != (512, 512)
+                        or hashlib.sha256(image.tobytes()).hexdigest()
+                        != row["pixel_sha256"]
+                    ):
+                        _fail(f"Invalid image or pixel hash for {sid}")
+                    status = load_step("06-images").preprocess(image)["status"]
+            except (OSError, ValueError) as exc:
+                raise DataError(
+                    f"Cannot decode image for {sid}: {exc}", "invalid_image"
+                ) from exc
+            if status not in statuses[split]:
+                _fail(f"Unexpected preprocessing status for {sid}: {status}")
+            statuses[split][status] += 1
+            if status != "ok":
+                status_ids[split][status].append(sid)
+            mask, origins, encoded = (
+                row.get("known_mask"),
+                row.get("label_origin"),
+                row.get("encoded_presence"),
+            )
+            if (
+                not isinstance(mask, list)
+                or len(mask) != 2
+                or any(type(v) is not bool for v in mask)
+                or not isinstance(origins, list)
+                or len(origins) != 2
+                or not isinstance(encoded, list)
+                or len(encoded) != 4
+                or any(type(v) is not int or v not in (0, 1) for v in encoded)
+            ):
+                _fail(f"Invalid targets or provenance for {sid}")
+            for i, head in enumerate(LABEL_ORDER):
+                value, origin = row.get(f"{head}_present"), origins[i]
+                if (
+                    (
+                        value is not None
+                        and (type(value) is not int or value not in (0, 1))
+                    )
+                    or mask[i] != (value is not None)
+                    or origin
+                    not in (
+                        "reviewed",
+                        "encoded_positive",
+                        "unreviewed_proxy",
+                        "review_uncertain",
+                    )
+                    or (
+                        origin == "encoded_positive" and (value != 1 or encoded[i] != 1)
+                    )
+                    or (
+                        origin in ("unreviewed_proxy", "review_uncertain")
+                        and value is not None
+                    )
+                    or (origin == "reviewed" and value is None)
+                ):
+                    _fail(f"Inconsistent {head} target for {sid}")
+                category = (
+                    "unknown" if value is None else "positive" if value else "negative"
+                )
+                counts[split][head][category] += 1
+                if status == "ok":
+                    support[split][head][category] += 1
+    if set(hashes) != paths:
+        _fail("Portable hash inventory does not match manifests")
+    for rel in sorted(paths):
+        if file_hash(resolve_relative(prepared, rel)) != hashes[rel]:
+            _fail(f"File hash mismatch: {rel}")
+    if (
+        counts != summary.get("counts")
+        or support != summary.get("usable_support")
+        or statuses != summary.get("statuses")
+    ):
+        _fail("Portable summary counts do not match manifests")
+    if (
+        summary.get("preprocessing_config_hash")
+        != load_step("06-images").preprocessing_hash()
+    ):
+        _fail("Portable preprocessing config hash mismatch")
+    bundle_root = prepared.parent
+    referee_root = bundle_root / "models" / "referee" / "data"
+    guesser_root = bundle_root / "models" / "guesser" / "data"
+    package_fingerprint = object_hash(
+        {
+            "guesser": {
+                p.relative_to(guesser_root).as_posix(): file_hash(p)
+                for p in _package_files(guesser_root, False)
+                if p.suffix != ".md"
+            },
+            "referee": {
+                p.relative_to(referee_root).as_posix(): file_hash(p)
+                for p in _package_files(referee_root, True)
+                if p.suffix != ".md"
+            },
+        }
+    )
+    if package_fingerprint != summary.get("preprocessing_source_fingerprint"):
+        _fail("Portable package fingerprint mismatch")
+    source = summary.get("source")
+    ready = (
+        isinstance(source, dict)
+        and summary.get("profile") == "train"
+        and source.get("source_kind") == "atypict_range_multiclass"
+        and source.get("complete") is True
+        and type(source.get("missing_pairs")) is int
+        and source.get("missing_pairs") == 0
+        and all(
+            support[s][h][v] > 0
+            for s in splits
+            for h in LABEL_ORDER
+            for v in ("positive", "negative")
+        )
+    )
+    report = {
+        "dataset_id": summary.get("dataset_id"),
+        "profile": summary.get("profile"),
+        "source": source,
+        "support": support,
+        "counts": counts,
+        "statuses": statuses,
+        "status_ids": status_ids,
+        "config_hash": summary["preprocessing_config_hash"],
+        "fingerprint": summary.get("preprocessing_source_fingerprint"),
+        "trainer_ready": ready,
+        "production": production,
+        "provenance_authenticated": False,
+    }
+    if production and not ready:
+        raise DataError(
+            f"Portable dataset {report['dataset_id']} is not production-ready; support={support}",
+            "not_ready",
+        )
+    return report
+
+
+def preflight(prepared_dir: str | Path, production: bool = True) -> dict:
+    """Audit a prepared directory and report training readiness."""
+    prepared = Path(prepared_dir).expanduser().resolve()
+    base = prepared.parent
+    try:
+        summary = read_json(base / "dataset-summary.json")
+        if summary.get("role") is not None:
+            return _portable_preflight(prepared, summary, production)
+        profile = summary["profile"]
+        settings = Settings(
+            data_root=base.parent, profile=profile, seed=summary["seed"]
+        )
+        if settings.prepared != prepared:
+            raise DataError(
+                f"Unexpected prepared directory: {prepared}", "invalid_path"
+            )
+        result = audit(settings)
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise DataError(f"Cannot audit {prepared}: {exc}", "audit_failed") from exc
+    report = {
+        key: result[key]
+        for key in (
+            "dataset_id",
+            "support",
+            "statuses",
+            "status_ids",
+            "config_hash",
+            "fingerprint",
+            "trainer_ready",
+        )
+    }
+    report.update(
+        profile=profile,
+        counts=summary["counts"],
+        source=result["source"],
+        production=production,
+    )
+    if production and not result["trainer_ready"]:
+        raise DataError(
+            f"Dataset {result['dataset_id']} is not production-ready: source or usable train/validation positive and negative support missing; support={result['support']}",
+            "not_ready",
+        )
+    return report

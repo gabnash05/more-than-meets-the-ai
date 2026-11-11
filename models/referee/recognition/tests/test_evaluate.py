@@ -8,7 +8,10 @@ from recognition.evaluate import (
 
 
 def test_choose_preprocessing_selects_the_closest_candidate() -> None:
-    assert choose_preprocessing({"foreground": 0.41, "rgb_resize": 0.55}, 0.5564) == "rgb_resize"
+    assert (
+        choose_preprocessing({"foreground": 0.41, "rgb_resize": 0.55}, 0.5564)
+        == "rgb_resize"
+    )
 
 
 def test_choose_preprocessing_rejects_ambiguous_candidates() -> None:
@@ -21,7 +24,9 @@ def test_choose_preprocessing_rejects_distant_candidates() -> None:
         choose_preprocessing({"foreground": 0.21, "rgb_resize": 0.25}, 0.5564)
 
 
-def _prediction(sample_id: str, scores, encoded, text, number, origins=("reviewed", "reviewed")):
+def _prediction(
+    sample_id: str, scores, encoded, text, number, origins=("reviewed", "reviewed")
+):
     return {
         "sample_id": sample_id,
         "status": "ok",
@@ -72,3 +77,26 @@ def test_render_report_mentions_provenance_and_coverage() -> None:
     assert "0.5564" in report
     assert "foreground" in report
     assert "coverage" in report.lower()
+
+
+def test_single_class_reports_undefined_ap_and_support():
+    from recognition.evaluate import _channel
+
+    rows = [
+        {
+            "status": "ok",
+            "scores": [0.9, 0.4],
+            "encoded": [1, 0, 0, 0],
+            "text": 1,
+            "text_known": True,
+            "text_origin": "reviewed",
+        }
+    ]
+    result = _channel(rows, 0, known_key="text", origin_key="text_origin")
+    assert result["knownAp"] is None
+    assert result["apSupport"]["known"] == {
+        "positive": 1,
+        "negative": 0,
+        "undefinedReason": "no_negative",
+    }
+    assert result["apSupport"]["proxy"]["undefinedReason"] == "no_positive_or_negative"

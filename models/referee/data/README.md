@@ -1,6 +1,6 @@
 # Referee data
 
-This CPU-only Python 3.13 and uv package prepares ATYPICT rasters and two independent presence labels. It follows the Guesser's numbered data layout and uses its existing foreground transform. [Reviewed data walkthrough](../../../docs/referee/referee-data-flow.html)
+This CPU-only Python 3.13 and uv package prepares ATYPICT rasters and two independent presence labels. It follows the Guesser's numbered data layout and uses its foreground implementation through a Referee-specific, hash-bound wrapper (EXIF orientation, white alpha compositing, working size 1024 and distance 0.04). Guesser behavior is unchanged. [Reviewed data walkthrough](../../../docs/referee/referee-data-flow.html)
 
 ## Setup and offline example
 
@@ -48,3 +48,9 @@ known = sample["known_mask"]  # bool [2], same order
 ~~~
 
 Choose `"validation"` for the other trainer split. Use usable images and apply the mask separately to each target. Blank and uncertain canvases have no tensor. The loader already applies the Guesser normalization. [One-page trainer handoff](../../../docs/referee/referee-data-handoff.md)
+
+## Corrected trainer gate
+
+Run `referee-data preflight --profile train --json` before real training. The default production gate requires a complete recorded multiclass source and usable known positive/negative support for text and number in train and validation. `--sample` reports diagnostics without claiming production readiness. The public `preflight(prepared_dir, production=True)` also accepts an extracted trainer ZIP, verifies its inventory and reports unauthenticated provenance explicitly.
+
+Contact sheets now show source and canonical pixels, resolved labels, masks and origins. See [the trainer handoff](../../../docs/referee/TRAINER-HANDOFF.md) and [the sample review audit](../../../docs/referee/REPAIR-AUDIT.md). Unknown labels must stay unknown; reviewed negatives are not inferred from source folders or zero anchors.

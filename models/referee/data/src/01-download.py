@@ -1,24 +1,24 @@
 """Acquire verified ATYPICT members using bounded HTTP ranges or local fixtures."""
 
 import hashlib
-import random
-import ssl
-import time
 import io
 import json
 import os
+import random
 import re
 import shutil
+import ssl
 import stat
 import struct
-import urllib.request
+import time
 import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from http.client import HTTPResponse, IncompleteRead
 from pathlib import Path
-
 
 from .common import (
     DataError,
@@ -105,7 +105,9 @@ def _receipt(settings: Settings, kind: str, rows: list[dict], **extra: object) -
         archive_md5=ARCHIVE_MD5,
         full_source_verified=False,
         complete=kind == "atypict_range_multiclass"
-        and not extra.get("in_progress", False),
+        and not extra.get("in_progress", False)
+        and type(extra.get("missing_pairs")) is int
+        and extra.get("missing_pairs") == 0,
         pair_count=len(rows),
         **extra,
     )
@@ -202,6 +204,7 @@ def read_member(source_root: Path, source_archive: str, member_path: str) -> byt
 class _TransientSourceError(DataError):
     """A source connection failure that can be retried."""
 
+
 @contextmanager
 def _source_response(
     request: str | urllib.request.Request,
@@ -212,11 +215,7 @@ def _source_response(
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
 
-    url = (
-        request.full_url
-        if isinstance(request, urllib.request.Request)
-        else request
-    )
+    url = request.full_url if isinstance(request, urllib.request.Request) else request
     hostname = urllib.parse.urlsplit(url).hostname
 
     for attempt in range(max_attempts):
@@ -226,22 +225,14 @@ def _source_response(
         except OSError as exc:
             keylog = os.environ.get("SSLKEYLOGFILE")
 
-            if (
-                isinstance(exc, FileNotFoundError)
-                and keylog
-                and exc.filename == keylog
-            ):
+            if isinstance(exc, FileNotFoundError) and keylog and exc.filename == keylog:
                 raise DataError(
                     f"{operation}: TLS key log path is missing. "
                     "Clear SSLKEYLOGFILE or set it to a file "
                     "in an existing directory."
                 ) from exc
 
-            reason = (
-                exc.reason
-                if isinstance(exc, urllib.error.URLError)
-                else exc
-            )
+            reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
 
             if isinstance(reason, ssl.SSLCertVerificationError):
                 raise DataError(
@@ -255,7 +246,7 @@ def _source_response(
                     f"{max_attempts} attempts for {url}: {exc}"
                 ) from exc
 
-            delay = min(2 ** attempt, 8) + random.uniform(0, 0.5)
+            delay = min(2**attempt, 8) + random.uniform(0, 0.5)
             time.sleep(delay)
             continue
 
@@ -264,7 +255,6 @@ def _source_response(
         with response:
             yield response
         return
-
 
 
 class RangeFile(io.RawIOBase):
@@ -326,15 +316,12 @@ class RangeFile(io.RawIOBase):
                     f"Read ATYPICT archive bytes {start}-{end}",
                     max_attempts=1,
                 ) as response:
-
                     if (
                         response.status != 206
                         or response.headers.get("Content-Range")
                         != f"bytes {start}-{end}/{self.size}"
                     ):
-                        raise DataError(
-                            "Server did not honour the exact archive range"
-                        )
+                        raise DataError("Server did not honour the exact archive range")
 
                     while remaining:
                         try:
@@ -355,9 +342,7 @@ class RangeFile(io.RawIOBase):
                                 self.total += len(partial)
                                 remaining -= len(partial)
 
-                            raise OSError(
-                                "Truncated archive response"
-                            ) from exc
+                            raise OSError("Truncated archive response") from exc
 
                         if not chunk:
                             raise DataError(
@@ -366,9 +351,7 @@ class RangeFile(io.RawIOBase):
                             )
 
                         if len(chunk) > remaining:
-                            raise DataError(
-                                "Archive response exceeded requested range"
-                            )
+                            raise DataError("Archive response exceeded requested range")
 
                         chunks.append(chunk)
                         self.total += len(chunk)
@@ -550,8 +533,6 @@ def download(settings: Settings) -> dict:
                         continue
                     selected.append(row)
                     counts[folder] = count + 1
-                    if len(selected) == 10:
-                        break
                 for row in sorted(selected, key=lambda row: row["sample_id"]):
                     for field in (
                         "png_member",

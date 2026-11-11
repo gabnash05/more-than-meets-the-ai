@@ -12,9 +12,9 @@ def test_builds_the_locked_cpu_cli_command() -> None:
         project=Path("/repo/models/referee/data"),
     )
     assert options.command("export") == [
-        "uv", "run", "--project", "/repo/models/referee/data",
+        "uv", "run", "--project", str(Path("/repo/models/referee/data")),
         "--frozen", "--no-dev", "referee-data", "export",
-        "--data-root", "/tmp/referee-data", "--profile", "sample", "--json",
+        "--data-root", str(Path("/tmp/referee-data")), "--profile", "sample", "--json",
     ]
 
 
