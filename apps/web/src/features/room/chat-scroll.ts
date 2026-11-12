@@ -15,3 +15,16 @@ export function isPinnedToBottom(
 ): boolean {
   return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= threshold;
 }
+
+/**
+ * Decide whether a new message should move the log.
+ *
+ * The reader follows the conversation when they are already at the bottom. A
+ * reader who scrolled up to re-read history must not be dragged away by someone
+ * else's message — but their own message always scrolls into view, because
+ * otherwise sending would look like it did nothing.
+ */
+export function shouldFollow(options: { pinned: boolean; latestAuthorId?: string; viewerId?: string }): boolean {
+  if (options.pinned) return true;
+  return !!options.latestAuthorId && options.latestAuthorId === options.viewerId;
+}
