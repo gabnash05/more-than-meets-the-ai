@@ -1,7 +1,7 @@
 ---
 name: onboarding
 description: "Use when entering this repo. Trace rules and source."
-version: 1.2.0
+version: 1.3.0
 author: Yashindo, Operator-Syn
 license: MIT
 platforms: [linux, macos, windows]
@@ -28,9 +28,9 @@ Update this skill when the onboarding sequence or repository-wide guidance chang
 
 - The map indexes entry points and source families, not every source file. Use `search_files` to trace symbols and inspect current tests; never treat the index as exhaustive implementation evidence.
 - Include relevant untracked work in the inspection, but label it as local/uncommitted rather than published functionality. Never execute production downloads or notebooks just to onboard.
-- Before notebook edits or authorized commits, inspect active jobs and clone-local Git filters/hooks. Preserve execution outputs outside the repository before hooks can strip them; inspect both the staged notebook and working copy afterward. An idle kernel or a completed run does not authorize discarding notebook state.
+- Before notebook edits or authorized commits, inspect active jobs and clone-local Git filters/hooks. Preserve execution outputs outside the repository before hooks can strip them; inspect both the staged notebook and working copy afterward. Clone setup is one command, `scripts/configure-notebook-git.sh`, and the clean filter inserts missing cell ids, so a notebook typed by hand without ids reads as permanently modified. An idle kernel or a completed run does not authorize discarding notebook state.
 - Historical diagrams, validation reports, and team-oriented examples do not override the current individual-mode contract.
 
 ## Verification
 
-Through `terminal`, run `python .agents/skills/onboarding/scripts/check_repository_map.py` from the repository root after updating this skill or moving entry-point documentation. The stdlib check verifies literal indexed paths and coverage of tracked Markdown docs, model READMEs, and instruction files. It does not validate prose accuracy, links inside other docs, or implementation behavior. Review local untracked additions separately, and run `git diff --check`. No dependency sync or notebook execution is needed for index-only changes.
+Through `terminal`, run `python .agents/skills/onboarding/scripts/check_repository_map.py` from the repository root after updating this skill or moving entry-point documentation. The stdlib check verifies literal indexed paths and coverage of every tracked README, `docs/` Markdown and instruction file. It does not validate prose accuracy, links inside other docs, or implementation behavior. Review local untracked additions separately, and run `git diff --check`. No dependency sync or notebook execution is needed for index-only changes.
