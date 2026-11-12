@@ -23,6 +23,14 @@ main{height:calc(100svh - 126px);min-height:570px}.slide{height:100%;padding:24p
 .specimen-slide h2{font-size:clamp(36px,4vw,58px);margin-bottom:10px}.specimen-slide .eyebrow{margin-bottom:12px}.specimen-status{font-size:17px;line-height:1.3;color:#3f3f3f;margin-bottom:14px}.specimen-row{margin-top:13px}.specimen-row h3{font-size:18px;margin-bottom:7px;text-transform:uppercase;letter-spacing:.04em}.specimen-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.specimen{background:white;border:2px solid var(--ink);padding:6px;font-size:13px;font-weight:600;line-height:1.25}.specimen span{display:block}.specimen-image{height:clamp(55px,11vh,110px);display:grid;place-items:center;text-align:center;background:#ebe7df;border:1px dashed #777;color:#555;font-size:13px;line-height:1.2;margin-bottom:5px}.specimen-image img{width:100%;height:100%;object-fit:contain}
 @media(max-width:800px){.specimen-slide{overflow:auto}.specimen-grid{gap:5px}.specimen{padding:3px;font-size:10px}.specimen-image{height:60px;font-size:10px}.specimen-status{font-size:14px}}
 @media print{.specimen-image{height:23mm}}
+
+/* Confidence slides use square image frames; scroll the slide if both rows exceed the viewport. */
+.specimen-slide.active{align-items:flex-start;overflow-y:auto;overscroll-behavior:contain}
+.specimen-slide .inner{margin:0 auto;flex-shrink:0}
+.specimen-image{position:relative;display:block;width:100%;height:auto;aspect-ratio:1/1;overflow:hidden}
+.specimen-image img{position:absolute;inset:0;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain}
+@media(max-width:800px){.specimen-image{height:auto;aspect-ratio:1/1}}
+@media print{.specimen-slide.active{overflow:visible}.specimen-image{height:auto;aspect-ratio:1/1}}
 </style><script>// Update these details without changing the slide layouts.
 window.PRESENTATION = {
   members: ['Husnie R. Baddie', 'John-Ronan S. Beira', 'Kim Gabriel A. Nasayao'],
