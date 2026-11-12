@@ -68,6 +68,6 @@
 
 .finalNeutral { background:#eeeef0; color:#67636d; }
 
-.resultCard { height: 320px; min-height: 320px; max-height: 320px; }
-.resultCard .content, .resultCard .resultStack { height: 244px; }
-.resultCard .previousList { height: 172px; min-height: 0; max-height: 172px; }
+.resultCard { height: 440px; min-height: 440px; max-height: 440px; }
+.resultCard .content, .resultCard .resultStack { height: 364px; }
+.resultCard .previousList { height: 292px; min-height: 0; max-height: 292px; overflow-x: hidden; }
