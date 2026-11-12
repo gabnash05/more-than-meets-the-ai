@@ -1,6 +1,23 @@
 # More Than Meets the AI
 
-A multiplayer drawing game for an intelligent-systems class project, with a future transformer AI competitor.
+A multiplayer drawing game for CSC173, inspired by skribbl.io. Players race to recognize a shared sketch while the Guesser evaluates the canvas and the Referee provides advisory writing alerts.
+
+![Quick, Draw! training sketches from the presentation](presentation/assets/quickdraw-samples.png)
+
+**[Open the presentation](presentation/More-Than-Meets-the-AI.html)** · [Presentation notes and sources](presentation/README.md) · [Play the game](https://mtmai.yashindo.syn-forge.com/)
+
+| Guesser | Referee |
+| --- | --- |
+| Learns to classify sketches across 345 Quick, Draw! categories. | Estimates evidence of text and numbers in ATYPICT sketches. |
+| Complete and partial drawing training runs are compared. | Warnings are advisory; players judge whether writing is a prohibited clue. |
+
+![Guesser validation accuracy comparison from the presentation](presentation/assets/guesser-accuracy.png)
+
+The Guesser chart shows validation on **completed drawings during training**, not real-game accuracy.
+
+![Final Referee precision, recall and F1 chart from the presentation](presentation/assets/referee-final-metrics.png)
+
+The Referee final chart compares decisions against **encoded proxy labels** at threshold 0.5: text F1 is 0.74 and number F1 is 0.06. Its correspondence to deployed weights and real-game warning accuracy are unverified. See the [presentation notes](presentation/README.md) and [Referee repair audit](docs/referee/REPAIR-AUDIT.md) for scope and limitations. The sections below include dated milestone notes; consult the linked component guides for subsequent work.
 
 **Implemented Individual milestone (verified 7 November 2026)**. The NestJS remote adapter provides shared rooms for Individual play, and the browser-local adapter is a demo. Compose packages the web app, room API and optional inference service. Both AI providers default to unavailable. The optional profile supports a Guesser smoke test and Referee fixtures. Remote Team play, the team's trained model integrations and research evaluation have separate handoffs.
 
@@ -30,7 +47,7 @@ Main-branch CI is configured to test and publish web/API images to GHCR with mat
 
 The agreed [models layout](models/README.md) separates Guesser data, training, inference, evaluation and checkpoints from Referee work. The [data package](models/guesser/data/README.md) uses Python 3.13 and uv: numbered stages download/clean/sample, prepare splits, optionally preview and export with one data audit. Timed image creation uses the shared foreground/edges preprocessors; no approvals or freeze step are required. See the [runbook](models/guesser/data/RUNBOOK.md).
 
-The [training guide](models/guesser/training/README.md) covers Windows/Linux setup, the required prepared data, GPU checks, A/B runs, resume and comparison. Lightning/timm training and PyTorch batching are implemented; the initial pipeline was run on Windows according to the training owner, while Linux GPU training still requires validation. The [evaluation workspace](models/guesser/evaluation/README.md) is a separate Python 3.12/uv notebook scaffold. Stage-wise evaluation, the inference service and published model performance remain future work.
+The [training guide](models/guesser/training/README.md) covers Windows/Linux setup, the required prepared data, GPU checks, A/B runs, resume and comparison. Lightning/timm training and PyTorch batching are implemented; the initial pipeline was run on Windows according to the training owner, while Linux GPU training still requires validation. The [evaluation workspace](models/guesser/evaluation/README.md) is a separate Python 3.12/uv notebook scaffold. The evaluation workspace contains stage-wise evaluation tooling; the linked presentation identifies the scope of the reported runs.
 
 ## Game modes
 
@@ -51,7 +68,7 @@ The stack uses a **Next.js** static export behind **Nginx** and one **NestJS + S
 
 ## Research evaluation workspace
 
-`models/guesser/evaluation/` is a uv-managed, cross-platform Python/Jupyter workspace for auditing held-out inputs, evaluating frozen model checkpoints, measuring inference latency, and preparing the live inference interface. The environment and smoke-check notebook are set up; the evaluator, inference service, trained weights, and performance results remain future work. See its [setup, usage, and notebook merge-conflict guide](models/guesser/evaluation/README.md).
+`models/guesser/evaluation/` is a uv-managed, cross-platform Python/Jupyter workspace for auditing held-out inputs, evaluating frozen model checkpoints, measuring inference latency, and preparing the live inference interface. The workspace includes evaluation notebooks and code. Reported performance depends on the exact run and split; see the presentation notes and evaluation guide. See its [setup, usage, and notebook merge-conflict guide](models/guesser/evaluation/README.md).
 
 ## Project focus
 

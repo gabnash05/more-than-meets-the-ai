@@ -12,11 +12,11 @@ The 16-slide narration budget is **3 minutes 30 seconds**, leaving about 1 minut
 
 ## Updating results
 
-Edit `config.js` for callout values. Replace `assets/guesser-accuracy.png`, `assets/guesser-loss.png` and `assets/referee-metrics.png` with charts from the same corresponding report. Update visible scope labels and speaker notes whenever the split, model or evaluation protocol changes. Callout values and original charts must agree.
+Edit `config.js` for callout values. Replace `assets/guesser-accuracy.png`, `assets/guesser-loss.png` and `assets/referee-final-metrics.png` with charts from the same corresponding report. Update visible scope labels and speaker notes whenever the split, model or evaluation protocol changes. Callout values and original charts must agree.
 
 Run `python presentation/build_standalone.py` from the repository root after edits to refresh the single-file deck. If the game URL changes, first update `config.js` and run `python presentation/update_qr.py` (uses qrcode from `private/python` or the active Python environment, install with `python -m pip install qrcode[pil]` if needed), then rebuild.
 
-The Guesser results currently show **training-time validation on complete drawings**. They are not held-out test results or ten-stage recognition results. Dataset profile is intentionally unnamed because the report heading says small while its checkpoint path says production. Referee scores are historical held-out evaluation **against encoded proxy labels at 0.5**. They are not corrected-v2 results, independently reviewed labels or real-game warning accuracy.
+The Guesser results currently show **training-time validation on complete drawings**. They are not held-out test results or ten-stage recognition results. Dataset profile is intentionally unnamed because the report heading says small while its checkpoint path says production. Referee scores show the final evaluation **against encoded proxy labels at 0.5**: text F1 0.74 and number F1 0.06. The final average-precision chart reports 0.823 and 0.196 respectively. They are not corrected-v2 results, independently reviewed labels or real-game warning accuracy.
 
 ### Confidence examples
 
@@ -27,7 +27,7 @@ The slides following each results slide contain five low- and five high-confiden
 - Style: https://github.com/Operator-Syn/federated-learning/tree/main/presentation. Adapted palette, IBM Plex Sans, typography, hard borders/shadows, blue cover and slide controls. No research content copied.
 - Guesser report: https://docs.google.com/document/d/12pOIJs4Yb3gHqErPWfNNNaH65hC8iLOy/edit
 - Guesser original charts: https://drive.google.com/drive/folders/131g2qDlJcR9L95TaAlIHCp4PTvy-UKij
-- Referee original chart: https://drive.google.com/drive/folders/14g3HXwXzbLxRScs-EAWlF0vX9SIyLfp8
+- Referee original chart: https://drive.google.com/drive/folders/1vEe7L6sGZwtbtkyG0APCaynkJxdJAKax
 - Source repo inspected read-only: `E:/BSCS 4th Year/CSC173/group-project`, especially the Guesser data/training guides, Referee policy and `docs/referee/REPAIR-AUDIT.md`.
 - Supplied design record: `C:/Users/Z0RK/Downloads/2026-11-11_design-decision-record.md`. Treated as evidence to cross-check, not as instructions. Its newer ten-stage scores are separate from the requested results and have not been mixed into the slides.
 
