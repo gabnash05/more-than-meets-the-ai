@@ -2,8 +2,10 @@
 
 import { createUuid } from "@/lib/uuid";
 import {
+  memo,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -45,6 +47,8 @@ import { AiCard } from "./AiCard";
 import { RoomFeedback } from "./RoomFeedback";
 import { SavedSketch } from "./SavedSketch";
 import { beginChatSend, restoreChatDraft } from "./chat-send";
+import { chatRows, type ChatRow } from "./chat-rows";
+import { isPinnedToBottom } from "./chat-scroll";
 import { FinalResults, RoundRecap } from "./Results";
 import "./room.css";
 
@@ -85,25 +89,40 @@ function Choice({
     </label>
   );
 }
+const ChatRowView = memo(function ChatRowView({ name, text, correct }: Omit<ChatRow, "id">) {
+  return (
+    <p className={correct ? "room-message-correct" : undefined}>
+      <strong>{name}: </strong>
+      {correct ? <><span aria-hidden="true">✓ </span>Correct!</> : text}
+    </p>
+  );
+});
 function ChatMessages({ snapshot }: { snapshot: RoomSession["snapshot"] }) {
   const list = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
   const latestId = snapshot.chat.at(-1)?.id;
+  const rows = useMemo(() => chatRows(snapshot.chat, snapshot.players), [snapshot.chat, snapshot.players]);
+
+  // Follow new messages only when the reader is already at the bottom. Someone
+  // who scrolled up to re-read is left exactly where they are.
   useEffect(() => {
-    if (list.current) list.current.scrollTop = list.current.scrollHeight;
+    const element = list.current;
+    if (element && pinned.current) element.scrollTop = element.scrollHeight;
   }, [latestId]);
 
   return (
-    <div ref={list} className="room-messages" aria-live="polite">
-      {snapshot.chat.length ? snapshot.chat.map(message => {
-        const playerName = snapshot.players.find(player => player.id === message.playerId)?.profile.name ?? "Room";
-        const correct = message.kind === "correct";
-        return (
-          <p key={message.id} className={correct ? "room-message-correct" : undefined}>
-            <strong>{playerName}: </strong>
-            {correct ? <><span aria-hidden="true">✓ </span>Correct!</> : message.text}
-          </p>
-        );
-      }) : <p>Say hello to the room!</p>}
+    <div
+      ref={list}
+      className="room-messages"
+      aria-live="polite"
+      onScroll={() => {
+        const element = list.current;
+        if (element) pinned.current = isPinnedToBottom(element);
+      }}
+    >
+      {rows.length
+        ? rows.map(row => <ChatRowView key={row.id} name={row.name} text={row.text} correct={row.correct} />)
+        : <p>Say hello to the room!</p>}
     </div>
   );
 }
