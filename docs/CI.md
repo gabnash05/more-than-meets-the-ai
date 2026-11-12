@@ -70,6 +70,28 @@ publication and must be checked on its first actual run.
 
 The pull-only VPS procedure is in [the deployment runbook](../deploy/README.md#pull-prebuilt-ghcr-images-on-node1); the optional ViT canary uses its separate [GHCR Guesser instructions](../deploy/README.md#ghcr-vit-guesser-canary-on-node1).
 
+## Presentation pages
+
+`.github/workflows/presentation-pages.yml` publishes the slide deck to GitHub
+Pages at `https://gabnash05.github.io/more-than-meets-the-ai/`. It runs on pushes
+to `main` that touch `presentation/**` or the workflow file, and on manual
+dispatch. The build is `python presentation/build_standalone.py`, which needs
+only the standard library: fonts, images and charts become data URIs, so the
+published page is one self-contained `index.html`.
+
+Two guards fail the job rather than publishing a broken deck: a build that still
+references `assets/`, `style.css` or `config.js`, and a bundle under 500 KB,
+which would mean the assets were not embedded. Specimen exports live under
+ignored checkpoint directories, so they are absent in CI and those slides keep
+their pending state instead of failing the build.
+
+Pages must be enabled once for the repository with **Source: GitHub Actions**.
+The workflow asks `actions/configure-pages` to enable it, which works when the
+run holds `pages: write`; if the repository restricts that, a maintainer enables
+it in settings. Publication uses the automatic `GITHUB_TOKEN` and the
+`github-pages` environment, so no additional secret is required, and it does not
+touch the VPS or the game deployment.
+
 ## Frontend parallel execution and failure reporting
 
 Two independent jobs start together:
