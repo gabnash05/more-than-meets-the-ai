@@ -122,3 +122,43 @@ def test_referee_bundle_rejects_label_order(tmp_path, monkeypatch):
     bundle = load_bundle("referee", "referee-vit-a-v1", tmp_path)
     assert bundle.reason == "invalid-label-order"
     assert bundle.adapter is None
+
+
+def test_referee_v2_bundle_reports_ready(tmp_path, monkeypatch):
+    monkeypatch.setattr(vit, "RefereeViT", DummyAdapter)
+    bundle_path = write_bundle(tmp_path, "referee-vit-v2")
+    labels = ["text", "number"]
+    (bundle_path / "labels.txt").write_text("text\nnumber\n", encoding="utf-8")
+    (bundle_path / "labels.json").write_text(
+        json.dumps([{"class_id": i, "source_name": name} for i, name in enumerate(labels)]),
+        encoding="utf-8",
+    )
+    (bundle_path / "evaluation-summary.json").write_text("{}", encoding="utf-8")
+    manifest = json.loads((bundle_path / "manifest.json").read_text(encoding="utf-8"))
+    manifest.update(
+        version=2,
+        backbone=vit.BACKBONE,
+        preprocessing="referee-foreground-v2",
+        output=[1, 2],
+        labelOrder=labels,
+    )
+    manifest["files"] = {
+        name: sha256((bundle_path / name).read_bytes()).hexdigest()
+        for name in (
+            "weights.safetensors",
+            "labels.txt",
+            "labels.json",
+            "checkpoint-selection.json",
+            "evaluation-summary.json",
+        )
+    }
+    manifest["artifactRevision"] = sha256(
+        json.dumps(manifest["files"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    (bundle_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    bundle = load_bundle("referee", "referee-vit-v2", tmp_path)
+
+    assert bundle.readiness()["status"] == "ready"
+    assert bundle.labels == labels
+    assert bundle.revision == manifest["artifactRevision"]
