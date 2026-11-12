@@ -1,0 +1,60 @@
+#!/bin/sh
+# Git-facing wrapper around nbstripout.
+#
+# Git calls this in two modes:
+#
+#   nbstripout-safe              clean filter, stdin -> stdout, run on `git add`
+#   nbstripout-safe --quiet -t PATH   textconv, run when diffing one notebook
+#
+# It exists to stop two kinds of noise that look like real failures:
+#
+#  1. Python ignores SIGPIPE and raises BrokenPipeError instead. When whatever
+#     reads the stripped JSON closes the pipe early -- a pager, `head`, a diff
+#     viewer -- the write fails and nbstripout prints "Could not strip ..." with
+#     a traceback over the diff being read. Restoring the default disposition
+#     makes the process die silently, the way every other Unix filter does.
+#
+#  2. nbformat warns when a cell has no id. Every notebook in the working tree
+#     has ids, but older commits do not, so reviewing history reprints the
+#     warning. It is suppressed in textconv mode only, because that path only
+#     renders a diff. The clean filter keeps the warning, so a notebook that is
+#     genuinely missing ids still complains when it is staged.
+#
+# The stripped output is byte-identical to plain nbstripout; only stderr and
+# exit-on-EPIPE differ.
+#
+# Interpreter resolution, in order: $NBSTRIPOUT_PYTHON, the Guesser evaluation
+# environment, the Referee evaluation environment, then python3. Override the
+# first when a clone uses a different environment layout.
+
+set -eu
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(cd "$(dirname "$0")/.." && pwd)
+
+python=${NBSTRIPOUT_PYTHON:-}
+if [ -z "$python" ]; then
+    for candidate in \
+        "$root/models/guesser/evaluation/.venv/bin/python" \
+        "$root/models/referee/evaluation/.venv/bin/python"
+    do
+        if [ -x "$candidate" ] && "$candidate" -c "import nbstripout" >/dev/null 2>&1; then
+            python=$candidate
+            break
+        fi
+    done
+fi
+if [ -z "$python" ]; then
+    python=python3
+fi
+
+exec "$python" -c '
+import runpy, signal, sys, warnings
+
+args = sys.argv[1:]
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+if args and args[0] == "--quiet":
+    warnings.filterwarnings("ignore")
+    args = args[1:]
+sys.argv = ["nbstripout"] + args
+runpy.run_module("nbstripout", run_name="__main__")
+' "$@"
