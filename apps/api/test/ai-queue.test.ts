@@ -356,3 +356,36 @@ test("real Redis round-trip resolves a submitted job", { skip: !process.env.REDI
     await raw.quit();
   }
 });
+
+// A room invalidation aborts in-flight jobs, and the abort can land while the
+// payload write is still blocked. Nothing awaits the outcome promise until the
+// write returns, so an unhandled rejection there used to take the whole API down
+// and reload every room as interrupted. This pins the window shut.
+test("an abort during the payload write is handled, not an unhandled rejection", async () => {
+  const { connection, queue } = queueFixture();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const write = connection.setValue.bind(connection);
+  connection.setValue = async (key, value, ttl) => {
+    await gate;
+    return write(key, value, ttl);
+  };
+
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  const controller = new AbortController();
+  try {
+    const pending = queue.submit("guesser", job(), Buffer.from("png"), controller.signal);
+    controller.abort("invalidated");
+    // Let the runtime decide what counts as unhandled before the write resumes.
+    await delay(20);
+    release();
+    await assert.rejects(pending, /aborted/);
+    await delay(20);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    await queue.close();
+  }
+  assert.deepEqual(unhandled, [], "an aborted job must not surface as an unhandled rejection");
+});
