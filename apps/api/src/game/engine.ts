@@ -82,7 +82,6 @@ type Game = {
   refereeWarning?: RefereeWarning;
   guesserProgress?: { attempts: number; sequence?: number; hash?: string; settledAt?: number };
   refereeAt?: number;
-  refereeStreak?: [number | null, number | null];
   refereeEvidence?: [boolean, boolean];
   aiJobs?: Record<string, { observation: GuesserObservation; completed: boolean }>;
 };
@@ -410,7 +409,6 @@ export class RoomEngine {
   }
   private clearRefereeWarning(game: Game): boolean {
     const hadWarning = game.refereeWarning !== undefined;
-    game.refereeStreak = undefined;
     game.refereeWarning = undefined;
     return hadWarning;
   }
@@ -534,7 +532,7 @@ export class RoomEngine {
           ...(role === "guesser" ? { hint: this.hint(group, game.target!) } : {}) };
         return { role, job };
       });
-      return { jobs, operations, at };
+      return { jobs, operations };
     }).catch(() => undefined);
     if (!reserved) {
       for (const role of roles) this.activeInference.delete(this.inferenceKey(code, role));
@@ -548,17 +546,17 @@ export class RoomEngine {
     } catch {
       png = undefined;
     }
-    await Promise.all(reserved.jobs.map(({ role, job }) => this.observe(code, role, { job, at: reserved.at }, png)));
+    await Promise.all(reserved.jobs.map(({ role, job }) => this.observe(code, role, { job }, png)));
   }
 
-  private async observe(code: string, role: Role, reserved: { job: Job; at: number }, png: Buffer | null | undefined): Promise<void> {
+  private async observe(code: string, role: Role, reserved: { job: Job }, png: Buffer | null | undefined): Promise<void> {
     const inference = this.options.inference!;
     const active = this.activeInference.get(this.inferenceKey(code, role))!;
     const { signal } = active.controller;
     let submittedAt: number | undefined;
     let outcome: Outcome | undefined;
     try {
-      const { job, at } = reserved;
+      const { job } = reserved;
       if (png === undefined) throw new Error("render-failed");
       const hash = role === "guesser" && png ? digest(png) : undefined;
       const send = await this.serial(active.code, async () => {
@@ -618,23 +616,13 @@ export class RoomEngine {
           this.publish(live.room);
         } else if (role === "referee") {
           const previousWarning = game.refereeWarning;
-          const streak = game.refereeStreak ??= [null, null];
           const evidence = game.refereeEvidence ??= [false, false];
-          let textConfirmed = false;
-          for (const channel of [0, 1] as const) {
-            const previous = streak[channel];
-            if (outcome.status !== "evidence" || outcome.scores[channel] < 0.5) streak[channel] = null;
-            else {
-              if (previous !== null && at - previous >= 1000 && at - previous <= 3000) {
-                evidence[channel] = true;
-                if (channel === 0) textConfirmed = true;
-              }
-              streak[channel] = at;
-            }
+          if (outcome.status === "evidence") {
+            if (outcome.scores[0] >= 0.4) evidence[0] = true;
+            if (outcome.scores[1] >= 0.5) evidence[1] = true;
           }
           const now = this.now();
-          const currentWarning = previousWarning !== undefined && previousWarning.expiresAt > now;
-          game.refereeWarning = outcome.status === "evidence" && outcome.scores[0] >= 0.5 && (textConfirmed || currentWarning)
+          game.refereeWarning = outcome.status === "evidence" && outcome.scores[0] >= 0.4
             ? { confidence: outcome.scores[0], expiresAt: now + 3000 }
             : undefined;
           if (game.refereeWarning !== previousWarning) this.publish(live.room);

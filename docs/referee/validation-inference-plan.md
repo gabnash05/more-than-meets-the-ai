@@ -30,7 +30,9 @@ If calibration is fitted, fit each channel on held-out calibration data or out-o
 
 Static ATYPICT validation can guide content thresholds. Tune warning persistence, cooldown and hysteresis using separately labelled game replays, because the released raster data lacks usable observation timing. Measure advisory precision, false advisories per clean turn, repeat advisories and time to first qualifying warning on those replays.
 
-## 4. Require persistent observations
+## 4. Historical persistence proposal (superseded)
+
+The game now opens a text advisory on one fresh score of at least 0.4. The two-observation proposal below is retained as an evaluation alternative, not the active game rule. Compare false advisories and time to warning on reviewed game replays before treating either setting as calibrated.
 
 Use independent state for text and numbers. A provisional starting policy checks the current canvas at about once per second. Open a channel's advisory after **two consecutive fresh observations** exceed its opening threshold, separated by **at least one second**, with a **maximum three-second gap**. These count/timing values are working assumptions for replay validation.
 
