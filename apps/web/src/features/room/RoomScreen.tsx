@@ -44,6 +44,7 @@ import { Avatar } from "@/features/player/Avatar";
 import { AiCard } from "./AiCard";
 import { RoomFeedback } from "./RoomFeedback";
 import { SavedSketch } from "./SavedSketch";
+import { beginChatSend, restoreChatDraft } from "./chat-send";
 import { FinalResults, RoundRecap } from "./Results";
 import "./room.css";
 
@@ -131,6 +132,7 @@ export default function RoomScreen() {
     [settingsFailed, setSettingsFailed] = useState(false);
   const [guessPending, setGuessPending] = useState(false);
   const pendingGuess = useRef<{ canvasId: string; generation: number } | null>(null);
+  const chatInFlight = useRef(false);
   const lifecycle = useRef(0);
   const [aiPulse, setAiPulse] = useState<AiGuessEvent>();
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 250); return () => clearInterval(timer); }, []);
@@ -385,9 +387,19 @@ export default function RoomScreen() {
     const roomClient = client.current;
     if (!text || !roomClient) return;
     if (!(drawing && role === "guesser")) {
+      const decision = beginChatSend(message, chatInFlight.current);
+      if (!decision) return;
+      chatInFlight.current = true;
+      setMessage(decision.draft);
       void action(async () => {
-        await roomClient.sendChat(text);
-        setMessage(current => current.trim() === text ? "" : current);
+        try {
+          await roomClient.sendChat(decision.text);
+        } catch (error) {
+          setMessage(current => restoreChatDraft(current, decision.text));
+          throw error;
+        } finally {
+          chatInFlight.current = false;
+        }
       });
       return;
     }
