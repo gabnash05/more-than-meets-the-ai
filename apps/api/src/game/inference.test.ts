@@ -330,10 +330,10 @@ test("co-due roles share one prefix and referee continues after the Guesser solv
 });
 
 
-test("referee warning opens on the first text score at 0.4 and clears on clear", async () => {
+test("referee warning opens on the first text score at 0.3 and clears on clear", async () => {
   let refereeCalls = 0;
   const room = await fixture(async role => {
-    if (role === "referee") { refereeCalls++; return { status: "evidence", scores: [0.4, 0.9] }; }
+    if (role === "referee") { refereeCalls++; return { status: "evidence", scores: [0.3, 0.9] }; }
     return { status: "pass" };
   }, async () => Buffer.from("pixels"), true);
   try {
@@ -342,7 +342,7 @@ test("referee warning opens on the first text score at 0.4 and clears on clear",
     await waitFor(() => refereeCalls === 1);
     await waitFor(() => room.events.some(event => event.type === "snapshot" && !!event.snapshot.game?.refereeWarning));
     const warning = (await room.guest()).snapshot.game!.refereeWarning;
-    assert.equal(warning?.confidence, 0.4);
+    assert.equal(warning?.confidence, 0.3);
     await room.ink(true);
     assert.equal((await room.guest()).snapshot.game!.refereeWarning, undefined);
   } finally { await room.engine.shutdown(); }
@@ -353,7 +353,7 @@ test("a below-threshold frame does not delay the next qualifying referee warning
   const room = await fixture(async role => {
     if (role === "referee") {
       refereeCalls++;
-      return { status: "evidence", scores: [refereeCalls === 1 ? 0.39 : 0.4, 0.1] };
+      return { status: "evidence", scores: [refereeCalls === 1 ? 0.29 : 0.3, 0.1] };
     }
     return { status: "pass" };
   }, async () => Buffer.from("pixels"), true);
@@ -365,7 +365,7 @@ test("a below-threshold frame does not delay the next qualifying referee warning
     room.advance(2000);
     await waitFor(() => refereeCalls === 2);
     await waitFor(() => room.events.some(event => event.type === "snapshot" && !!event.snapshot.game?.refereeWarning));
-    assert.equal((await room.guest()).snapshot.game!.refereeWarning?.confidence, 0.4);
+    assert.equal((await room.guest()).snapshot.game!.refereeWarning?.confidence, 0.3);
   } finally { await room.engine.shutdown(); }
 });
 

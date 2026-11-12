@@ -2,7 +2,7 @@
 
 Research and sample inspection: **7 November 2026, Asia/Manila**. This package concerns the group project's Referee, separately from the Guesser and the current backend milestone.
 
-The Referee consumes the current canvas image and produces two independent presence scores, text and number. The current game policy shows an advisory on one text score of at least 0.4; number evidence stays internal. Players judge incidental writing and disputes. Advisory events carry zero score effects. Threshold calibration and false-advisory measurement remain future evaluation work.
+The Referee consumes the current canvas image and produces two independent presence scores, text and number. The current game policy shows an advisory on one text score of at least 0.3; number evidence stays internal. Players judge incidental writing and disputes. Advisory events carry zero score effects. Threshold calibration and false-advisory measurement remain future evaluation work.
 
 ## Read or explore
 

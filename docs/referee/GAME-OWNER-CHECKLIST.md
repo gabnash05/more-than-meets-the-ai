@@ -59,7 +59,7 @@ The core data preflight, v2 training, evaluation, export, and synthetic diagnost
 
 ## Specific issues observed in this investigation
 
-The 0.5-and-persistence policy below describes the older inspected build. The current policy uses one text score of at least 0.4; the original report and its exact build still need separate reproduction if that discrepancy matters.
+The 0.5-and-persistence policy below describes the older inspected build. The current policy uses one text score of at least 0.3; the original report and its exact build still need separate reproduction if that discrepancy matters.
 
 - [ ] Reproduce the reported 40% warning and identify its exact UI/build/payload. The inspected deployed backend requires text evidence >=0.5 plus persistence, so a literal 40% warning remains unexplained by that path. Compare displayed score, model revision and stale warning state rather than assuming a threshold bug.
 - [ ] Test draw -> erase -> clear -> new turn. Confirm both raw PNG emptiness and warning removal/expiry; distinguish an exactly white blank from gray pixels or residual marks.

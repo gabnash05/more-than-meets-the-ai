@@ -618,11 +618,11 @@ export class RoomEngine {
           const previousWarning = game.refereeWarning;
           const evidence = game.refereeEvidence ??= [false, false];
           if (outcome.status === "evidence") {
-            if (outcome.scores[0] >= 0.4) evidence[0] = true;
+            if (outcome.scores[0] >= 0.3) evidence[0] = true;
             if (outcome.scores[1] >= 0.5) evidence[1] = true;
           }
           const now = this.now();
-          game.refereeWarning = outcome.status === "evidence" && outcome.scores[0] >= 0.4
+          game.refereeWarning = outcome.status === "evidence" && outcome.scores[0] >= 0.3
             ? { confidence: outcome.scores[0], expiresAt: now + 3000 }
             : undefined;
           if (game.refereeWarning !== previousWarning) this.publish(live.room);
