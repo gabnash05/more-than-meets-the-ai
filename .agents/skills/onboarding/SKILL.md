@@ -1,7 +1,7 @@
 ---
 name: onboarding
 description: "Use when entering this repo. Trace rules and source."
-version: 1.3.0
+version: 1.3.1
 author: Yashindo, Operator-Syn
 license: MIT
 platforms: [linux, macos, windows]
