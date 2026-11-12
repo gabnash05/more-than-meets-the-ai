@@ -21,7 +21,7 @@ export function AiCard({ game, result, unavailable = false, disabled = false, pu
 
 
   return (
-    <section className={`room-ai ${styles.card} ${!disabled && status === "correct" ? styles.solved : ""}`} data-testid="ai-card">
+    <section className={`room-ai ${styles.card} ${answer ? styles.resultCard : ""} ${!disabled && status === "correct" ? styles.solved : ""}`} data-testid="ai-card">
       {!disabled && pulse && <span key={pulse.jobId} className={`${styles.pulse} ${pulse.correct ? styles.pulseCorrect : styles.pulseWrong}`} aria-hidden="true" />}
       <div className={styles.heading}>
         <svg className={styles.robot} viewBox="0 0 50 50" aria-hidden="true">
