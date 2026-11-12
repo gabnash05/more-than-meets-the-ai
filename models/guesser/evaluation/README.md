@@ -48,21 +48,21 @@ Run these once **in every clone**, from the repository root, after `uv sync`:
 ```sh
 uv run --project models/guesser/evaluation pre-commit install --config models/guesser/evaluation/.pre-commit-config.yaml
 uv run --project models/guesser/evaluation nbdime config-git --enable
-uv run --project models/guesser/evaluation nbstripout --install
+scripts/configure-notebook-git.sh
 ```
 
 What each step does:
 
 - `pre-commit install` adds a local Git commit hook. The scoped `nbstripout` hook strips notebook outputs and execution metadata as a final check before commit.
 - `nbdime config-git --enable` registers notebook-aware diff/merge drivers. The root `.gitattributes` contains the shared notebook driver rules.
-- `nbstripout --install` adds a local Git clean filter. Notebook outputs are stripped from the staged version when you run `git add`, before the commit hook. This avoids committing bulky execution output and reduces output-only diffs.
+- `scripts/configure-notebook-git.sh` registers the shared `scripts/nbstripout-safe` wrapper as the clean filter and the notebook diff command, plus the local attribute rules that switch them on. Notebook outputs are stripped from the staged version when you run `git add`, before the commit hook.
 
-The hook/filter and driver registrations live in `.git` configuration and are **not shared** with a clone. Each collaborator runs the commands above locally; the generated interpreter path is specific to that clone and OS, while `pyproject.toml`, `uv.lock`, and `.gitattributes` stay portable. The pre-commit hook is a second safety net. If it changes a notebook already staged, stage that notebook again before retrying the commit.
+The hook, filter and driver registrations live in `.git` configuration and are **not shared** with a clone, so each collaborator runs the commands above locally. What *is* shared is the command they point at: registering the wrapper instead of an interpreter path keeps every clone and operating system on the same behaviour, while `pyproject.toml`, `uv.lock`, and `.gitattributes` stay portable. Use the wrapper rather than `nbstripout --install`, which writes one machine's absolute interpreter path and, in a pipe, prints a traceback when a pager closes the diff early. See `scripts/README.md`. The pre-commit hook is a second safety net. If it changes a notebook already staged, stage that notebook again before retrying the commit.
 
 In a clone with the clean filter enabled, Git uses nbstripout's stripped text view for notebook diffs, while the configured nbdime merge driver handles notebook conflicts. Check the local setup with:
 
 ```sh
-uv run --project models/guesser/evaluation nbstripout --status
+git config --local --get-regexp '^(filter\.nbstripout|diff\.ipynb)'
 git check-attr -a -- models/guesser/evaluation/notebooks/00_environment_check.ipynb
 ```
 
