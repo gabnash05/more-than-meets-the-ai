@@ -48,7 +48,7 @@ import { RoomFeedback } from "./RoomFeedback";
 import { SavedSketch } from "./SavedSketch";
 import { beginChatSend, restoreChatDraft } from "./chat-send";
 import { chatRows, type ChatRow } from "./chat-rows";
-import { isPinnedToBottom } from "./chat-scroll";
+import { isPinnedToBottom, shouldFollow } from "./chat-scroll";
 import { FinalResults, RoundRecap } from "./Results";
 import "./room.css";
 
@@ -97,18 +97,20 @@ const ChatRowView = memo(function ChatRowView({ name, text, correct }: Omit<Chat
     </p>
   );
 });
-function ChatMessages({ snapshot }: { snapshot: RoomSession["snapshot"] }) {
+function ChatMessages({ snapshot, meId }: { snapshot: RoomSession["snapshot"]; meId?: string }) {
   const list = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
-  const latestId = snapshot.chat.at(-1)?.id;
+  const latest = snapshot.chat.at(-1);
   const rows = useMemo(() => chatRows(snapshot.chat, snapshot.players), [snapshot.chat, snapshot.players]);
 
-  // Follow new messages only when the reader is already at the bottom. Someone
-  // who scrolled up to re-read is left exactly where they are.
+  // Follow new messages when the reader is at the bottom, and always follow
+  // their own message. Someone reading history is otherwise left where they are.
   useEffect(() => {
     const element = list.current;
-    if (element && pinned.current) element.scrollTop = element.scrollHeight;
-  }, [latestId]);
+    if (element && shouldFollow({ pinned: pinned.current, latestAuthorId: latest?.playerId, viewerId: meId })) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [latest?.id, latest?.playerId, meId]);
 
   return (
     <div
@@ -714,7 +716,7 @@ export default function RoomScreen() {
             </section>
             <section className="room-panel room-chat room-lobby-chat">
               <h2>Room chat</h2>
-              <ChatMessages snapshot={snap} />
+              <ChatMessages snapshot={snap} meId={session.playerId} />
               <form onSubmit={send}>
                 <input
                   aria-label="Message the room"
@@ -963,7 +965,7 @@ export default function RoomScreen() {
                 <h2>
                   {drawing && role === "guesser" ? "Your guesses" : "Room chat"}
                 </h2>
-                <ChatMessages snapshot={snap} />
+                <ChatMessages snapshot={snap} meId={session.playerId} />
                 <form onSubmit={send}>
                   <input
                     aria-label={
