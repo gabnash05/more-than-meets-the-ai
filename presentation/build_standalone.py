@@ -29,9 +29,7 @@ def populate_specimens(markup: str, model: str, manifest: Path) -> str:
         if not image_path:
             print(f"{model}: export has no image paths; keeping pending slots")
             return markup
-        path = Path(image_path)
-        if not path.is_absolute():
-            path = manifest.parent / path
+        path = ROOT / "assets" / (model.lower() + "-specimen-" + image_path.replace("\\", "/").split("/")[-1])
         if not path.is_file():
             print(f"{model}: image missing ({path}); keeping pending slots")
             return markup
@@ -84,8 +82,8 @@ for model in ("Guesser", "Referee"):
     if count != 1:
         raise ValueError(f"{model}: example slide missing")
 repo = ROOT.parent
-html = populate_specimens(html, "Guesser", repo / "models/guesser/checkpoints/notebook-production-full/evaluation/ten-stage/validation/specimens.jsonl")
-html = populate_specimens(html, "Referee", repo / "models/referee/checkpoints/referee-evaluation/train/validation-v2/specimens.jsonl")
+html = populate_specimens(html, "Guesser", ROOT / "assets/guesser-specimens.jsonl")
+html = populate_specimens(html, "Referee", ROOT / "assets/referee-specimens.jsonl")
 (ROOT / "index.html").write_text(html, encoding="utf-8")
 css = (ROOT / "style.css").read_text(encoding="utf-8")
 css = re.sub(r"url\('([^']+)'\)", lambda m: f"url('{data_uri(m[1])}')", css)

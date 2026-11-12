@@ -8,7 +8,7 @@ Open **`More-Than-Meets-the-AI.html`** in Chrome or Edge. This single file inclu
 - The Guesser results slide switches between original accuracy and loss charts.
 - Browser Print supports landscape pages with controls and notes hidden.
 
-The 16-slide narration budget is **3 minutes 30 seconds**, leaving about 1 minute 30 seconds for the demo within the five-minute slot. Practice transitions before presenting and assign handoffs to suit your roles.
+The 18-slide narration budget is **3 minutes 59 seconds**, leaving about 1 minute 30 seconds for the demo within the five-minute slot. Practice transitions before presenting and assign handoffs to suit your roles.
 
 ## Updating results
 
@@ -20,7 +20,7 @@ The Guesser results currently show **training-time validation on complete drawin
 
 ### Confidence examples
 
-The slides following each results slide contain five low- and five high-confidence **pending** slots. They do not depict predictions. Populate them only from actual exported images and their associated labels and scores; retain the selection definition, split and checkpoint identity in the speaker notes. The planned Guesser export is `models/guesser/checkpoints/notebook-production-full/evaluation/ten-stage/validation/specimens.jsonl` (model A, one class, stage-10 predicted-class confidence (top1Prob)); the planned Referee export is `models/referee/checkpoints/referee-evaluation/train/validation-v2/specimens.jsonl` (validation text-channel scores). These are separate evaluation contexts from the preceding historical result slides. The standalone build reads these JSONL exports automatically: each must contain exactly five `lowest` and five `highest` records, with an existing `imagePath` for every record. Guesser requires `className`, `top1Label`, and `top1Probability`; Referee requires `encodedTextLabel` and `score`. Paths may be absolute or relative to the JSONL file and must resolve under `presentation/assets/`. The notebooks export to `assets/confidence-guesser/` and `assets/confidence-referee/`. If an export or any image is missing, the corresponding slide remains pending; malformed records fail the build. Guesser exports currently have null image paths until image resolution is implemented. Check provenance and score definitions before presenting. The build updates `index.html` with the available examples and embeds those images into the generated standalone deck. The pending slide templates are in `specimen_slide_templates.json`; edit those templates if changing the example slide layout, then rebuild.
+Each model's last results slide shows five low- and five high-confidence validation examples from the supplied Drive exports. The Guesser examples use model A on complete whale drawings and show predicted-class probability. Referee examples show the text-channel score against encoded labels, which are not independently reviewed. Their manifests and image exports are stored under `assets/`; the builder embeds them in the standalone deck. They are examples, not aggregate performance. The Guesser first-correct-stage graph is a separate held-out test result. Referee text average precision and validation loss are historical training curves, not accuracy or proven deployed-checkpoint results.
 
 ## Source trail
 

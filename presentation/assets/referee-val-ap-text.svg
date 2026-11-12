@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="440" viewBox="0 0 880 440">
+<rect width="100%" height="100%" fill="#fff"/>
+<g font-family="Segoe UI, Arial, sans-serif" fill="#222">
+<text x="76" y="30" font-size="18" font-weight="600">Val Ap Text by epoch</text>
+<text x="20" y="217.0" font-size="12" text-anchor="middle" transform="rotate(-90 20 217.0)">val_ap_text</text>
+<text x="462.0" y="424" font-size="12" text-anchor="middle">epoch</text>
+<line x1="76" y1="376" x2="848" y2="376" stroke="#333"/>
+<line x1="76" y1="58" x2="76" y2="376" stroke="#333"/>
+<line x1="76" y1="376.0" x2="848" y2="376.0" stroke="#e8e8e8"/>
+<text x="66" y="380.0" font-size="11" text-anchor="end">0.7829</text>
+<line x1="76" y1="296.5" x2="848" y2="296.5" stroke="#e8e8e8"/>
+<text x="66" y="300.5" font-size="11" text-anchor="end">0.8072</text>
+<line x1="76" y1="217.0" x2="848" y2="217.0" stroke="#e8e8e8"/>
+<text x="66" y="221.0" font-size="11" text-anchor="end">0.8315</text>
+<line x1="76" y1="137.5" x2="848" y2="137.5" stroke="#e8e8e8"/>
+<text x="66" y="141.5" font-size="11" text-anchor="end">0.8557</text>
+<line x1="76" y1="58.0" x2="848" y2="58.0" stroke="#e8e8e8"/>
+<text x="66" y="62.0" font-size="11" text-anchor="end">0.88</text>
+<text x="111.1" y="398" font-size="11" text-anchor="middle">0</text>
+<text x="286.5" y="398" font-size="11" text-anchor="middle">1</text>
+<text x="462.0" y="398" font-size="11" text-anchor="middle">2</text>
+<text x="637.5" y="398" font-size="11" text-anchor="middle">3</text>
+<text x="812.9" y="398" font-size="11" text-anchor="middle">4</text>
+<polyline fill="none" stroke="#1f77b4" stroke-width="2.5" points="111.1,354.1 286.5,240.5 462.0,151.6 637.5,90.8 812.9,79.9"/>
+<circle cx="111.1" cy="354.1" r="4" fill="#1f77b4"/>
+<circle cx="286.5" cy="240.5" r="4" fill="#1f77b4"/>
+<circle cx="462.0" cy="151.6" r="4" fill="#1f77b4"/>
+<circle cx="637.5" cy="90.8" r="4" fill="#1f77b4"/>
+<circle cx="812.9" cy="79.9" r="4" fill="#1f77b4"/>
+</g>
+</svg>
