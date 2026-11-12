@@ -76,14 +76,13 @@ def populate_specimens(markup: str, model: str, manifest: Path) -> str:
 
 html = (ROOT / "index.html").read_text(encoding="utf-8")
 templates = json.loads((ROOT / "specimen_slide_templates.json").read_text(encoding="utf-8"))
-for model in ("Guesser", "Referee"):
+for model in ("Guesser",):
     pattern = rf'<section class="slide specimen-slide" data-label="{model.upper()} / EXAMPLES".*?</section>'
     html, count = re.subn(pattern, lambda _: templates[model], html, count=1, flags=re.DOTALL)
     if count != 1:
         raise ValueError(f"{model}: example slide missing")
 repo = ROOT.parent
 html = populate_specimens(html, "Guesser", ROOT / "assets/guesser-specimens.jsonl")
-html = populate_specimens(html, "Referee", ROOT / "assets/referee-specimens.jsonl")
 (ROOT / "index.html").write_text(html, encoding="utf-8")
 css = (ROOT / "style.css").read_text(encoding="utf-8")
 css = re.sub(r"url\('([^']+)'\)", lambda m: f"url('{data_uri(m[1])}')", css)

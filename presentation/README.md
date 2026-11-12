@@ -8,7 +8,7 @@ Open **`More-Than-Meets-the-AI.html`** in Chrome or Edge. This single file inclu
 - The Guesser results slide switches between original accuracy and loss charts.
 - Browser Print supports landscape pages with controls and notes hidden.
 
-The 18-slide narration budget is **3 minutes 59 seconds**, leaving about 1 minute 30 seconds for the demo within the five-minute slot. Practice transitions before presenting and assign handoffs to suit your roles.
+The 17-slide narration budget is **3 minutes 49 seconds**, leaving about 1 minute 11 seconds for the demo within the five-minute slot. Practice transitions before presenting and assign handoffs to suit your roles.
 
 ## Updating results
 
@@ -20,7 +20,7 @@ The Guesser results currently show **training-time validation on complete drawin
 
 ### Confidence examples
 
-Each model's last results slide shows five low- and five high-confidence validation examples from the supplied Drive exports. The Guesser examples use model A on complete whale drawings and show predicted-class probability. Referee examples show the text-channel score against encoded labels, which are not independently reviewed. Their manifests and image exports are stored under `assets/`; the builder embeds them in the standalone deck. They are examples, not aggregate performance. The Guesser first-correct-stage graph is a separate held-out test result. Referee text average precision and validation loss are historical training curves, not accuracy or proven deployed-checkpoint results.
+The Guesser's last results slide shows five low- and five high-confidence validation examples from the supplied Drive exports. The Guesser examples use model A on complete whale drawings and show predicted-class probability. Their manifests and image exports are stored under `assets/`; the builder embeds them in the standalone deck. They are examples, not aggregate performance. The Guesser first-correct-stage graph is a separate held-out test result. Referee text average precision and validation loss are historical training curves, not accuracy or proven deployed-checkpoint results.
 
 ## Source trail
 
