@@ -260,6 +260,8 @@ PostgreSQL keeps interrupted drawing prefixes and committed results across API r
 
 New rooms default both the AI Guesser and Referee to on. Hosts can switch either role off in the lobby. Actual inference also requires a ready worker for that role. The Guesser starts after 1.5 seconds of active drawing and tries a changed frame two seconds after the previous attempt settles, up to 24 attempts. It pulses the card when an answer is accepted and shows confidence in the round recap.
 
+The Referee checks the current canvas about once per second after drawing starts. One text score of at least 0.4 opens the advisory; a second consecutive frame is not required. The warning clears on low or unavailable evidence, canvas clear, pause, or turn end. This is a more sensitive gameplay setting, not a calibrated model-accuracy claim.
+
 Use Linux x86-64 containers for inference. Generate a shared bearer token with `openssl rand -hex 32` and save it as `ai-token` in a private directory outside the checkout. Set `AI_SECRETS_DIR` to that directory's absolute path. Give the operator and container UID 1000 read access.
 
 ### AI on the game host
