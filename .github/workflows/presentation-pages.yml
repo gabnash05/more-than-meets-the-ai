@@ -1,0 +1,84 @@
+name: Presentation pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Rebuild when any slide input changes, not on unrelated pushes.
+      - "presentation/**"
+      - ".github/workflows/presentation-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; never cancel one that is already publishing.
+concurrency:
+  group: pages-presentation
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the deck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.13.18
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.13.18
+
+      # enablement: create the Pages site on the first run instead of failing
+      # because the repository has never had Pages switched on.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # The build embeds fonts, images and charts into one HTML file. Specimen
+      # exports are absent in CI, so those slides stay in their pending state and
+      # the build still succeeds; anything else missing fails here.
+      - name: Build the standalone deck
+        run: python presentation/build_standalone.py
+
+      - name: Assemble the site
+        run: |
+          set -eu
+          mkdir -p site
+          cp presentation/More-Than-Meets-the-AI.html site/index.html
+
+          # A deck that still points at local files is not standalone, and would
+          # publish a broken page with no visible error.
+          if grep -qE 'src="assets/|href="style\.css"|src="config\.js"' site/index.html; then
+            echo "the built deck still references local files" >&2
+            exit 1
+          fi
+          if [ "$(stat -c %s site/index.html)" -lt 500000 ]; then
+            echo "the built deck is smaller than expected; assets were probably not embedded" >&2
+            exit 1
+          fi
+          # Pages serves the artifact as-is; keep directory listings off.
+          touch site/.nojekyll
+          ls -lh site
+
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
