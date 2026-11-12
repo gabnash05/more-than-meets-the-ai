@@ -123,8 +123,16 @@ def worker(adapter: Adapter, client: FakeRedis | None = None) -> tuple[QueueWork
     return QueueWorker(fake, bundle(adapter), "worker-1"), fake, adapter
 
 
+# The worker echoes back the job it claimed, and several tests compare that echo
+# with a freshly built copy. A deadline computed per call can land one millisecond
+# apart between the two builds, which fails the equality assertion every few
+# hundred runs. Freeze it once per process; the margin only has to outlive the
+# suite, and tests that need an expired job pass deadlineAt explicitly.
+JOB_DEADLINE_AT = int(time() * 1000) + 3_600_000
+
+
 def job_json(**overrides) -> str:
-    value = {**JOB, "deadlineAt": int(time() * 1000) + 10000, **overrides}
+    value = {**JOB, "deadlineAt": JOB_DEADLINE_AT, **overrides}
     return json.dumps(value, separators=(",", ":"))
 
 
