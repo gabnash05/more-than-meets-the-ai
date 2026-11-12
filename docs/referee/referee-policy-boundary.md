@@ -14,6 +14,6 @@ Each slot answers a binary presence question. The model produces two scores, so 
 
 Both a written answer and incidental object writing have text target `1`. The first score detects the visible content, and players decide whether it was a prohibited clue. Advisory events carry zero score effects.
 
-The current warning opens on the first fresh text score of at least **0.4**. No consecutive-frame confirmation is required. The badge shows that text confidence and expires after three seconds without qualifying evidence. A clean or blank frame, canvas clear, pause, inference failure, or turn end also clears it. The lower cutoff may increase false advisories and remains a gameplay choice pending evaluation on game drawings. See the [validation and inference plan](validation-inference-plan.md).
+The current warning opens on the first fresh text score of at least **0.3**. No consecutive-frame confirmation is required. The badge shows that text confidence and expires after three seconds without qualifying evidence. A clean or blank frame, canvas clear, pause, inference failure, or turn end also clears it. The lower cutoff may increase false advisories and remains a gameplay choice pending evaluation on game drawings. See the [validation and inference plan](validation-inference-plan.md).
 
 The model consumes the same prepared canvas as the Guesser. The visible image supplies the presence evidence, while policy and advisory state belong to the backend. See the [model and input plan](referee-model-plan.md).
