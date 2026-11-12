@@ -22,6 +22,29 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 export class LocalRoomClient implements RoomClient {
   private session: RoomSession | null = null;
   private recovering = false;
+  private startTimer: ReturnType<typeof setTimeout> | undefined;
+  private scheduleStart() {
+    if (this.startTimer) clearTimeout(this.startTimer);
+    const snapshot = this.session?.snapshot;
+    if (snapshot?.phase !== "starting" || snapshot.startDeadlineAt === undefined) return;
+    this.startTimer = setTimeout(() => {
+      if (this.session?.snapshot !== snapshot || snapshot.phase !== "starting") return;
+      const eligible = snapshot.settings.mode === "individual"
+        ? snapshot.players.filter(player => player.connected).length >= 2
+        : snapshot.teams.every(team => snapshot.players.filter(player => player.connected && player.teamId === team.id).length >= 2);
+      if (!eligible) {
+        this.change(s => { s.phase = "lobby"; delete s.startDeadlineAt; delete s.game; });
+        void this.roomWrites.catch(error => this.emit({ type: "connection", status: "disconnected", message: error instanceof Error ? error.message : "Could not save the countdown." }));
+        return;
+      }
+      this.change(s => {
+        s.phase = "choosing";
+        delete s.startDeadlineAt;
+        if (s.game?.drawerId === this.current().playerId) this.current().privateState = { role: "drawer", promptOptions: [{ id: "cat", label: "cat (local demo)" }] };
+      });
+      void this.roomWrites.catch(error => this.emit({ type: "connection", status: "disconnected", message: error instanceof Error ? error.message : "Could not save word selection." }));
+    }, Math.max(0, snapshot.startDeadlineAt - Date.now()));
+  }
   private writes: Promise<void> = Promise.resolve();
   private roomWrites: Promise<void> = Promise.resolve();
   private listeners = new Set<(event: RoomEvent) => void>();
@@ -170,6 +193,7 @@ export class LocalRoomClient implements RoomClient {
     Object.assign(s, credential);
     this.session = s;
     this.recovering = true;
+    this.scheduleStart();
     this.emit({ type: "connection", status: "restoring" });
     return clone(s);
   }
@@ -308,7 +332,8 @@ export class LocalRoomClient implements RoomClient {
         "At least two connected players are needed in each group.",
       );
     this.change((snapshot) => {
-      snapshot.phase = "drawing";
+      snapshot.phase = "starting";
+      snapshot.startDeadlineAt = Date.now() + 3000;
       snapshot.game = {
         generation: 1,
         canvasId: id(),
@@ -319,13 +344,23 @@ export class LocalRoomClient implements RoomClient {
       };
       this.current().privateState =
         snapshot.game.drawerId === this.current().playerId
-          ? { role: "drawer", target: "cat" }
+          ? { role: "drawer" }
           : { role: "guesser" };
     });
     await this.roomWrites;
+    this.scheduleStart();
   }
   async getInterruptedSketch(): Promise<never> { throw new RoomClientError("unsupported", "Saved interrupted drawings are unavailable in the local demo."); }
-  async choosePrompt() { throw new RoomClientError("unsupported", "Prompt selection is unavailable in the local demo."); }
+  async choosePrompt(optionId: string) {
+    const session = this.current();
+    if (session.snapshot.phase !== "choosing" || session.snapshot.game?.drawerId !== session.playerId || optionId !== "cat") throw new RoomClientError("forbidden", "Prompt selection is unavailable.");
+    this.change(snapshot => {
+      snapshot.phase = "drawing";
+      snapshot.game!.hint = "_ _ _";
+      session.privateState = { role: "drawer", target: optionId };
+    });
+    await this.roomWrites;
+  }
   async retryInterrupted() { throw new RoomClientError("unsupported", "Retry is unavailable in the local demo."); }
   async returnToLobby() { throw new RoomClientError("unsupported", "Return to lobby is unavailable in the local demo."); }
   async leave() {
@@ -343,7 +378,12 @@ export class LocalRoomClient implements RoomClient {
     this.session = null;
   }
   async sendChat(text: string) {
+    const session = this.current();
+    if (session.snapshot.phase === "drawing" && !session.snapshot.game?.closing && (session.snapshot.game?.drawerId === session.playerId || session.snapshot.players.find(player => player.id === session.playerId)?.solved)) throw new RoomClientError("forbidden", "Chat is unavailable during this drawing turn.");
     const clean = text.trim();
+    const target = session.privateState?.target ?? "cat"; // The local demo uses one preset target.
+    const normalize = (value: string) => value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+    if (session.snapshot.phase === "drawing" && normalize(clean).includes(normalize(target))) throw new RoomClientError("secret", "That message contains the answer.");
     if (clean)
       this.change((s) =>
         s.chat.push({
@@ -371,7 +411,7 @@ export class LocalRoomClient implements RoomClient {
       throw new RoomClientError("forbidden", "Guessing is unavailable.");
     const clean = text.trim();
     if (!clean) return;
-    if (clean.toLowerCase() === "cat") {
+    if (clean.toLowerCase() === (session.privateState?.target ?? "cat")) {
       this.change((snapshot) => {
         const solver = snapshot.players.find((p) => p.id === session.playerId)!;
         solver.solved = true;
@@ -484,6 +524,7 @@ export class LocalRoomClient implements RoomClient {
     return () => this.listeners.delete(fn);
   }
   dispose() {
+    if (this.startTimer) clearTimeout(this.startTimer);
     this.listeners.clear();
   }
 }

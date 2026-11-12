@@ -8,7 +8,7 @@ Open **`More-Than-Meets-the-AI.html`** in Chrome or Edge. This single file inclu
 - The Guesser results slide switches between original accuracy and loss charts.
 - Browser Print supports landscape pages with controls and notes hidden.
 
-The 14-slide narration budget is **3 minutes 10 seconds**, leaving about 1 minute 50 seconds for the demo within the five-minute slot. Practice transitions before presenting. Suggested speaking handoffs: Husnie slides 1–5, John-Ronan slides 6–8 and 12, Kim slides 9–11 and 13–14. Change these to suit your roles.
+The 16-slide narration budget is **3 minutes 30 seconds**, leaving about 1 minute 30 seconds for the demo within the five-minute slot. Practice transitions before presenting and assign handoffs to suit your roles.
 
 ## Updating results
 
@@ -17,6 +17,10 @@ Edit `config.js` for callout values. Replace `assets/guesser-accuracy.png`, `ass
 Run `python presentation/build_standalone.py` from the repository root after edits to refresh the single-file deck. If the game URL changes, first update `config.js` and run `python presentation/update_qr.py` (uses qrcode from `private/python` or the active Python environment, install with `python -m pip install qrcode[pil]` if needed), then rebuild.
 
 The Guesser results currently show **training-time validation on complete drawings**. They are not held-out test results or ten-stage recognition results. Dataset profile is intentionally unnamed because the report heading says small while its checkpoint path says production. Referee scores are historical held-out evaluation **against encoded proxy labels at 0.5**. They are not corrected-v2 results, independently reviewed labels or real-game warning accuracy.
+
+### Confidence examples
+
+The slides following each results slide contain five low- and five high-confidence **pending** slots. They do not depict predictions. Populate them only from actual exported images and their associated labels and scores; retain the selection definition, split and checkpoint identity in the speaker notes. The planned Guesser export is `models/guesser/checkpoints/notebook-production-full/evaluation/ten-stage/validation/specimens.jsonl` (model A, one class, stage-10 predicted-class confidence (top1Prob)); the planned Referee export is `models/referee/checkpoints/referee-evaluation/train/validation-v2/specimens.jsonl` (validation text-channel scores). These are separate evaluation contexts from the preceding historical result slides. The standalone build reads these JSONL exports automatically: each must contain exactly five `lowest` and five `highest` records, with an existing `imagePath` for every record. Guesser requires `className`, `top1Label`, and `top1Probability`; Referee requires `encodedTextLabel` and `score`. Paths may be absolute or relative to the JSONL file and must resolve under `presentation/assets/`. The notebooks export to `assets/confidence-guesser/` and `assets/confidence-referee/`. If an export or any image is missing, the corresponding slide remains pending; malformed records fail the build. Guesser exports currently have null image paths until image resolution is implemented. Check provenance and score definitions before presenting. The build updates `index.html` with the available examples and embeds those images into the generated standalone deck. The pending slide templates are in `specimen_slide_templates.json`; edit those templates if changing the example slide layout, then rebuild.
 
 ## Source trail
 

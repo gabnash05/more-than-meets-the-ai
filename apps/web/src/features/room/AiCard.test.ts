@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import type { RoomGame } from "@/contracts/room";
-import { AiCard } from "./AiCard";
+import { AiCard, isSubmitted } from "./AiCard";
 import styles from "./AiCard.module.css";
 
 it("keeps an unavailable legacy result from looking solved", () => {
@@ -47,4 +47,28 @@ it("shows rounded confidence for recap guesses while retaining legacy answer-onl
   expect(html).toContain(">73%</small>");
   expect(html).toContain(">96%</span>");
   expect(html).toContain("cat");
+});
+
+
+it("keeps the last submitted guess separate from a later low-confidence prediction", () => {
+  const game = { result: { aiAnswers: ["dog", "cat"], aiGuesses: [{ answer: "dog", confidence: 0.8, submitted: true, elapsedMs: 1000 }, { answer: "cat", confidence: 0.5, submitted: false, elapsedMs: 3000 }], finalAnswer: "cat", aiCorrect: false, word: "cat", deltas: {} } } as unknown as RoomGame;
+  const html = renderToStaticMarkup(createElement(AiCard, { game, result: true }));
+  const final = html.slice(html.indexOf('data-testid="ai-final-answer"'), html.indexOf('All predictions'));
+  expect(final).toContain("dog");
+  expect(final).not.toContain(">cat<");
+  expect(html).toContain("Not submitted - low confidence");
+  expect(html).toContain("3.0s");
+  expect(html).toContain("50%");
+});
+
+it("does not invent a submitted guess when all recorded predictions were filtered", () => {
+  const game = { result: { aiAnswers: [], aiGuesses: [{ answer: "cat", confidence: 0.4, submitted: false }], finalAnswer: "cat", aiCorrect: false, word: "cat", deltas: {} } } as unknown as RoomGame;
+  const html = renderToStaticMarkup(createElement(AiCard, { game, result: true }));
+  expect(html).toContain("No submitted guess");
+  expect(html).toContain("Not submitted - low confidence");
+});
+
+it("preserves accepted legacy guesses whose submission metadata is absent", () => {
+  expect(isSubmitted({ answer: "cat", confidence: 0.2 })).toBe(true);
+  expect(isSubmitted({ answer: "cat", confidence: 0.5, submitted: false })).toBe(false);
 });

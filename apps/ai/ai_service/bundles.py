@@ -1,11 +1,11 @@
 """Validate the selected bundle independently for each role."""
 
-from dataclasses import dataclass, field
-from hashlib import file_digest
 import json
 import os
-from pathlib import Path
 import re
+from dataclasses import dataclass, field
+from hashlib import file_digest, sha256
+from pathlib import Path
 from typing import Protocol
 
 from PIL import Image
@@ -20,7 +20,9 @@ REFEREE_FILES = {
     "labels.json",
     "checkpoint-selection.json",
 }
+REFEREE_V2_FILES = REFEREE_FILES | {"evaluation-summary.json"}
 REFEREE_LABELS = ["text", "number", "symbol", "circle"]
+REFEREE_V2_LABELS = ["text", "number"]
 
 
 class Adapter(Protocol):
@@ -55,20 +57,23 @@ def _load_referee_bundle(artifact_root: Path, model_id: str) -> Bundle:
         manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
         revision = manifest["artifactRevision"]
         files = manifest["files"]
+        is_v2 = manifest.get("version") == 2
+        expected_labels = REFEREE_V2_LABELS if is_v2 else REFEREE_LABELS
+        expected_files = REFEREE_V2_FILES if is_v2 else REFEREE_FILES
         if (
-            manifest.get("version") != 1
+            manifest.get("version") not in (1, 2)
             or manifest.get("role") != "referee"
             or manifest.get("modelId") != model_id
             or manifest.get("adapter") != "vit-tiny-referee"
             or manifest.get("input") != [1, 3, 224, 224]
-            or manifest.get("output") != [1, 4]
-            or manifest.get("labelOrder") != REFEREE_LABELS
+            or manifest.get("output") != [1, len(expected_labels)]
+            or manifest.get("labelOrder") != expected_labels
             or manifest.get("channelOrder") != ["text", "number"]
             or manifest.get("scoreActivation") != "sigmoid"
             or not isinstance(revision, str)
             or not 1 <= len(revision) <= 128
             or not isinstance(files, dict)
-            or set(files) != REFEREE_FILES
+            or set(files) != expected_files
         ):
             return Bundle(model_id, reason="referee-contract-mismatch")
         for name, expected in files.items():
@@ -76,14 +81,27 @@ def _load_referee_bundle(artifact_root: Path, model_id: str) -> Bundle:
                 actual = file_digest(artifact, "sha256").hexdigest()
             if actual != expected:
                 return Bundle(model_id, reason="artifact-hash-mismatch")
+        if is_v2:
+            from models.referee.inference.vit import BACKBONE
+
+            revision = sha256(
+                json.dumps(files, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            if (
+                model_id != "referee-vit-v2"
+                or manifest.get("backbone") != BACKBONE
+                or manifest.get("preprocessing") != "referee-foreground-v2"
+                or manifest.get("artifactRevision") != revision
+            ):
+                return Bundle(model_id, reason="referee-contract-mismatch")
         labels = (root / "labels.txt").read_text(encoding="utf-8").splitlines()
-        if labels != REFEREE_LABELS:
+        if labels != expected_labels:
             return Bundle(model_id, reason="invalid-label-order")
         labels_json = json.loads((root / "labels.json").read_text(encoding="utf-8"))
         if (
             not isinstance(labels_json, list)
-            or len(labels_json) != 4
-            or [entry.get("class_id") for entry in labels_json] != list(range(4))
+            or len(labels_json) != len(expected_labels)
+            or [entry.get("class_id") for entry in labels_json] != list(range(len(expected_labels)))
             or [entry.get("source_name") for entry in labels_json] != labels
         ):
             return Bundle(model_id, reason="invalid-label-order")

@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MemoryGameStore } from "../src/store";
-import { RoomEngine } from "../src/game/engine";
+import { RoomEngine as ProductionRoomEngine } from "../src/game/engine";
+class RoomEngine extends ProductionRoomEngine {
+  constructor(options: ConstructorParameters<typeof ProductionRoomEngine>[0]) { super({ ...options, config: { ...options.config, startMs: 0 } }); }
+}
 
 const profile = { name: "Player", avatar: { shape: "pebble", expression: "smile", color: "cyan" } } as const;
 test("memory journal enforces contiguous idempotent batches and atomic results", async () => {

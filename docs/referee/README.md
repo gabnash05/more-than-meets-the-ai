@@ -2,7 +2,7 @@
 
 Research and sample inspection: **7 November 2026, Asia/Manila**. This package concerns the group project's Referee, separately from the Guesser and the current backend milestone.
 
-The proposed input contract gives the Guesser and Referee the **same current-canvas image and versioned preprocessing**. The proposed Referee produces two independent presence scores, one for text and one for numbers. Each has its own threshold tuned on validation data and a persistence check across distinct observations. Text prompts ‘Possible written clue detected.’ Numbers have a separate advisory. Players judge incidental writing and disputes. Advisory events carry zero score effects.
+The Referee consumes the current canvas image and produces two independent presence scores, text and number. The current game policy shows an advisory on one text score of at least 0.4; number evidence stays internal. Players judge incidental writing and disputes. Advisory events carry zero score effects. Threshold calibration and false-advisory measurement remain future evaluation work.
 
 ## Read or explore
 

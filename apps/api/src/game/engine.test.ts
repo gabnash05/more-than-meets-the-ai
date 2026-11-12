@@ -1,7 +1,10 @@
 import { PROMPTS } from "./prompts";
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { RoomEngine } from "./engine";
+import { RoomEngine as ProductionRoomEngine } from "./engine";
+class RoomEngine extends ProductionRoomEngine {
+  constructor(options: ConstructorParameters<typeof ProductionRoomEngine>[0]) { super({ ...options, config: { ...options.config, startMs: 0 } }); }
+}
 import type {
   GameStore,
   PersistedRoom,
@@ -683,15 +686,21 @@ test("synthetic AI results commit once and remain separate from human standings"
   const word = view.privateState!.promptOptions![0].id;
   const generation = view.snapshot.game!.generation;
   assert.equal((await engine.command("ai-host", "room:choose-prompt", { requestId: "choose-ai", generation, payload: { id: word } })).ok, true);
+  for (const confidence of [undefined, 0.5, 0.49]) {
+    const low = await engine.reserveGuesserObservation(code);
+    assert.equal(await engine.acceptGuesserResult(code, low, { jobId: low.jobId, status: "answer", answer: word, confidence }), true);
+  }
+  assert.equal((await engine.resume(code, second.resumeToken)).snapshot.game!.result, undefined);
   const job = await engine.reserveGuesserObservation(code);
   now += 12000;
-  assert.equal(await engine.acceptGuesserResult(code, job, { jobId: "wrong", status: "answer", answer: word }), false);
-  assert.equal(await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", answer: word }), true);
-  assert.equal(await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", answer: word }), false);
+  assert.equal(await engine.acceptGuesserResult(code, job, { jobId: "wrong", status: "answer", confidence: 0.8, answer: word }), false);
+  assert.equal(await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", confidence: 0.8, answer: word }), true);
+  assert.equal(await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", confidence: 0.8, answer: word }), false);
   assert.equal((await engine.command("ai-two", "room:guess", { requestId: "human-solve", generation, payload: { text: word } })).ok, true);
   view = await engine.resume(code, host.resumeToken);
   assert.deepEqual(view.snapshot.game!.result!.aiBenchmark, { scoringVersion: "ai-benchmark-v1", status: "solved", points: 86, elapsedMs: 12000 });
   assert.deepEqual(view.snapshot.aiBenchmark, { totalPoints: 86, scoredRounds: 1, solvedRounds: 1, completedRounds: 1 });
+  assert.deepEqual(view.snapshot.aiHistory?.[0].aiGuesses?.map(guess => guess.submitted), [false, false, false, true]);
   const restored = new RoomEngine({ store, eventSink: () => {}, clock: () => now });
   await restored.initialize();
   assert.deepEqual((await restored.resume(code, host.resumeToken)).snapshot.aiBenchmark, view.snapshot.aiBenchmark);
@@ -714,7 +723,7 @@ test("synthetic wrong and unavailable AI results distinguish zero from null", as
     const generation = view.snapshot.game!.generation;
     await engine.command("host", "room:choose-prompt", { requestId: "choose", generation, payload: { id: word } });
     const job = await engine.reserveGuesserObservation(code);
-    const result = status === "answer" ? { jobId: job.jobId, status, answer: "not a match" } as const : { jobId: job.jobId, status } as const;
+    const result = status === "answer" ? { jobId: job.jobId, status, answer: PROMPTS.find(prompt => prompt !== word)!, confidence: 0.8 } as const : { jobId: job.jobId, status } as const;
     assert.equal(await engine.acceptGuesserResult(code, job, result), true);
     await engine.command("other", "room:guess", { requestId: "solve", generation, payload: { text: word } });
     view = await engine.resume(code, host.resumeToken);
@@ -742,7 +751,7 @@ test("synthetic AI jobs reject changed bindings and late results without scoring
   const generation = view.snapshot.game!.generation;
   await engine.command("bound-host", "room:choose-prompt", { requestId: "choose", generation, payload: { id: word } });
   const job = await engine.reserveGuesserObservation(code);
-  const answer = { jobId: job.jobId, status: "answer", answer: word } as const;
+  const answer = { jobId: job.jobId, status: "answer", confidence: 0.8, answer: word } as const;
   assert.equal(await engine.acceptGuesserResult(code, { ...job, sequence: job.sequence + 1 }, answer), false);
   assert.equal(await engine.acceptGuesserResult(code, { ...job, generation: job.generation - 1 }, answer), false);
   now = job.deadlineAt;
@@ -827,7 +836,7 @@ test("synthetic AI failure differs from normal cancellation of a pending job", a
     await engine.command("drawer", "room:choose-prompt", { requestId: "choose", generation, payload: { id: word } });
     if (scenario !== "pending-only") {
       const wrong = await engine.reserveGuesserObservation(code);
-      assert.equal(await engine.acceptGuesserResult(code, wrong, { jobId: wrong.jobId, status: "answer", answer: "not the answer" }), true);
+      assert.equal(await engine.acceptGuesserResult(code, wrong, { jobId: wrong.jobId, status: "answer", answer: PROMPTS.find(prompt => prompt !== word)!, confidence: 0.8 }), true);
     }
     const pending = await engine.reserveGuesserObservation(code);
     if (scenario === "failure") assert.equal(await engine.acceptGuesserResult(code, pending, { jobId: pending.jobId, status: "unavailable", reason: "synthetic failure" }), true);
@@ -835,7 +844,7 @@ test("synthetic AI failure differs from normal cancellation of a pending job", a
     view = await engine.resume(code, host.resumeToken);
     assert.equal(view.snapshot.game!.result!.aiBenchmark!.points, scenario === "cancel" ? 0 : null);
     assert.equal(view.snapshot.aiBenchmark!.scoredRounds, scenario === "cancel" ? 1 : 0);
-    assert.equal(await engine.acceptGuesserResult(code, pending, { jobId: pending.jobId, status: "answer", answer: word }), false);
+    assert.equal(await engine.acceptGuesserResult(code, pending, { jobId: pending.jobId, status: "answer", confidence: 0.8, answer: word }), false);
     await engine.shutdown();
   }
 });
@@ -953,9 +962,9 @@ test("synthetic AI ledger counts committed partial coverage and excludes an inte
     const generation = view.snapshot.game!.generation;
     await engine.command(drawer, "room:choose-prompt", { requestId: `choose-${round}`, generation, payload: { id: word } });
     const job = await engine.reserveGuesserObservation(code);
-    if (round === 2) await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", answer: "not the answer" });
+    if (round === 2) await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", answer: PROMPTS.find(prompt => prompt !== word)!, confidence: 0.8 });
     else if (round === 3) await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "unavailable", reason: "synthetic failure" });
-    else await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", answer: word });
+    else await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", confidence: 0.8, answer: word });
     if (round === 4) {
       const recovered = new RoomEngine({ store, eventSink: () => {} });
       await recovered.initialize();
@@ -1249,5 +1258,33 @@ test("last solve closes an accepted held stroke before committing the result", a
     for (let n = 0; n < 100 && !store.drawings.some(row => row.operations.some(op => op.type === "stroke.end")); n++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.ok(events.some(event => event.type === "drawing" && event.operations?.some(op => op.type === "stroke.end")));
     assert.deepEqual(store.drawings.flatMap(row => row.operations).map(op => op.type), ["stroke.start", "stroke.end"]);
+  } finally { await engine.shutdown(); }
+});
+
+
+test("starting countdown is shared, protects selection and returns to lobby on lost eligibility", async () => {
+  const engine = new ProductionRoomEngine({ store: new MemoryStore(), eventSink: () => {}, config: { startMs: 40 } });
+  try {
+    const host = await engine.create(profile);
+    const code = host.snapshot.code;
+    const guest = await engine.join(code, { ...profile, name: "Guest" });
+    await engine.connect(code, host.resumeToken, "start-host");
+    await engine.connect(code, guest.resumeToken, "start-guest");
+    const lobby = await engine.resume(code, host.resumeToken);
+    assert.equal((await engine.command("start-host", "room:start", { requestId: "start-countdown", expectedRevision: lobby.snapshot.revision })).ok, true);
+    const hostView = await engine.resume(code, host.resumeToken);
+    const guestView = await engine.resume(code, guest.resumeToken);
+    assert.equal(hostView.snapshot.phase, "starting");
+    assert.equal(hostView.snapshot.startDeadlineAt, guestView.snapshot.startDeadlineAt);
+    assert.equal(hostView.snapshot.game, undefined);
+    assert.equal(hostView.privateState?.promptOptions, undefined);
+    assert.equal((await engine.command("start-guest", "room:chat", { requestId: "chat", payload: { text: "hello" } })).ok, true);
+    await engine.disconnect("start-guest");
+    assert.equal((await engine.resume(code, host.resumeToken)).snapshot.phase, "lobby");
+    await engine.connect(code, guest.resumeToken, "start-guest-2");
+    const ready = await engine.resume(code, host.resumeToken);
+    assert.equal((await engine.command("start-host", "room:start", { requestId: "start-again", expectedRevision: ready.snapshot.revision })).ok, true);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.equal((await engine.resume(code, host.resumeToken)).snapshot.phase, "choosing");
   } finally { await engine.shutdown(); }
 });

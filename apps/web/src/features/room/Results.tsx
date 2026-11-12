@@ -1,5 +1,6 @@
 import { Trophy } from "lucide-react";
 import type { RoomSnapshot } from "@/contracts/room";
+import { AiPredictionHistory } from "./AiCard";
 import { Avatar } from "@/features/player/Avatar";
 
 const labels: Record<string, string> = {
@@ -113,6 +114,12 @@ export function FinalResults({ snapshot, playerId, host, onReturn }: ResultProps
       {snapshot.settings.aiGuesserEnabled !== false && <p className="room-ai-benchmark">
         AI benchmark: {snapshot.aiBenchmark?.totalPoints == null ? "Unavailable" : `${snapshot.aiBenchmark.totalPoints} points`} · {snapshot.aiBenchmark?.scoredRounds ?? 0} / {snapshot.aiBenchmark?.completedRounds ?? 0} rounds scored · {snapshot.aiBenchmark?.solvedRounds ?? 0} solved
       </p>}
+      {snapshot.aiHistory && <details className="room-ai-history"><summary>Completed-round AI history ({snapshot.aiHistory.length})</summary>
+        {snapshot.aiHistory.map(entry => <details key={entry.round}>
+          <summary>Round {entry.round} · {entry.word} · {nameOf(entry.drawerId)} · {snapshot.settings.aiGuesserEnabled === false ? "Disabled" : entry.aiBenchmark.status === "solved" ? "Solved" : entry.aiBenchmark.status === "unsolved" ? "Not solved" : "Unavailable"}{entry.aiBenchmark.points !== null ? ` · ${entry.aiBenchmark.points} points` : ""}</summary>
+          <AiPredictionHistory guesses={entry.aiGuesses ?? []} word={entry.word} />
+        </details>)}
+      </details>}
       {host ? <button className="room-button" onClick={onReturn}>Return to lobby</button> : <p>Waiting for the host to return to the lobby.</p>}
     </section>
   );

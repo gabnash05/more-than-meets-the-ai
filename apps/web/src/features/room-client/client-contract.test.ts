@@ -27,6 +27,7 @@ class FakeSocket {
   handlers = new Map<string, (...args: never[]) => void>();
   requests: { name: string; payload: { requestId: string }; ack: (error: Error | null, result?: { ok: boolean; code?: string; message?: string }) => void }[] = [];
   on(name: string, fn: (...args: never[]) => void) { this.handlers.set(name, fn); return this; }
+  off(name: string) { this.handlers.delete(name); return this; }
   connect() { return this; }
   disconnect() { this.connected = false; return this; }
   timeout() { return this; }
@@ -56,6 +57,41 @@ describe("room client contract", () => {
     const resumed = await new LocalRoomClient().resume(created.snapshot.code, created.resumeToken);
     expect(resumed.snapshot.chat[0].text).toBe("hello");
     await expect(new LocalRoomClient().resume(created.snapshot.code, "wrong")).rejects.toMatchObject({ code: "not-found" });
+  });
+  it("persists one three-second countdown before local demo word selection", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const client = new LocalRoomClient();
+    try {
+      const seeded = await seedReviewScenario("lobby");
+      await client.resume(seeded.snapshot.code, seeded.resumeToken);
+      await client.start();
+      expect(client.getSession()?.snapshot.phase).toBe("starting");
+      expect(client.getSession()?.snapshot.startDeadlineAt).toBe(Date.now() + 3000);
+      expect(client.getSession()?.privateState?.target).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(client.getSession()?.snapshot.phase).toBe("starting");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(client.getSession()?.snapshot.phase).toBe("choosing");
+      await client.choosePrompt("cat");
+      expect(client.getSession()?.snapshot.phase).toBe("drawing");
+      expect(client.getSession()?.snapshot.startDeadlineAt).toBeUndefined();
+      expect(client.getSession()?.privateState?.target).toBe("cat");
+      await expect(client.start()).rejects.toMatchObject({ code: "in-progress" });
+    } finally { client.dispose(); vi.useRealTimers(); }
+  });
+  it("allows generic closing chat while keeping the answer private until reveal", async () => {
+    const seeded = await seedReviewScenario("drawer");
+    seeded.snapshot.game!.closing = true;
+    await persistLocalRoomSession(seeded);
+    const client = new LocalRoomClient();
+    await client.resume(seeded.snapshot.code, seeded.resumeToken);
+    await expect(client.sendChat("It is a CAT")).rejects.toMatchObject({ code: "secret" });
+    await client.sendChat("good round everyone");
+    expect(client.getSession()?.snapshot.chat.at(-1)?.text).toBe("good round everyone");
+    const result = await seedReviewScenario("result-missed");
+    const revealed = new LocalRoomClient();
+    await revealed.resume(result.snapshot.code, result.resumeToken);
+    await expect(revealed.sendChat("It was cat")).resolves.toBeUndefined();
   });
   it("local journal deduplicates and replays submitted batches in order on resume", async () => {
     const seeded = await seedReviewScenario("drawer"), local = new LocalRoomClient();
@@ -133,6 +169,20 @@ describe("room client contract", () => {
     const result = await seedReviewScenario("result-correct"), resultClient = new LocalRoomClient();
     await resultClient.resume(result.snapshot.code, result.resumeToken);
     await expect(resultClient.submitDrawing(batch)).rejects.toMatchObject({ code: "forbidden" });
+  });
+  it("resumes a remote session during countdown before a canvas exists", async () => {
+    const starting = session();
+    starting.snapshot.phase = "starting";
+    starting.snapshot.startDeadlineAt = Date.now() + 3000;
+    delete starting.snapshot.game;
+    starting.privateState = {};
+    const { client } = remote(starting);
+    try {
+      const resumed = await client.resume("ABC123", "token");
+      expect(resumed.snapshot.phase).toBe("starting");
+      expect(resumed.snapshot.startDeadlineAt).toBe(starting.snapshot.startDeadlineAt);
+      expect(resumed.snapshot.game).toBeUndefined();
+    } finally { client.dispose(); }
   });
   it("remote bootstraps with injected fetch and reports typed failures", async () => {
     const { client, fetcher } = remote();

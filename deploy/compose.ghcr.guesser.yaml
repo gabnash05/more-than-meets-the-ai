@@ -16,11 +16,11 @@ services:
       AI_QUEUE_REDIS_USERNAME: api
       AI_QUEUE_REDIS_PASSWORD_FILE: /run/mmtai-secrets/redis-api-password
       REFEREE_PROVIDER: queue
-      REFEREE_MODEL_ID: ${REFEREE_MODEL_ID:-referee-vit-a-v1}
+      REFEREE_MODEL_ID: ${REFEREE_MODEL_ID:-referee-vit-v2}
       AI_SMOKE_TEST: "0"
       AI_TEST_FIXTURES: "0"
-      AI_FIRST_GUESS_MS: "1500"
-      AI_GUESS_COOLDOWN_MS: "2000"
+      AI_FIRST_GUESS_MS: "3000"
+      AI_GUESS_COOLDOWN_MS: "3000"
       AI_MAX_GUESSES_PER_TURN: "24"
       AI_REQUEST_TIMEOUT_MS: "2500"
     volumes:
@@ -36,7 +36,7 @@ services:
       AI_SECRET_FILE: /run/mmtai-secrets/ai-token
       AI_ARTIFACT_ROOT: /artifacts
       GUESSER_MODEL_ID: ${GUESSER_MODEL_ID:?Set GUESSER_MODEL_ID to the installed bundle directory}
-      REFEREE_MODEL_ID: ${REFEREE_MODEL_ID:-referee-vit-a-v1}
+      REFEREE_MODEL_ID: ${REFEREE_MODEL_ID:-referee-vit-v2}
       AI_SMOKE_TEST: "0"
       AI_TEST_FIXTURES: "0"
       AI_QUEUE_WORKER: "1"

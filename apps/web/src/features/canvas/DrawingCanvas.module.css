@@ -7,3 +7,6 @@
   touch-action: none;
   cursor: crosshair;
 }
+
+.surface[data-readonly="true"] { /* Atrament installs an inline touch-action:none; read-only viewers must scroll. */
+  touch-action: pan-y pinch-zoom !important; cursor: default; }
