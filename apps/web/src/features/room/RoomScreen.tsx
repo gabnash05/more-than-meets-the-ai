@@ -130,6 +130,23 @@ export default function RoomScreen() {
     [settingsPending, setSettingsPending] = useState(false),
     [settingsFailed, setSettingsFailed] = useState(false);
   const [guessPending, setGuessPending] = useState(false);
+  const composer = useRef<HTMLInputElement>(null);
+  const draftTurn = useRef<string | null>(null);
+  const focusedTurns = useRef(new Set<string>());
+  const screen = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const update = () => {
+      const height = viewport?.height ?? window.innerHeight;
+      screen.current?.style.setProperty("--room-viewport-height", `${height}px`);
+      screen.current?.classList.toggle("keyboard-open", window.innerHeight - height > 120);
+    };
+    update();
+    viewport?.addEventListener("resize", update);
+    viewport?.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => { viewport?.removeEventListener("resize", update); viewport?.removeEventListener("scroll", update); window.removeEventListener("resize", update); };
+  }, [session?.playerId]);
   const pendingGuess = useRef<{ canvasId: string; generation: number } | null>(null);
   const lifecycle = useRef(0);
   const [aiPulse, setAiPulse] = useState<AiGuessEvent>();
@@ -289,6 +306,23 @@ export default function RoomScreen() {
     closing = game?.closing === true,
     promptsExhausted = snap?.startBlockers?.includes("Not enough unused prompts remain.") ?? false,
     teamDone = snap?.settings.mode === "team" && game?.teamProgress?.some(progress => progress.teamId === me?.teamId && (progress.status === "solved" || progress.status === "finished"));
+  const activeGuess = drawing && !closing;
+  const composerDisabled = connection !== "connected" || (activeGuess && (paused || !!teamDone || !!me?.solved || role !== "guesser"));
+  useEffect(() => {
+    if (!game) return;
+    const turn = `${game.canvasId}:${game.generation}`;
+    if (draftTurn.current !== turn) {
+      if (draftTurn.current !== null) setMessage("");
+      draftTurn.current = turn;
+    }
+    if (!activeGuess || composerDisabled || role !== "guesser" || focusedTurns.current.has(turn)) return;
+    focusedTurns.current.add(turn);
+    if (window.matchMedia("(max-width: 820px), (pointer: coarse)").matches || document.querySelector('[role="dialog"]')) return;
+    const focused = document.activeElement;
+    if (focused && focused !== document.body && focused !== composer.current) return;
+    composer.current?.focus({ preventScroll: true });
+  }, [game, activeGuess, composerDisabled, role]);
+  const startSeconds = snap?.startDeadlineAt ? Math.max(0, Math.ceil((snap.startDeadlineAt - clock - clockOffset) / 1000)) : 3;
   const seconds = game?.pause ? Math.ceil(game.pause.remainingMs / 1000) : game?.deadlineAt ? Math.max(0, Math.ceil((game.deadlineAt - clock - clockOffset) / 1000)) : null;
   const displayTime = seconds === null ? game?.time ?? "--:--" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   const refereeWarning = drawing && !paused && snap?.settings.aiRefereeEnabled !== false && game?.refereeWarning && game.refereeWarning.expiresAt > clock + clockOffset ? game.refereeWarning : undefined;
@@ -384,7 +418,8 @@ export default function RoomScreen() {
     const text = message.trim();
     const roomClient = client.current;
     if (!text || !roomClient) return;
-    if (!(drawing && role === "guesser")) {
+    if (composerDisabled) return;
+    if (!activeGuess) {
       void action(async () => {
         await roomClient.sendChat(text);
         setMessage(current => current.trim() === text ? "" : current);
@@ -513,7 +548,7 @@ export default function RoomScreen() {
         </div>
       ));
   return (
-    <main className="room-screen">
+    <main ref={screen} className={`room-screen${snap.phase !== "lobby" ? " room-playing" : ""}`}>
       <header className="room-header">
         <div className="room-brand">
           <img src="/design/assets/more-than-meets-the-ai-icon.png" alt="" />
@@ -796,6 +831,7 @@ export default function RoomScreen() {
         </div>
       ) : (
         <div className="room-layout">
+          <p className="room-phase-announcement" role="status">{snap.phase === "starting" ? "Match starting" : choosing ? "Word selection" : drawing ? closing ? "Round complete. Preparing results" : role === "drawer" ? "Your role: drawer" : "Your role: guesser" : result ? "Round results" : snap.phase === "finished" ? "Match complete" : "Round interrupted"}</p>
           <aside className="room-teams">
             <section className="room-panel">
               <h2>
@@ -811,12 +847,12 @@ export default function RoomScreen() {
             {!result && snap.phase !== "finished" && <><div className="room-round"><h2>Round {game?.round ?? "–"} / {snap.settings.rounds}</h2><span>{snap.settings.mode === "team" ? "Team play" : snap.settings.aiGuesserEnabled === false ? "Individual play" : "Everyone vs AI"}</span></div>
             <div className="room-prompt">
               <div>
-                <span className="room-eyebrow">{choosing ? "Choosing a word" : role === "drawer" ? "You are drawing" : "Guess the drawing"}</span>
+                <span className="room-eyebrow">{snap.phase === "starting" ? "Match starting" : choosing ? "Choosing a word" : role === "drawer" ? "You are drawing" : "Guess the drawing"}</span>
                 <strong>{choosing ? (session.privateState?.promptOptions?.length ? "Pick a word below" : `${snap.players.find(p => p.id === (game?.choosingPlayerId ?? game?.drawerId))?.profile.name ?? "The drawer"} is choosing`) : role === "drawer" ? session.privateState?.target : game?.hint}</strong>
               </div>
               <div className="room-time"><span>Time</span><strong>{displayTime}</strong></div>
             </div>
-            <div className="room-feedback-slot"><RoomFeedback phase={snap.phase} role={role} pending={guessPending} solved={me.solved} closing={closing} saving={game?.saving} /></div></>}
+            </>}
             {snap.phase === "finished" && <FinalResults snapshot={snap} playerId={session.playerId} host={!!host} onReturn={() => void action(() => client.current!.returnToLobby())} />}
             {result && game?.result && <RoundRecap snapshot={snap} playerId={session.playerId} seconds={seconds} onReturn={() => void action(() => client.current!.returnToLobby())} />}
             <div className={`room-board${refereeWarning ? " room-board-warning" : ""}`} hidden={snap.phase === "finished"}>
@@ -837,6 +873,7 @@ export default function RoomScreen() {
                 }}
                 onError={setError}
               />
+            {snap.phase === "starting" && <section className="room-panel room-result-overlay" aria-label="Match countdown"><h2>Get ready!</h2><strong className="room-countdown">{startSeconds || "Starting…"}</strong><p>Word selection starts next.</p></section>}
             {choosing && <section className="room-panel room-result-overlay"><h2>{session.privateState?.promptOptions?.length ? "Choose a word" : "Waiting for the drawer"}</h2><div className="room-modal-actions">{session.privateState?.promptOptions?.map(option => <button className="room-button" key={option.id} onClick={() => void action(() => client.current!.choosePrompt(option.id))}>{option.label}</button>)}</div></section>}
             {snap.phase === "interrupted" && <section className="room-panel room-result-overlay"><h2>Round interrupted</h2><p>The drawing saved for this session is available to review.</p>{promptsExhausted ? <p>Not enough unused prompts remain.</p> : <p>Retry this round with a fresh word.</p>}{host ? <><div className="room-modal-actions">{!promptsExhausted && <button className="room-button" onClick={() => void action(() => client.current!.retryInterrupted())}>Retry round</button>}{snap.canReturnToLobby && <><p>Returning ends this match; prior results are saved for this session.</p><button className="room-button" onClick={() => void action(() => client.current!.returnToLobby())}>Return to lobby</button></>}</div></> : <p>Waiting for the host to retry or return to the lobby.</p>}</section>}
             </div>
@@ -923,30 +960,32 @@ export default function RoomScreen() {
             )}
           </section>
           <aside className="room-chat-column">
-            {snap.phase !== "finished" && snap.settings.aiGuesserEnabled !== false && <AiCard game={game} result={result} pulse={drawing && !paused ? aiPulse : undefined} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
+            {snap.phase !== "finished" && <AiCard disabled={snap.settings.aiGuesserEnabled === false} game={game} result={result} pulse={drawing && !paused ? aiPulse : undefined} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
             <div className="room-chat-order">
               <section
                 data-testid="room-chat"
                 className={`room-panel room-chat ${me.solved ? "is-solved" : ""}`}
               >
                 <h2>
-                  {drawing && role === "guesser" ? "Your guesses" : "Room chat"}
+                  {activeGuess && role === "guesser" ? "Your guesses" : "Room chat"}
                 </h2>
                 <ChatMessages snapshot={snap} />
+                <RoomFeedback phase={snap.phase} role={role} pending={guessPending} solved={me.solved} closing={closing} saving={game?.saving} paused={paused} />
                 <form onSubmit={send}>
                   <input
+                    ref={composer}
                     aria-label={
-                      drawing && role === "guesser"
+                      activeGuess && role === "guesser"
                         ? "Your guess"
                         : "Message the room"
                     }
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     disabled={
-                      snap.phase !== "drawing" || paused || closing || teamDone || connection !== "connected" || !!me.solved || role !== "guesser"
+                      composerDisabled
                     }
                     placeholder={
-                      drawing && role === "guesser"
+                      activeGuess && role === "guesser"
                         ? "Type your guess…"
                         : "Say something…"
                     }
@@ -954,7 +993,7 @@ export default function RoomScreen() {
                   <button
                     className="room-button"
                     disabled={
-                      snap.phase !== "drawing" || paused || closing || teamDone || connection !== "connected" || !!me.solved || role !== "guesser" || guessPending
+                      composerDisabled || guessPending
                     }
                   >
                     Send

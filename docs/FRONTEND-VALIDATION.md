@@ -1,5 +1,28 @@
 # Frontend implementation and validation
 
+## Game UX and AI fairness — 11 November 2026
+
+Implemented on `codex/game-ux-ai-fairness` from remote main `9d0868e`, using a Sol frontend worker, Terra backend/contracts worker and Terra integration review. Existing local branch history and the untracked slide file were preserved; no commit, push, deployment or training was performed.
+
+| Check on Windows / Node.js 24.19.0 | Result |
+| --- | --- |
+| Final web typecheck, ESLint, production local and remote exports | Passed |
+| Complete web unit suite | 114 passed |
+| Complete local production-browser suite before final integration refinements | 61 passed |
+| Final affected local browser suites (`room-flow`, `room-ux`, `responsive`) | 36 passed |
+| Final real multiplayer suite against isolated PostgreSQL | 8 passed; 1 opt-in Compose/model smoke skipped |
+| API checks, including actual process restart | 80 passed; 2 deferred Team and 1 real Redis test skipped |
+
+Browser checks cover desktop one-time focus and dialog focus preservation; phone no-autofocus; enabled result chat; shared/local first-game countdown; all prediction history including greyed-out low-confidence entries; and a synthetic visual-viewport keyboard resize that retains the same composer and draft while keeping the canvas/input visible. Expanded final history displays both sample prediction rows without a nested scroll at 360 and 1440 pixels. The recap retains its compact fixed-height card. The real two-player lifecycle verifies both committed rounds and history after refresh; the API restart test separately verifies database recovery.
+
+The final multiplayer run also preserves independent solves, pending-guess deduplication/drafts, answer privacy, human-only scoring, exact canvas/replay recovery, last-seat admission, host transfer and reconnect. Feedback now renders once beside the composer. A remote client bootstrap regression explicitly accepts `starting` before a canvas exists; this corrected an invalid-session failure found during the first multiplayer run.
+
+Earlier runs exposed Atrament's inline `touch-action: none`, an undersized keyboard layout, duplicate alert selection and an outdated `Final` label. Those were corrected and rerun. One history attempt failed because a required Next.js chunk returned `net::ERR_NO_BUFFER_SPACE` before hydration; focused and complete reruns passed. The layout checker also sampled intentionally translated decorative dots; responsive layout checks now request reduced motion, while the existing motion-specific tests remain. Two older backend fixtures were adapted to countdown through a test-only injection.
+
+Evidence is under ignored `.cache/game-ux-ai-fairness`: `web-unit.log`, `web-typecheck.log`, `web-lint.log`, `web-local-build.log`, `web-remote-build.log`, `web-browser.log`, `web-final-layout.log`, `web-multiplayer-final.log`, and `history-readable-360.png`. The screenshot uses explicitly synthetic review data and was visually inspected. The last remote build stalled during compilation but subsequently completed; only the completed export was used for the passing multiplayer run.
+
+These results do not verify a physical phone keyboard, real Redis/worker round-trip, actual model inference, calibrated confidence, balanced gameplay or production capacity. HTTP/queue results share the authoritative confidence gate; queue contracts and fake-connection failure cases passed. Real-device keyboard and opt-in Compose/model checks remain follow-up validation when their runtimes are available. Memory mode still loses room/history state on restart; completed PostgreSQL-backed histories use the existing atomic JSON persistence without a migration.
+
 ## Lossless drawing-sync follow-up — 10 November 2026
 
 The implemented protocol and preservation boundaries are in [the drawing-sync contract](FRONTEND-ROOM-INTEGRATION.md#lossless-drawing-sync-follow-up--10-november-2026). This follow-up is locally verified; no VPS deployment, registry publication or inference work was performed by the synchronization task.

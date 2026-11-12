@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RoomEngine } from "../src/game/engine";
+import { RoomEngine as ProductionRoomEngine } from "../src/game/engine";
+class RoomEngine extends ProductionRoomEngine {
+  constructor(options: ConstructorParameters<typeof ProductionRoomEngine>[0]) { super({ ...options, config: { ...options.config, startMs: 0 } }); }
+}
 import type { GameStore, PersistedRoom, DrawingRecord, FinalizedTurn } from "../src/game/ports";
 
 class FailingStore implements GameStore {
@@ -44,7 +47,7 @@ test("archive outage never blocks resync or shutdown", async () => {
  const ctx = await setup(); try { const { game, word } = await begin(ctx); ctx.store.failArchive = true; const draw = await ctx.engine.command("host", "room:drawing", { requestId: "draw", generation: game.generation, payload: { roomCode: ctx.code, canvasId: game.canvasId, generation: game.generation, streamId: "s", clientSeq: [1, 1], operations: [{ type: "stroke.start", opId: "op", actionId: "a", at: 1, settings: { tool: "brush", color: "#123456", size: 12 }, point: { x: 1, y: 1, time: 1 }, clientSeq: 1 }] } }); assert.equal(draw.ok, true); const guess = ctx.engine.command("other", "room:guess", { requestId: "guess", generation: game.generation, payload: { text: word } }); await wait(20); const sync = await bounded(ctx.engine.command("host", "room:resync", { requestId: "sync" })); assert.equal(sync.ok, true); await bounded(ctx.engine.shutdown()); await bounded(guess); } finally { ctx.store.failArchive = false; await bounded(ctx.engine.shutdown()); }
 });
 test("finalization failure holds round and commits score exactly once after recovery", async () => {
- const ctx = await setup(); try { const { game, word } = await begin(ctx); ctx.store.failFinalize = true; const first = await bounded(ctx.engine.command("other", "room:guess", { requestId: "solve", generation: game.generation, payload: { text: word } })); assert.equal(first.ok, false); assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.phase, "drawing"); assert.equal(ctx.store.turns.size, 0); ctx.store.failFinalize = false; const retry = await bounded(ctx.engine.command("other", "room:guess", { requestId: "solve", generation: game.generation, payload: { text: word } })); assert.equal(retry.ok, true); assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.phase, "result"); assert.equal(ctx.store.turns.size, 1); await ctx.engine.command("other", "room:guess", { requestId: "solve", generation: game.generation, payload: { text: word } }); assert.equal(ctx.store.turns.size, 1); } finally { ctx.store.failFinalize = false; await bounded(ctx.engine.shutdown()); }
+ const ctx = await setup(); try { const { game, word } = await begin(ctx); ctx.store.failFinalize = true; const first = await bounded(ctx.engine.command("other", "room:guess", { requestId: "solve", generation: game.generation, payload: { text: word } })); assert.equal(first.ok, false); assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.phase, "drawing"); assert.deepEqual((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.aiHistory, []); assert.equal(ctx.store.turns.size, 0); ctx.store.failFinalize = false; const retry = await bounded(ctx.engine.command("other", "room:guess", { requestId: "solve", generation: game.generation, payload: { text: word } })); assert.equal(retry.ok, true); assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.phase, "result"); assert.equal(ctx.store.turns.size, 1); assert.equal((await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot.aiHistory?.length, 1); await ctx.engine.command("other", "room:guess", { requestId: "solve", generation: game.generation, payload: { text: word } }); assert.equal(ctx.store.turns.size, 1); } finally { ctx.store.failFinalize = false; await bounded(ctx.engine.shutdown()); }
 });
 
 test("failed timer save does not expose an uncommitted phase and retries after recovery", async () => {
@@ -95,6 +98,8 @@ test("archive drain wakes finalization without the one-second poll", async () =>
     const pending = (await ctx.engine.resume(ctx.code, ctx.host.resumeToken)).snapshot;
     assert.equal(pending.phase, "drawing");
     assert.equal(pending.game?.closing, true);
+    assert.equal((await ctx.engine.command("host", "room:chat", { requestId: "closing-general", payload: { text: "Good game" } })).ok, true);
+    assert.equal((await ctx.engine.command("host", "room:chat", { requestId: "closing-secret", payload: { text: word } })).code, "secret");
     assert.equal(pending.game?.result, undefined);
     assert.ok(Object.values(pending.game!.scores).every(score => score === 0));
     releaseArchive();
@@ -246,3 +251,28 @@ for (const failure of ["none", "save", "finalize"] as const) {
     } finally { ctx.store.failSave = false; ctx.store.failFinalize = false; await bounded(ctx.engine.shutdown()); }
   });
 }
+
+
+test("failed leave during countdown preserves the start and lease atomically", async () => {
+  const store = new FailingStore();
+  const engine = new ProductionRoomEngine({ store, eventSink: () => {}, config: { startMs: 10000 } });
+  try {
+    const host = await engine.create(profile);
+    const guest = await engine.join(host.snapshot.code, { ...profile, name: "Guest" });
+    await engine.connect(host.snapshot.code, host.resumeToken, "countdown-host");
+    await engine.connect(host.snapshot.code, guest.resumeToken, "countdown-guest");
+    let lobby = await engine.resume(host.snapshot.code, host.resumeToken);
+    assert.equal((await engine.command("countdown-host", "room:settings", { requestId: "settings", expectedRevision: lobby.snapshot.revision, payload: { ...lobby.snapshot.settings, seats: 2 } })).ok, true);
+    lobby = await engine.resume(host.snapshot.code, host.resumeToken);
+    assert.equal((await engine.command("countdown-host", "room:start", { requestId: "start", expectedRevision: lobby.snapshot.revision })).ok, true);
+    store.failSave = true;
+    assert.equal((await engine.command("countdown-guest", "room:leave", { requestId: "leave" })).ok, false);
+    store.failSave = false;
+    assert.equal((await engine.resume(host.snapshot.code, host.resumeToken)).snapshot.phase, "starting");
+    assert.equal((await engine.command("countdown-guest", "room:resync", { requestId: "resync" })).ok, true);
+    assert.equal((await engine.command("countdown-guest", "room:leave", { requestId: "leave" })).ok, true);
+    assert.equal((await engine.resume(host.snapshot.code, host.resumeToken)).snapshot.phase, "lobby");
+    const replacement = await engine.join(host.snapshot.code, { ...profile, name: "Replacement" });
+    assert.equal(replacement.snapshot.players.length, 2);
+  } finally { store.failSave = false; await engine.shutdown(); }
+});

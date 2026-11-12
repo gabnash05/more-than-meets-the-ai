@@ -66,3 +66,9 @@ The intended AI opponent is credible but beatable, with uncertain race outcomes.
 ## Vocabulary
 
 See [CONTEXT.md](CONTEXT.md) for the domain glossary.
+
+## Game UX and AI fairness — 11 November 2026
+
+Host Start has a shared three-second countdown before first word selection. Between turns, players can use room chat; active drawer/solved-player answer protections remain. Desktop guessers receive one-time input focus, while phone users tap to open the keyboard. The compact mobile layout keeps the canvas and composer together and permits scrolling over read-only canvases.
+
+The game authority accepts AI answers only above 50% model confidence. The first check and each cooldown after inference settlement use at least three active drawing seconds, with changed-drawing checks and the existing 24-call cap. All valid predictions remain in revealed chronological history; low-confidence predictions are greyed out and never solve or score. Completed rounds can be inspected from final results, including after PostgreSQL-backed recovery. Memory-mode history still ends on a process restart. See the [integration contract](docs/FRONTEND-ROOM-INTEGRATION.md) and [validation record](docs/FRONTEND-VALIDATION.md).

@@ -19,8 +19,8 @@ services:
       REFEREE_MODEL_ID: ${REFEREE_MODEL_ID:-referee-vit-v2}
       AI_SMOKE_TEST: "0"
       AI_TEST_FIXTURES: "0"
-      AI_FIRST_GUESS_MS: "1500"
-      AI_GUESS_COOLDOWN_MS: "2000"
+      AI_FIRST_GUESS_MS: "3000"
+      AI_GUESS_COOLDOWN_MS: "3000"
       AI_MAX_GUESSES_PER_TURN: "24"
       AI_REQUEST_TIMEOUT_MS: "2500"
     volumes:

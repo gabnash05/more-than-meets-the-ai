@@ -1,5 +1,15 @@
 # Backend validation and isolated setup
 
+## Game UX and AI fairness — 11 November 2026
+
+On Windows / Node.js 24.19.0, final API typecheck, lint, production build and the complete isolated PostgreSQL-backed suite passed: **80 passed, 0 failures, 3 skipped**. The skips are the two existing deferred Team tests and the real Redis round-trip, which requires `REDIS_URL`. The local Docker engine was unavailable, so no real Redis/worker or model inference claim is made; queue contract, fake-connection binding, deadline, readiness, cancellation and recovery tests passed.
+
+The suite covers shared first-game countdown, cancellation after eligibility loss, rollback of a failed countdown leave and replacement admission in a two-seat lobby. Confidence cases include missing, below/exactly/above 0.5 and invalid values; low-confidence predictions are retained without answer pulses or scoring. Inference timing fixtures enforce the three-second minimum, one in-flight call, changed-drawing checks and the 24-call cap. Existing pause, stale-job, failure, human scoring and privacy checks remain enabled.
+
+Committed AI history is absent while finalization fails and appears once after successful retry. Generic closing chat is permitted while target-bearing chat remains rejected until reveal. Actual compiled-process kill/restart retained committed history and scores while the unfinished drawing recovered as interrupted. Existing PostgreSQL cancellation, journal and idempotency checks passed against guarded `127.0.0.1:55437/mtmai_test`; no browser/API session shared that database during the suite.
+
+Two metadata tests initially assumed immediate word selection; their fixture now explicitly bypasses countdown through the injected test option. Production keeps the three-second countdown. Review also corrected a second-save leave inconsistency and departed countdown occupants before the final passing run. Logs: `.cache/game-ux-ai-fairness/api-typecheck.log`, `api-lint.log`, `api-tests.log`. No commit, push, deployment or training was performed.
+
 ## Lossless drawing-sync follow-up — 10 November 2026
 
 API typecheck, ESLint, production build and the complete isolated PostgreSQL-backed suite passed on Node.js 24.22.2: **57 passed, 2 deferred Team tests, 0 failures**. No API/browser session was running against the test database during the final backend suite. Existing SQL cancellation, journal/finalization idempotency, authentication/origin, privacy, scoring and actual compiled-process restart checks remain enabled.

@@ -64,3 +64,9 @@ The separate ai-benchmark-v1 round result uses the human raw speed formula for a
 The default Guesser provider reports unavailable. The optional inference configuration uses the browser renderer and either the Redis queue or an authenticated private HTTP service. Internal observations bind job, turn, canvas, generation, sequence, hint and deadline, and results echo the job ID. The engine rejects mismatched, duplicate, late or stale outputs. See the [deployment runbook](../../deploy/README.md) for the queue overlay and smoke-test setup.
 
 AI results/totals extend existing JSON room/result records in the atomic finalization transaction. Older records missing AI fields project unavailable/null/zero scored rounds. No AI-specific database table is added. Synthetic test results are not model-performance evidence.
+
+## Starting countdown and AI history
+
+Host Start now enters a server-owned three-second `starting` phase before the first word selection. Later rounds retain their existing selection/recap flow. General chat is available between turns and after authoritative drawing closure; active drawer/solved-player answer protection stays enabled.
+
+The Guesser defaults to a three-second initial delay and three-second cooldown after each completed inference, measured in active drawing time. The authority permits an answer only above 50% confidence. Low-confidence predictions consume the same cooldown/call cap and appear only in revealed history, without solving, scoring or emitting answer pulses. Committed round histories survive PostgreSQL recovery through existing JSON records; no SQL migration is needed. Existing memory-mode restart loss still applies.

@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+// Measure layout without sampling the intentional decorative dot translation.
+test.use({ reducedMotion: "reduce" });
 const viewports = [
   [360, 800],
   [390, 844],

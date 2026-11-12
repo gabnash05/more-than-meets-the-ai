@@ -4,7 +4,10 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Inference, Job, Outcome } from "../ai/client";
 import { MemoryGameStore } from "../store";
-import { RoomEngine } from "./engine";
+import { RoomEngine as ProductionRoomEngine } from "./engine";
+class RoomEngine extends ProductionRoomEngine {
+  constructor(options: ConstructorParameters<typeof ProductionRoomEngine>[0]) { super({ ...options, config: { ...options.config, startMs: 0 } }); }
+}
 import { PROMPTS } from "./prompts";
 import { DEFAULT_AVATAR } from "../../../../packages/game-contracts/src/player";
 import type { RoomEvent, RoomSettings } from "../../../../packages/game-contracts/src/room";
@@ -29,6 +32,7 @@ function inferenceFixture(
   const store = new MemoryGameStore();
   const engine = new RoomEngine({
     store,
+    config: { drawMs: 100000 },
     clock: () => now,
     eventSink: (_id, event) => { events.push(event); },
     inference: {
@@ -169,7 +173,7 @@ test("a pending room coalesces canvas updates and keeps status per room", async 
 
     firstJob.resolve({ status: "pass" });
     await delay(30);
-    context.advance(9000);
+    context.advance(9500);
     await waitFor(() => submitted.filter(job => job.canvasId === first.canvasId).length === 2);
     const retry = submitted.filter(job => job.canvasId === first.canvasId)[1];
     assert.equal(retry.sequence, latest);
@@ -200,36 +204,36 @@ test("Guesser paces dispatch, caps at 24 attempts and reveals repeated guesses",
   wrongAnswer = PROMPTS.find(word => word !== room.target)!;
   try {
     await room.ink();
-    room.advance(1499);
+    room.advance(2999);
     await delay(260);
     assert.equal(renders, 0);
-    room.advance(1500);
+    room.advance(3000);
     await waitFor(() => renders === 1);
     assert.equal(jobs.length, 0);
     await room.ink();
     await waitFor(() => jobs.length === 1);
     await delay(20);
     await room.ink();
-    room.advance(3499);
+    room.advance(5999);
     await delay(260);
     assert.equal(renders, 2);
-    room.advance(3500);
+    room.advance(6000);
     await waitFor(() => renders === 3);
     assert.equal(jobs.length, 1);
     for (let attempt = 2; attempt <= 24; attempt++) {
-      room.advance(1500 + (attempt - 1) * 2000);
+      room.advance(3000 + (attempt - 1) * 3000);
       await room.ink();
       await waitFor(() => jobs.length === attempt);
       await delay(20);
     }
-    room.advance(49500);
+    room.advance(75000);
     await room.ink();
     await delay(260);
     assert.equal(jobs.length, 24);
     assert.equal((await room.guest()).snapshot.game!.result, undefined);
     const result = await room.finish();
     assert.deepEqual(result.aiAnswers, Array(24).fill(wrongAnswer));
-    assert.deepEqual(result.aiGuesses, Array(24).fill({ answer: wrongAnswer, confidence: 0.8 }));
+    assert.deepEqual(result.aiGuesses?.map(({ answer, confidence, submitted }) => ({ answer, confidence, submitted })), Array(24).fill({ answer: wrongAnswer, confidence: 0.8, submitted: true }));
     const pulseJobs = room.events.filter(event => event.type === "ai-guess").map(event => event.jobId);
     assert.equal(pulseJobs.length, 48);
     assert.equal(new Set(pulseJobs).size, 24);
@@ -356,7 +360,7 @@ test("host settings independently gate each ready role and survive legacy update
     }, async () => Buffer.from("pixels"), true, { aiGuesserEnabled, aiRefereeEnabled });
     try {
       await room.ink();
-      room.advance(2000);
+      room.advance(3000);
       if (!aiGuesserEnabled) await assert.rejects(room.engine.reserveGuesserObservation(room.code), /AI observation is unavailable/);
       const expected = [...(aiGuesserEnabled ? ["guesser"] : []), ...(aiRefereeEnabled ? ["referee"] : [])];
       if (expected.length) await waitFor(() => submitted.length >= expected.length);
@@ -365,4 +369,26 @@ test("host settings independently gate each ready role and survive legacy update
       assert.equal((await room.guest()).snapshot.game!.refereeWarning, undefined);
     } finally { await room.engine.shutdown(); }
   }
+});
+
+
+test("only confidence above one half submits a canonical inference", async () => {
+  const confidences = [0.5, 0.49, Number.NaN, 1.1, 0.51];
+  let target = "";
+  let calls = 0;
+  const room = await fixture(async () => ({ status: "answer", answer: target, confidence: confidences[calls++] }), async (_key, operations) => Buffer.from(String(operations.length)));
+  target = room.target;
+  try {
+    for (let i = 0; i < confidences.length; i++) {
+      await room.ink();
+      room.advance(3000 + i * 3000);
+      await waitFor(() => calls === i + 1);
+      await delay(30);
+      if (i < 4) assert.equal(room.events.filter(event => event.type === "ai-guess").length, 0);
+    }
+    const result = await room.finish();
+    assert.deepEqual(result.aiGuesses?.map(guess => guess.submitted), [false, false, true]);
+    assert.equal(result.aiBenchmark?.status, "solved");
+    assert.equal(room.events.filter(event => event.type === "ai-guess").length, 2);
+  } finally { await room.engine.shutdown(); }
 });

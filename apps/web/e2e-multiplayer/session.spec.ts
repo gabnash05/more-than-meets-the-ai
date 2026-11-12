@@ -22,6 +22,8 @@ test("two players choose privately, share ink, restore, finish and return", asyn
   await host.getByRole("combobox", { name: "Prompt rounds" }).click();
   await host.getByRole("option", { name: "2 rounds", exact: true }).click();
   await host.getByRole("button", { name: /Start match/ }).first().click();
+  await Promise.all([host, guest].map(page => expect(page.getByLabel("Match countdown")).toBeVisible()));
+  const words: string[] = [];
   for (let round = 0; round < 2; round++) {
     await expect.poll(async () => (await host.getByRole("heading", { name: "Choose a word" }).count()) + (await guest.getByRole("heading", { name: "Choose a word" }).count())).toBe(1);
     const drawer = await host.getByRole("heading", { name: "Choose a word" }).isVisible() ? host : guest;
@@ -29,6 +31,7 @@ test("two players choose privately, share ink, restore, finish and return", asyn
     const choices = drawer.locator(".room-result-overlay button");
     await expect(choices).toHaveCount(3);
     const word = (await choices.first().textContent())!.trim();
+    words.push(word);
     for (const text of await choices.allTextContents()) await expect(guesser.locator(".room-result-overlay")).not.toContainText(text);
     const boardBox = (await drawer.locator(".room-board").boundingBox())!;
     const overlayBox = (await drawer.locator(".room-result-overlay").boundingBox())!;
@@ -71,6 +74,25 @@ test("two players choose privately, share ink, restore, finish and return", asyn
   }
   await expect(host.getByRole("heading", { name: "Final standings" })).toBeVisible();
   await expect(guest.getByRole("heading", { name: "Final standings" })).toBeVisible();
+  const checkHistory = async (page: Page) => {
+    const history = page.locator(".room-ai-history");
+    await expect(history.locator(":scope > summary")).toHaveText("Completed-round AI history (2)");
+    await history.locator(":scope > summary").click();
+    const entries = history.locator(":scope > details");
+    await expect(entries).toHaveCount(2);
+    for (const [index, word] of words.entries()) {
+      const entry = entries.nth(index);
+      await expect(entry.locator("summary")).toContainText(`Round ${index + 1}`);
+      await expect(entry.locator("summary")).toContainText(word);
+      await expect(entry.locator("summary")).toContainText("Unavailable");
+      await entry.locator("summary").click();
+      await expect(entry.getByText("No recorded predictions")).toBeVisible();
+    }
+  };
+  await checkHistory(host);
+  await host.reload();
+  await expect(host.getByRole("heading", { name: "Final standings" })).toBeVisible();
+  await checkHistory(host);
   await host.screenshot({ path: ".cache/verification/final-desktop.png" });
   await guest.setViewportSize({ width: 360, height: 800 });
   const finalResults = guest.getByLabel("Final results");

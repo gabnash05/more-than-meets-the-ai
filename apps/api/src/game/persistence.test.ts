@@ -9,7 +9,7 @@ import type { PersistedRoom } from "./ports";
 async function drawingFixture(t: TestContext) {
   const store = new MemoryGameStore();
   const events: { type: string; reset?: boolean; operations?: CanvasOperation[] }[] = [];
-  const engine = new RoomEngine({ store, eventSink: (id, event) => {
+  const engine = new RoomEngine({ store, config: { startMs: 0 }, eventSink: (id, event) => {
     if (id === "drawer") events.push(event as (typeof events)[number]);
   } });
   t.after(() => engine.shutdown());

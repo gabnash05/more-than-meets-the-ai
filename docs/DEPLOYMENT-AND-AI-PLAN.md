@@ -79,8 +79,8 @@ That command adds AI consumers on demand; it is not an autoscaler. Room state st
 
 | Server setting | Initial value | Purpose |
 | --- | ---: | --- |
-| `AI_FIRST_GUESS_MS` | 1,500 | Wait this much active drawing time before the first attempt |
-| `AI_GUESS_COOLDOWN_MS` | 2,000 | Wait this long after the previous attempt settles before dispatching another |
+| `AI_FIRST_GUESS_MS` | 3,000 | Wait this much active drawing time before the first attempt |
+| `AI_GUESS_COOLDOWN_MS` | 3,000 | Wait this long after the previous attempt settles before dispatching another |
 | `AI_MAX_GUESSES_PER_TURN` | 24 | Cap dispatched attempts, including timed-out attempts |
 | `AI_REQUEST_TIMEOUT_MS` | 2,500 | Cap one request further by the remaining turn time |
 
@@ -99,3 +99,9 @@ Each AI worker runs one inference at a time; concurrency is added with worker re
 | Trained model | The chosen checkpoint and label bundle load from the mounted artifact. Fixed-input preprocessing and predictions agree with the selected validation recipe. Two players finish a game with the real sidecar, and the team records observed latency and availability on its VM. |
 
 Keep the first deployment focused on human play. A teammate can deploy the base stack as soon as the first two gates pass, then enable the AI profile when the model artifact and the final two gates are ready. Use the existing Individual game tests and test the public origin through Cloudflare before handoff. Keep the model-serving comparison and the controlled research evaluation as separate records.
+
+## Game fairness and prediction history — 11 November 2026
+
+Only model predictions with confidence strictly greater than 0.5 qualify as submitted answers. The game authority applies this rule after either HTTP or queue transport; a confidence of exactly 0.5 or missing confidence cannot solve or score. Valid low-confidence predictions remain in revealed history, consume the inference call budget and cooldown, and produce no wrong/correct answer pulse. Confidence is a model output, not a calibrated probability or evidence of balanced gameplay.
+
+The first check is eligible after three active drawing seconds, and each later check waits three active drawing seconds after the previous call settles. Changed drawing content, one in-flight job and the 24-call cap still apply. The authority enforces a three-second minimum even when an old timing override is lower; larger configured delays remain supported. Existing deployment overrides should be updated with the web/API release. Completed-round prediction history uses existing atomic room/result persistence; memory storage still loses room history on process restart.

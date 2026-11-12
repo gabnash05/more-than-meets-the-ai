@@ -41,7 +41,7 @@ test("team minimum and supplied individual result are visible", async ({ page })
   await expect(page.locator(".room-recap-score")).toContainText(/Your round:\s*100 points/);
   await expect(page.getByText("Guess points: 100")).toBeVisible();
   await expect(page.getByText("Next drawer: You · 8s")).toBeVisible();
-  await expect(page.getByText("Final", { exact: true })).toBeVisible();
+  await expect(page.getByText("Last submitted guess", { exact: true })).toBeVisible();
 });
 
 for (const width of [360, 820, 1440]) {
