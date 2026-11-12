@@ -2,8 +2,10 @@
 
 import { createUuid } from "@/lib/uuid";
 import {
+  memo,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -44,6 +46,9 @@ import { Avatar } from "@/features/player/Avatar";
 import { AiCard } from "./AiCard";
 import { RoomFeedback } from "./RoomFeedback";
 import { SavedSketch } from "./SavedSketch";
+import { beginChatSend, restoreChatDraft } from "./chat-send";
+import { chatRows, type ChatRow } from "./chat-rows";
+import { isPinnedToBottom, shouldFollow } from "./chat-scroll";
 import { FinalResults, RoundRecap } from "./Results";
 import "./room.css";
 
@@ -84,25 +89,42 @@ function Choice({
     </label>
   );
 }
-function ChatMessages({ snapshot }: { snapshot: RoomSession["snapshot"] }) {
+const ChatRowView = memo(function ChatRowView({ name, text, correct }: Omit<ChatRow, "id">) {
+  return (
+    <p className={correct ? "room-message-correct" : undefined}>
+      <strong>{name}: </strong>
+      {correct ? <><span aria-hidden="true">✓ </span>Correct!</> : text}
+    </p>
+  );
+});
+function ChatMessages({ snapshot, meId }: { snapshot: RoomSession["snapshot"]; meId?: string }) {
   const list = useRef<HTMLDivElement>(null);
-  const latestId = snapshot.chat.at(-1)?.id;
+  const pinned = useRef(true);
+  const latest = snapshot.chat.at(-1);
+  const rows = useMemo(() => chatRows(snapshot.chat, snapshot.players), [snapshot.chat, snapshot.players]);
+
+  // Follow new messages when the reader is at the bottom, and always follow
+  // their own message. Someone reading history is otherwise left where they are.
   useEffect(() => {
-    if (list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [latestId]);
+    const element = list.current;
+    if (element && shouldFollow({ pinned: pinned.current, latestAuthorId: latest?.playerId, viewerId: meId })) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [latest?.id, latest?.playerId, meId]);
 
   return (
-    <div ref={list} className="room-messages" aria-live="polite">
-      {snapshot.chat.length ? snapshot.chat.map(message => {
-        const playerName = snapshot.players.find(player => player.id === message.playerId)?.profile.name ?? "Room";
-        const correct = message.kind === "correct";
-        return (
-          <p key={message.id} className={correct ? "room-message-correct" : undefined}>
-            <strong>{playerName}: </strong>
-            {correct ? <><span aria-hidden="true">✓ </span>Correct!</> : message.text}
-          </p>
-        );
-      }) : <p>Say hello to the room!</p>}
+    <div
+      ref={list}
+      className="room-messages"
+      aria-live="polite"
+      onScroll={() => {
+        const element = list.current;
+        if (element) pinned.current = isPinnedToBottom(element);
+      }}
+    >
+      {rows.length
+        ? rows.map(row => <ChatRowView key={row.id} name={row.name} text={row.text} correct={row.correct} />)
+        : <p>Say hello to the room!</p>}
     </div>
   );
 }
@@ -148,6 +170,7 @@ export default function RoomScreen() {
     return () => { viewport?.removeEventListener("resize", update); viewport?.removeEventListener("scroll", update); window.removeEventListener("resize", update); };
   }, [session?.playerId]);
   const pendingGuess = useRef<{ canvasId: string; generation: number } | null>(null);
+  const chatInFlight = useRef(false);
   const lifecycle = useRef(0);
   const [aiPulse, setAiPulse] = useState<AiGuessEvent>();
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 250); return () => clearInterval(timer); }, []);
@@ -420,9 +443,19 @@ export default function RoomScreen() {
     if (!text || !roomClient) return;
     if (composerDisabled) return;
     if (!activeGuess) {
+      const decision = beginChatSend(message, chatInFlight.current);
+      if (!decision) return;
+      chatInFlight.current = true;
+      setMessage(decision.draft);
       void action(async () => {
-        await roomClient.sendChat(text);
-        setMessage(current => current.trim() === text ? "" : current);
+        try {
+          await roomClient.sendChat(decision.text);
+        } catch (error) {
+          setMessage(current => restoreChatDraft(current, decision.text));
+          throw error;
+        } finally {
+          chatInFlight.current = false;
+        }
       });
       return;
     }
@@ -718,7 +751,7 @@ export default function RoomScreen() {
             </section>
             <section className="room-panel room-chat room-lobby-chat">
               <h2>Room chat</h2>
-              <ChatMessages snapshot={snap} />
+              <ChatMessages snapshot={snap} meId={session.playerId} />
               <form onSubmit={send}>
                 <input
                   aria-label="Message the room"
@@ -969,7 +1002,7 @@ export default function RoomScreen() {
                 <h2>
                   {activeGuess && role === "guesser" ? "Your guesses" : "Room chat"}
                 </h2>
-                <ChatMessages snapshot={snap} />
+                <ChatMessages snapshot={snap} meId={session.playerId} />
                 <RoomFeedback phase={snap.phase} role={role} pending={guessPending} solved={me.solved} closing={closing} saving={game?.saving} paused={paused} />
                 <form onSubmit={send}>
                   <input
