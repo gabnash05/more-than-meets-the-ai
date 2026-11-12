@@ -18,6 +18,8 @@ COPY apps/ai/ai_service ./apps/ai/ai_service
 COPY models/guesser/inference ./models/guesser/inference
 COPY models/referee/inference ./models/referee/inference
 COPY models/guesser/data/src/__init__.py models/guesser/data/src/06-images.py models/guesser/data/src/common.py models/guesser/data/src/settings.py ./models/guesser/data/src/
+COPY models/guesser/data/src/__init__.py models/guesser/data/src/06-images.py models/guesser/data/src/common.py models/guesser/data/src/settings.py ./guesser_data/
+COPY models/referee/data/src/__init__.py models/referee/data/src/06-images.py models/referee/data/src/common.py ./referee_data/
 USER 1000:1000
 EXPOSE 8000
 CMD ["/opt/venv/bin/uvicorn", "--app-dir", "/repo/apps/ai", "ai_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]
