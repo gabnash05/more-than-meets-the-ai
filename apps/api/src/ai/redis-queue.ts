@@ -202,6 +202,14 @@ export class InferenceQueue {
       this.waiters.set(job.jobId, { job: envelope, resolve, reject, timer, onAbort, signal });
       signal.addEventListener("abort", onAbort, { once: true });
     });
+    // The abort listener above can reject `outcome` while the payload write and the
+    // stream append below are still in flight, and nothing awaits `outcome` until the
+    // return at the end of this method. A rejection in that window has no handler, so
+    // Node's default throw policy turns a routine job cancellation into an unhandled
+    // rejection that kills the process — and every live room reloads as interrupted.
+    // Attaching a handler now marks it as handled; the awaited return below still
+    // throws the same error to the caller.
+    void outcome.catch(() => undefined);
     try {
       await this.options.connection.setValue(envelope.payloadKey, png, ttl);
       await this.options.connection.append(GUESS_JOBS_STREAM, "job", JSON.stringify(envelope));
