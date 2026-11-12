@@ -6,6 +6,21 @@ import sys
 from pathlib import Path
 
 
+def is_entry_point(entry: str) -> bool:
+    """Return whether a tracked path must appear literally in the map.
+
+    Coverage covers every tracked README, every Markdown document under docs/ and
+    the repository instruction files, so a new project area has to be routed when
+    it lands rather than only when someone remembers to widen this rule.
+    """
+    path = Path(entry)
+    return (
+        path.name == "README.md"
+        or path.name in {"AGENTS.md", "CLAUDE.md"}
+        or (path.suffix == ".md" and entry.startswith("docs/"))
+    )
+
+
 def check_map(root: Path, tracked: list[str], text: str) -> list[str]:
     """Return missing indexed paths and uncovered tracked documentation."""
     indexed = set(re.findall(r"`([^`\n]+)`", text))
@@ -23,15 +38,7 @@ def check_map(root: Path, tracked: list[str], text: str) -> list[str]:
         ):
             errors.append(f"Indexed path does not exist: {entry}")
     for entry in sorted(tracked):
-        path = Path(entry)
-        required = (
-            entry.startswith("docs/")
-            and path.suffix == ".md"
-            or entry.startswith("models/")
-            and path.name == "README.md"
-            or path.name in {"AGENTS.md", "CLAUDE.md"}
-        )
-        if required and entry not in indexed:
+        if is_entry_point(entry) and entry not in indexed:
             errors.append(f"Unindexed entry-point document: {entry}")
     return errors
 
