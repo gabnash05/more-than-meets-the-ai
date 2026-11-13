@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -40,6 +41,7 @@ import {
   type DrawingBatcher,
 } from "@/contracts/drawing";
 import DrawingCanvas from "@/features/canvas/DrawingCanvas";
+import { HeatmapOverlay } from "@/features/canvas/HeatmapOverlay";
 import { ReplayQueueOverflowError } from "@/features/canvas/replayQueue";
 import { createDrawingBatcher } from "@/features/drawing-events";
 import { Avatar } from "@/features/player/Avatar";
@@ -48,6 +50,7 @@ import { RoomFeedback } from "./RoomFeedback";
 import { SavedSketch } from "./SavedSketch";
 import { beginChatSend, restoreChatDraft } from "./chat-send";
 import { chatRows, type ChatRow } from "./chat-rows";
+import { getHeatmapPreference, getServerHeatmapPreference, setHeatmapPreference, subscribeHeatmapPreference } from "./heatmap-preference";
 import { isPinnedToBottom, shouldFollow } from "./chat-scroll";
 import { FinalResults, RoundRecap } from "./Results";
 import "./room.css";
@@ -173,6 +176,11 @@ export default function RoomScreen() {
   const chatInFlight = useRef(false);
   const lifecycle = useRef(0);
   const [aiPulse, setAiPulse] = useState<AiGuessEvent>();
+  // Per-browser preference: the overlay is a viewer aid, so it never reaches the
+  // server and every player chooses for themselves. useSyncExternalStore keeps
+  // the server render "off" and picks up the stored value after hydration.
+  const showHeatmap = useSyncExternalStore(subscribeHeatmapPreference, getHeatmapPreference, getServerHeatmapPreference);
+  const toggleHeatmap = () => setHeatmapPreference(!showHeatmap);
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 250); return () => clearInterval(timer); }, []);
   const client = useRef<RoomClient | null>(null),
     canvas = useRef<DrawingCanvasHandle>(null),
@@ -906,11 +914,66 @@ export default function RoomScreen() {
                 }}
                 onError={setError}
               />
+              {showHeatmap && role === "drawer" && (
+                <HeatmapOverlay
+                  heatmap={game?.aiHeatmap}
+                  drawing={`${game?.canvasId ?? ""}:${game?.generation ?? 0}`}
+                  guess={session.privateState?.aiGuess
+                    ? { answer: session.privateState.aiGuess.answer, confidence: session.privateState.aiGuess.confidence }
+                    : undefined}
+                />
+              )}
+              {showHeatmap && role === "drawer" && (
+                <div className="room-heatmap-legend" aria-hidden="true">
+                  <span>less</span><i /><span>more</span>
+                </div>
+              )}
+              {role === "drawer" && snap.settings.mode === "individual" && snap.settings.aiGuesserEnabled !== false && game?.aiStatus !== "unavailable" && (
+                <span className="room-heatmap-hint">
+                  <button
+                    type="button"
+                    className="room-heatmap-toggle"
+                    aria-pressed={showHeatmap}
+                    aria-describedby="room-heatmap-tip"
+                    onClick={toggleHeatmap}
+                  >
+                    {showHeatmap ? "Heatmap on" : "Heatmap"}
+                  </button>
+                  <span className="room-heatmap-tip" id="room-heatmap-tip" role="tooltip">
+                    Colours each stroke by how much attention the AI gives it. Drawer only — guessers never see it.
+                  </span>
+                </span>
+              )}
+              {/* Sits on the board rather than in the column flow: the save cycle
+                  rewrites this text several times a second, and a text-length
+                  change in flow moved the tools, chat and AI panel below it. */}
+              {game?.sync && !result && snap.phase !== "finished" && (
+                <p
+                  className="room-sync-status"
+                  role="status"
+                  title={pendingDrawing > 0
+                    ? "Drawing changes queued on this device; waiting for the room service."
+                    : game.sync.sequence === 0
+                      ? "Canvas ready"
+                      : game.sync.durableSequence < game.sync.sequence
+                        ? "Server received drawing; saving…"
+                        : "Server-received drawing saved for this session"}
+                >
+                  {pendingDrawing > 0 ? "Waiting for the room service…" : game.sync.sequence === 0 ? "Canvas ready" : game.sync.durableSequence < game.sync.sequence ? "Saving…" : "Saved for this session"}
+                </p>
+              )}
             {snap.phase === "starting" && <section className="room-panel room-result-overlay" aria-label="Match countdown"><h2>Get ready!</h2><strong className="room-countdown">{startSeconds || "Starting…"}</strong><p>Word selection starts next.</p></section>}
             {choosing && <section className="room-panel room-result-overlay"><h2>{session.privateState?.promptOptions?.length ? "Choose a word" : "Waiting for the drawer"}</h2><div className="room-modal-actions">{session.privateState?.promptOptions?.map(option => <button className="room-button" key={option.id} onClick={() => void action(() => client.current!.choosePrompt(option.id))}>{option.label}</button>)}</div></section>}
             {snap.phase === "interrupted" && <section className="room-panel room-result-overlay"><h2>Round interrupted</h2><p>The drawing saved for this session is available to review.</p>{promptsExhausted ? <p>Not enough unused prompts remain.</p> : <p>Retry this round with a fresh word.</p>}{host ? <><div className="room-modal-actions">{!promptsExhausted && <button className="room-button" onClick={() => void action(() => client.current!.retryInterrupted())}>Retry round</button>}{snap.canReturnToLobby && <><p>Returning ends this match; prior results are saved for this session.</p><button className="room-button" onClick={() => void action(() => client.current!.returnToLobby())}>Return to lobby</button></>}</div></> : <p>Waiting for the host to retry or return to the lobby.</p>}</section>}
             </div>
-            {game?.sync && !result && snap.phase !== "finished" && <p role="status">{pendingDrawing > 0 ? "Drawing changes queued on this device; waiting for the room service. " : ""}{game.sync.sequence === 0 ? "Canvas ready" : game.sync.durableSequence < game.sync.sequence ? "Server received drawing; saving…" : "Server-received drawing saved for this session"}</p>}
+            {/* Always occupies its slot so toggling the map cannot move the tools
+                and panels below it; only its visibility changes. */}
+            <p
+              className={`room-heatmap-note${showHeatmap && role === "drawer" ? "" : " is-hidden"}`}
+              aria-hidden={!(showHeatmap && role === "drawer")}
+            >
+              Where the AI looked — attention, not its reasoning.
+            </p>
             {drawing && role === "drawer" && (
               <fieldset
                 className="room-tools"
@@ -993,7 +1056,7 @@ export default function RoomScreen() {
             )}
           </section>
           <aside className="room-chat-column">
-            {snap.phase !== "finished" && <AiCard disabled={snap.settings.aiGuesserEnabled === false} game={game} result={result} pulse={drawing && !paused ? aiPulse : undefined} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
+            {snap.phase !== "finished" && <AiCard disabled={snap.settings.aiGuesserEnabled === false} game={game} result={result} pulse={drawing && !paused ? aiPulse : undefined} guess={session.privateState?.aiGuess} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
             <div className="room-chat-order">
               <section
                 data-testid="room-chat"
