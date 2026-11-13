@@ -708,6 +708,52 @@ test("synthetic AI results commit once and remain separate from human standings"
   await engine.shutdown();
 });
 
+test("the snapshot carries only the current drawing's attention map", async () => {
+  const now = 1000;
+  const store = new MemoryStore();
+  const engine = new RoomEngine({ store, eventSink: () => {}, clock: () => now });
+  const host = await engine.create(profile);
+  const code = host.snapshot.code;
+  const second = await engine.join(code, { ...profile, name: "Two" });
+  await engine.connect(code, host.resumeToken, "heat-host");
+  await engine.connect(code, second.resumeToken, "heat-two");
+  let view = await engine.resume(code, host.resumeToken);
+  assert.equal((await engine.command("heat-host", "room:start", { requestId: "start-heat", expectedRevision: view.snapshot.revision })).ok, true);
+  view = await engine.resume(code, host.resumeToken);
+  const word = view.privateState!.promptOptions![0].id;
+  const generation = view.snapshot.game!.generation;
+  assert.equal((await engine.command("heat-host", "room:choose-prompt", { requestId: "choose-heat", generation, payload: { id: word } })).ok, true);
+
+  const heatmap = {
+    grid: Array.from({ length: 196 }, (_, index) => index % 256),
+    frame: { x: 0, y: 0, width: 1024, height: 768 },
+    content: { x: 100, y: 100, width: 800, height: 600 },
+  };
+  const alternatives = PROMPTS.filter(prompt => prompt !== word)
+    .slice(0, 2)
+    .map((answer, index) => ({ answer, confidence: index === 0 ? 0.12 : 0.05 }));
+  const job = await engine.reserveGuesserObservation(code);
+  // A sub-threshold confidence keeps the round unsolved, so the same turn can be
+  // probed again in the assertions below.
+  assert.equal(await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", answer: word, confidence: 0.4, heatmap, alternatives }), true);
+  view = await engine.resume(code, host.resumeToken);
+  assert.deepEqual(view.snapshot.game!.aiHeatmap, heatmap);
+  // The drawer already knows the target, so the live prediction is theirs to see.
+  assert.deepEqual(view.privateState!.aiGuess, { answer: word, confidence: 0.4, alternatives });
+  // Anyone else — solved or not — must not receive the answer, the runner-ups, or
+  // the map that points at what the model recognised.
+  const outsider = await engine.resume(code, second.resumeToken);
+  assert.equal(outsider.privateState!.aiGuess, undefined);
+  assert.equal(outsider.snapshot.game!.aiHeatmap, undefined);
+
+  // An unavailable answer clears the map instead of leaving it on screen.
+  const next = await engine.reserveGuesserObservation(code);
+  assert.equal(await engine.acceptGuesserResult(code, next, { jobId: next.jobId, status: "unavailable", reason: "provider-unavailable" }), true);
+  view = await engine.resume(code, host.resumeToken);
+  assert.equal(view.snapshot.game!.aiHeatmap, undefined);
+  await engine.shutdown();
+});
+
 test("synthetic wrong and unavailable AI results distinguish zero from null", async () => {
   for (const status of ["answer", "unavailable"] as const) {
     const engine = new RoomEngine({ store: new MemoryStore(), eventSink: () => {} });
