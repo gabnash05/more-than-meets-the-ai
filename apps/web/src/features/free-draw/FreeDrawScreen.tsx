@@ -324,6 +324,15 @@ function Workspace() {
         <span className="fd-header-mode">Free Draw</span>
       </header>
       <div className="fd-layout">
+        <section className="fd-panel fd-mode-panel" aria-labelledby="fd-mode-title">
+          <p className="fd-eyebrow">Start with a blank page or a target</p>
+          <h2 id="fd-mode-title">Drawing mode</h2>
+          <div className="fd-mode" role="group" aria-label="Drawing mode">
+            <button type="button" disabled={controller.loading} aria-pressed={controller.mode === "free"} onClick={() => controller.setMode("free")}>No prompt</button>
+            <button type="button" disabled={controller.loading} aria-pressed={controller.mode === "prompt"} onClick={() => controller.setMode("prompt")}>Choose a prompt</button>
+          </div>
+          {controller.mode === "prompt" && <PromptPicker controller={controller} />}
+        </section>
         <section className="fd-workspace" aria-label="Drawing workspace">
           <div className="fd-workspace-heading">
             <div>
@@ -386,15 +395,6 @@ function Workspace() {
           />
         </section>
         <aside className="fd-sidebar">
-          <section className="fd-panel fd-mode-panel" aria-labelledby="fd-mode-title">
-            <p className="fd-eyebrow">Start with a blank page or a target</p>
-            <h2 id="fd-mode-title">Drawing mode</h2>
-            <div className="fd-mode" role="group" aria-label="Drawing mode">
-              <button type="button" disabled={controller.loading} aria-pressed={controller.mode === "free"} onClick={() => controller.setMode("free")}>No prompt</button>
-              <button type="button" disabled={controller.loading} aria-pressed={controller.mode === "prompt"} onClick={() => controller.setMode("prompt")}>Choose a prompt</button>
-            </div>
-            {controller.mode === "prompt" && <PromptPicker controller={controller} />}
-          </section>
           <section
             className="fd-panel fd-ai-panel"
             aria-labelledby="fd-ai-title"

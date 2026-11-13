@@ -268,6 +268,29 @@ test("mobile keeps mode before canvas, toolbar under canvas, and AI/history belo
   expect(measurements.aiTop).toBeLessThan(measurements.historyTop);
 });
 
+test("desktop places drawing mode left of the canvas while AI and history stay right", async ({ page }) => {
+  await mockFreeDraw(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/free-draw/");
+  const positions = await page.evaluate(() => {
+    const rect = (selector: string) => {
+      const element = document.querySelector<HTMLElement>(selector);
+      if (!element) throw new Error(`Missing layout element: ${selector}`);
+      const bounds = element.getBoundingClientRect();
+      return { left: bounds.left, right: bounds.right };
+    };
+    return {
+      mode: rect(".fd-mode-panel"),
+      canvas: rect("[data-testid=drawing-canvas]"),
+      ai: rect(".fd-ai-panel"),
+      history: rect(".fd-history"),
+    };
+  });
+  expect(positions.mode.right).toBeLessThan(positions.canvas.left);
+  expect(positions.canvas.right).toBeLessThan(positions.ai.left);
+  expect(positions.canvas.right).toBeLessThan(positions.history.left);
+});
+
 test("late inference from a prior prompt is discarded", async ({ page }) => {
   await mockFreeDraw(page);
   let deferred: Route | undefined;

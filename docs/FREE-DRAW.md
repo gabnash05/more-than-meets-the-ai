@@ -26,7 +26,7 @@ Changed revisions are coalesced at a 100 ms scheduling tick. Guesser/attention o
 
 Free Draw stores no drawings, prompts, toggles or prediction history. Every visit and refresh starts with a blank canvas, no prompt, empty history, Guesser and Referee on, and Heatmap off. Exiting disposes the inference session and cancels requests. Back-forward cache restoration restarts the page; legacy `mmtai-free-draw` IndexedDB drafts are deleted without touching multiplayer or player-profile storage.
 
-The mode selector and searchable prompt picker occupy the top of the right sidebar on desktop. They appear above the canvas on mobile. The drawing toolbar and Referee warning are the same shared components used by multiplayer, including their labels, palette, custom color control, confidence badge and board glow.
+The mode selector and searchable prompt picker occupy the top of the left sidebar beside the canvas (the multiplayer scoreboard position) on desktop. They appear above the canvas on mobile. The drawing toolbar and Referee warning are the same shared components used by multiplayer, including their labels, palette, custom color control, confidence badge and board glow.
 
 ## API and inference boundary
 
