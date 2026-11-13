@@ -58,7 +58,7 @@
 .fd-history-count { margin:6px 0; color:#5b5566; font-size:13px; }
 .fd-history-head,.fd-history-row { display:grid; grid-template-columns:38px minmax(0,1fr) 48px 90px; gap:6px; align-items:center; }
 .fd-history-head { padding:7px 3px; color:#514b59; font-size:14px; font-weight:800; }
-.fd-history-viewport { height:65vh; min-height:480px; overflow:auto; resize:vertical; overscroll-behavior:contain; border-top:1px solid #d7d3dc; }
+.fd-history-viewport { height:48.75vh; min-height:360px; overflow:auto; resize:vertical; overscroll-behavior:contain; border-top:1px solid #d7d3dc; }
 .fd-history-row { left:0; right:0; padding:6px 3px; border-bottom:1px solid #e4e1e8; font-size:14px; }
 .fd-history-index,.fd-history-confidence { color:#514b59; font-weight:800; }
 .fd-history-answer { display:-webkit-box; overflow:hidden; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; font-weight:800; }
@@ -93,7 +93,7 @@
   .fd-layout { padding:10px 9px 20px; }
   .fd-panel { padding:11px; }
   .fd-board { width:100%; border-radius:12px; }
-  .fd-history-viewport { min-height:480px; }
+  .fd-history-viewport { min-height:360px; }
   .fd-history-head,.fd-history-row { grid-template-columns:32px minmax(0,1fr) 40px 78px; gap:4px; }
 }
 

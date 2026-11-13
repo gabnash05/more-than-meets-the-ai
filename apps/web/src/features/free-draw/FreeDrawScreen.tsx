@@ -219,7 +219,7 @@ function History({ controller }: { controller: FreeDrawView }) {
       <div
         className="fd-history-viewport"
         ref={viewport}
-        style={{ height: expanded ? "85vh" : "65vh" }}
+        style={{ height: expanded ? "63.75vh" : "48.75vh" }}
         tabIndex={0}
         role="list"
         aria-label={`Prediction history, ${predictions.length} entries`}
