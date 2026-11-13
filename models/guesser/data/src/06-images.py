@@ -118,6 +118,9 @@ def preprocess(
 ) -> dict:
     """Extract visible shapes or boundaries and produce a normalized model image."""
     settings = candidate_config(candidate, config)
+    # Capture the source size before thumbnailing: `thumbnail` mutates in place,
+    # and the heatmap frame has to be expressed in the original canvas pixels.
+    source_size = image.size
     working_image = image.convert("RGB")
     working_image.thumbnail(
         (settings["working_size"], settings["working_size"]), Image.Resampling.LANCZOS
@@ -140,10 +143,63 @@ def preprocess(
         return {"status": "blank", "image": None, "diagnostics": diagnostics}
     if coverage > settings["dense_limit"]:
         return {"status": "uncertain", "image": None, "diagnostics": diagnostics}
+    box = _foreground_box(foreground)
     return {
         "status": "ok",
-        "image": _fit_foreground(foreground, settings),
+        "image": _fit_foreground(foreground, settings, box),
+        "frame": _frame(box, settings, source_size, working_image.size),
         "diagnostics": diagnostics,
+    }
+
+
+def _foreground_box(foreground: np.ndarray) -> tuple[int, int, int, int]:
+    """Return the ink bounding box as (x0, y0, x1, y1) in working pixels."""
+    y_values, x_values = np.nonzero(foreground)
+    return (
+        int(x_values.min()),
+        int(y_values.min()),
+        int(x_values.max()) + 1,
+        int(y_values.max()) + 1,
+    )
+
+
+def _frame(
+    box: tuple[int, int, int, int],
+    settings: dict,
+    source_size: tuple[int, int],
+    working_size: tuple[int, int],
+) -> dict[str, dict[str, float]]:
+    """Map the model's square input back onto the source canvas.
+
+    The adapter crops to the ink, scales it to `fit`, and centre-pads into the
+    square output, so a heatmap cell only means something once that transform is
+    inverted. `frame` covers the whole square input, padding included; `content`
+    covers just the drawing, so a viewer can clip the blank margin instead of
+    painting it as attention.
+    """
+    source_width, source_height = source_size
+    working_width, working_height = working_size
+    x0, y0, x1, y1 = box
+    scale_x = source_width / working_width
+    scale_y = source_height / working_height
+    width = x1 - x0
+    height = y1 - y0
+    scale = settings["fit"] / max(width, height)
+    pad_x = (settings["output"] - round(width * scale)) / 2
+    pad_y = (settings["output"] - round(height * scale)) / 2
+    return {
+        "frame": {
+            "x": round((x0 - pad_x / scale) * scale_x, 3),
+            "y": round((y0 - pad_y / scale) * scale_y, 3),
+            "width": round((settings["output"] / scale) * scale_x, 3),
+            "height": round((settings["output"] / scale) * scale_y, 3),
+        },
+        "content": {
+            "x": round(x0 * scale_x, 3),
+            "y": round(y0 * scale_y, 3),
+            "width": round(width * scale_x, 3),
+            "height": round(height * scale_y, 3),
+        },
     }
 
 
@@ -193,16 +249,15 @@ def _edge_mask(pixels: np.ndarray, settings: dict) -> np.ndarray:
     return foreground
 
 
-def _fit_foreground(foreground: np.ndarray, settings: dict) -> np.ndarray:
-    y_values, x_values = np.nonzero(foreground)
-    crop = Image.fromarray(np.where(foreground, 0, 255).astype(np.uint8)).crop(
-        (
-            int(x_values.min()),
-            int(y_values.min()),
-            int(x_values.max()) + 1,
-            int(y_values.max()) + 1,
-        )
-    )
+def _fit_foreground(
+    foreground: np.ndarray,
+    settings: dict,
+    box: tuple[int, int, int, int] | None = None,
+) -> np.ndarray:
+    """Crop to the ink box, scale to fit, and centre-pad into the square input."""
+    if box is None:
+        box = _foreground_box(foreground)
+    crop = Image.fromarray(np.where(foreground, 0, 255).astype(np.uint8)).crop(box)
     scale = settings["fit"] / max(crop.size)
     width, height = crop.size
     size = (max(1, round(width * scale)), max(1, round(height * scale)))
