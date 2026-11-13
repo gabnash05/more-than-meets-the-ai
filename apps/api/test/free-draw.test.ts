@@ -112,17 +112,18 @@ test("rejects malformed metadata, dimensions, images, duplicate requests, labels
   badConfidenceService.close();
 });
 
-test("cooldown and active-observation admission are independent", async () => {
+test("per-role cooldown and same-role admission are independent", async () => {
   let now = 10_000;
   const gate = deferred<FreeDrawOutcome>();
   const service = new FreeDrawService(fakeInference(async () => gate.promise, 5000), () => now);
   const session = service.create();
   const first = service.infer(session.token, { ...observation, roles: ["guesser"] }, png());
-  await expectFreeDrawError(service.infer(session.token, { ...observation, requestId: "active", roles: ["referee"] }, png()), "cooldown");
-  now += 3001;
-  await expectFreeDrawError(service.infer(session.token, { ...observation, requestId: "active-2", roles: ["referee"] }, png()), "busy");
+  const referee = service.infer(session.token, { ...observation, requestId: "active", roles: ["referee"] }, png());
+  await expectFreeDrawError(service.infer(session.token, { ...observation, requestId: "same-ref", roles: ["referee"] }, png()), "busy");
+  now += 1001;
+  await expectFreeDrawError(service.infer(session.token, { ...observation, requestId: "same-guess", roles: ["guesser"] }, png()), "busy");
   gate.resolve({ status: "pass" });
-  await first;
+  await Promise.all([first, referee]);
   service.close();
 });
 

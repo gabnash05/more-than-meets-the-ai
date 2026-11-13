@@ -917,13 +917,6 @@ export class RoomEngine {
       room.phase === "drawing"
     )
       privateState.target = game.target;
-    // The AI's answer would end the drawing for an unsolved guesser, and showing
-    // it to solved players would leak the word through them, so only the drawer —
-    // who already knows the target — ever receives it.
-    if (game && group && room.phase === "drawing") {
-      const guess = this.currentAiGuess(room.code, game.generation, game.turnId);
-      if (guess && group.drawerId === viewer.id) privateState.aiGuess = clone(guess);
-    }
     const snapshot: RoomSnapshot = {
       code: room.code,
       revision: room.revision,
@@ -1019,14 +1012,16 @@ export class RoomEngine {
           eligible: false,
           reason: "AI inference is unavailable",
         },
-        result: game.result && {
+        result: game.result && (room.phase === "result" || room.phase === "finished")
+          ? {
           ...game.result,
           aiAnswers: game.result.aiGuesses?.map(guess => guess.answer) ?? game.result.aiAnswers ?? [],
           aiBenchmark: game.result.aiBenchmark ?? unavailableRound(),
           ...(room.settings.mode === "individual" && room.round < room.settings.rounds
             ? { nextDrawerId: this.nextDrawer(room, "individual")?.id }
             : {}),
-        },
+          }
+          : undefined,
       };
     if (room.phase === "finished") {
       snapshot.finalStandings = Object.entries(room.scores)

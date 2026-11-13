@@ -11,7 +11,7 @@ import type { FreeDrawFeature } from "./types";
 const capabilities: FreeDrawCapabilities = {
   guesser: { available: true, labels: ["Cat"] },
   referee: { available: true },
-  minIntervalMs: 3000,
+  minIntervalMs: 500,
 };
 const allOn: Record<FreeDrawFeature, boolean> = {
   guesser: true,

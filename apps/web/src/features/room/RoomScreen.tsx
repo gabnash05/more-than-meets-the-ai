@@ -33,7 +33,6 @@ import {
   clearRoomSession,
 } from "@/features/room-client";
 import type { AiGuessEvent, RoomClient, RoomSession, RoomSettings } from "@/contracts/room";
-import { CRAYON_COLORS } from "@/contracts/player";
 import {
   DEFAULT_DRAWING_SETTINGS,
   type CanvasStatus,
@@ -41,7 +40,9 @@ import {
   type DrawingBatcher,
 } from "@/contracts/drawing";
 import DrawingCanvas from "@/features/canvas/DrawingCanvas";
+import { DrawingToolbar } from "@/features/canvas/DrawingToolbar";
 import { HeatmapOverlay } from "@/features/canvas/HeatmapOverlay";
+import { RefereeWarningBadge } from "@/features/canvas/RefereeWarningBadge";
 import { ReplayQueueOverflowError } from "@/features/canvas/replayQueue";
 import { createDrawingBatcher } from "@/features/drawing-events";
 import { Avatar } from "@/features/player/Avatar";
@@ -391,44 +392,6 @@ export default function RoomScreen() {
     }
     return () => { current = false; };
   }, [game?.canvasId, game?.generation, snap?.phase]);
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, [contenteditable=true]"))
-        return;
-      if (
-        !drawing || paused || closing || teamDone ||
-        role !== "drawer" ||
-        !caughtUp ||
-        connection !== "connected" ||
-        canvasStatus.busy
-      )
-        return;
-      const key = event.key.toLowerCase();
-      if (
-        (event.ctrlKey || event.metaKey) &&
-        !event.altKey &&
-        (key === "z" || key === "y")
-      ) {
-        event.preventDefault();
-        if (key === "y" || event.shiftKey) canvas.current?.redo();
-        else canvas.current?.undo();
-      } else if (
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.altKey &&
-        ["b", "e", "f"].includes(key)
-      )
-        setSettings((s) => ({
-          ...s,
-          tool: ({ b: "brush", e: "eraser", f: "fill" } as const)[
-            key as "b" | "e" | "f"
-          ],
-        }));
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [drawing, paused, closing, teamDone, role, caughtUp, connection, canvasStatus.busy]);
   const getClient = useCallback(() => client.current, []);
   const action = useCallback(async (fn: () => Promise<void>) => {
     setError("");
@@ -897,7 +860,7 @@ export default function RoomScreen() {
             {snap.phase === "finished" && <FinalResults snapshot={snap} playerId={session.playerId} host={!!host} onReturn={() => void action(() => client.current!.returnToLobby())} />}
             {result && game?.result && <RoundRecap snapshot={snap} playerId={session.playerId} seconds={seconds} onReturn={() => void action(() => client.current!.returnToLobby())} />}
             <div className={`room-board${refereeWarning ? " room-board-warning" : ""}`} hidden={snap.phase === "finished"}>
-              {refereeWarning && <div className="room-referee-warning" role="status" data-testid="referee-warning"><strong>Writing detected by referee</strong><span>{Math.round(refereeWarning.confidence * 100)}% confidence</span></div>}
+              {refereeWarning && <RefereeWarningBadge confidence={refereeWarning.confidence} />}
               <DrawingCanvas
                 ref={canvas}
                 readOnly={
@@ -918,9 +881,6 @@ export default function RoomScreen() {
                 <HeatmapOverlay
                   heatmap={game?.aiHeatmap}
                   drawing={`${game?.canvasId ?? ""}:${game?.generation ?? 0}`}
-                  guess={session.privateState?.aiGuess
-                    ? { answer: session.privateState.aiGuess.answer, confidence: session.privateState.aiGuess.confidence }
-                    : undefined}
                 />
               )}
               {showHeatmap && role === "drawer" && (
@@ -975,88 +935,19 @@ export default function RoomScreen() {
               Where the AI looked — attention, not its reasoning.
             </p>
             {drawing && role === "drawer" && (
-              <fieldset
-                className="room-tools"
-                disabled={
-                  !caughtUp || paused || closing || teamDone || connection !== "connected" || canvasStatus.busy
-                }
-              >
-                <div className="room-tool-row">
-                  {(["brush", "eraser", "fill"] as const).map((tool) => (
-                    <button
-                      key={tool}
-                      className="room-button"
-                      aria-pressed={settings.tool === tool}
-                      onClick={() => setSettings((s) => ({ ...s, tool }))}
-                    >
-                      {tool}
-                    </button>
-                  ))}
-                  <button
-                    className="room-button"
-                    disabled={!canvasStatus.canUndo}
-                    onClick={() => canvas.current?.undo()}
-                  >
-                    Undo
-                  </button>
-                  <button
-                    className="room-button"
-                    disabled={!canvasStatus.canRedo}
-                    onClick={() => canvas.current?.redo()}
-                  >
-                    Redo
-                  </button>
-                  <button
-                    className="room-button"
-                    disabled={!canvasStatus.hasInk}
-                    onClick={() => canvas.current?.clear()}
-                  >
-                    Clear
-                  </button>
-                </div>
-                <div className="room-tool-row room-palette">
-                  {["#181321", ...Object.values(CRAYON_COLORS), "#FFFFFF"].map(
-                    (color) => (
-                      <button
-                        key={color}
-                        aria-label={`Color ${color}`}
-                        aria-pressed={settings.color.toUpperCase() === color}
-                        style={{ background: color }}
-                        onClick={() => setSettings((s) => ({ ...s, color }))}
-                      />
-                    ),
-                  )}
-                  <label>
-                    Size{" "}
-                    <input
-                      type="range"
-                      min="2"
-                      max="40"
-                      value={settings.size}
-                      onChange={(e) =>
-                        setSettings((s) => ({
-                          ...s,
-                          size: Number(e.target.value),
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Custom color{" "}
-                    <input
-                      type="color"
-                      value={settings.color}
-                      onChange={(e) =>
-                        setSettings((s) => ({ ...s, color: e.target.value }))
-                      }
-                    />
-                  </label>
-                </div>
-              </fieldset>
+              <DrawingToolbar
+                settings={settings}
+                onSettingsChange={setSettings}
+                status={canvasStatus}
+                disabled={!caughtUp || paused || closing || teamDone || connection !== "connected"}
+                onUndo={() => canvas.current?.undo()}
+                onRedo={() => canvas.current?.redo()}
+                onClear={() => canvas.current?.clear()}
+              />
             )}
           </section>
           <aside className="room-chat-column">
-            {snap.phase !== "finished" && <AiCard disabled={snap.settings.aiGuesserEnabled === false} game={game} result={result} pulse={drawing && !paused ? aiPulse : undefined} guess={session.privateState?.aiGuess} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
+            {snap.phase !== "finished" && <AiCard disabled={snap.settings.aiGuesserEnabled === false} game={game} result={result} pulse={drawing && !paused ? aiPulse : undefined} unavailable={game?.result?.aiBenchmark?.status === "unavailable" || (!session.demo && game?.aiStatus === "unavailable")} />}
             <div className="room-chat-order">
               <section
                 data-testid="room-chat"

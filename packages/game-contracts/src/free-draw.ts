@@ -4,6 +4,7 @@ export interface FreeDrawCapabilities {
   guesser: { available: boolean; labels: string[] };
   referee: { available: boolean };
   minIntervalMs: number;
+  refereeMinIntervalMs?: number;
 }
 
 export interface FreeDrawSession {

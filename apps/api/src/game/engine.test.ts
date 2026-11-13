@@ -690,6 +690,8 @@ test("synthetic AI results commit once and remain separate from human standings"
     const low = await engine.reserveGuesserObservation(code);
     assert.equal(await engine.acceptGuesserResult(code, low, { jobId: low.jobId, status: "answer", answer: word, confidence }), true);
   }
+  assert.equal((await engine.resume(code, host.resumeToken)).snapshot.game!.result, undefined);
+  assert.equal((await engine.resume(code, host.resumeToken)).privateState!.aiGuess, undefined);
   assert.equal((await engine.resume(code, second.resumeToken)).snapshot.game!.result, undefined);
   const job = await engine.reserveGuesserObservation(code);
   now += 12000;
@@ -701,6 +703,7 @@ test("synthetic AI results commit once and remain separate from human standings"
   assert.deepEqual(view.snapshot.game!.result!.aiBenchmark, { scoringVersion: "ai-benchmark-v1", status: "solved", points: 86, elapsedMs: 12000 });
   assert.deepEqual(view.snapshot.aiBenchmark, { totalPoints: 86, scoredRounds: 1, solvedRounds: 1, completedRounds: 1 });
   assert.deepEqual(view.snapshot.aiHistory?.[0].aiGuesses?.map(guess => guess.submitted), [false, false, false, true]);
+  assert.deepEqual(view.snapshot.game!.result!.aiGuesses?.map(guess => guess.submitted), [false, false, false, true]);
   const restored = new RoomEngine({ store, eventSink: () => {}, clock: () => now });
   await restored.initialize();
   assert.deepEqual((await restored.resume(code, host.resumeToken)).snapshot.aiBenchmark, view.snapshot.aiBenchmark);
@@ -708,7 +711,7 @@ test("synthetic AI results commit once and remain separate from human standings"
   await engine.shutdown();
 });
 
-test("the snapshot carries only the current drawing's attention map", async () => {
+test("live multiplayer predictions stay private while the drawer keeps attention maps", async () => {
   const now = 1000;
   const store = new MemoryStore();
   const engine = new RoomEngine({ store, eventSink: () => {}, clock: () => now });
@@ -738,12 +741,13 @@ test("the snapshot carries only the current drawing's attention map", async () =
   assert.equal(await engine.acceptGuesserResult(code, job, { jobId: job.jobId, status: "answer", answer: word, confidence: 0.4, heatmap, alternatives }), true);
   view = await engine.resume(code, host.resumeToken);
   assert.deepEqual(view.snapshot.game!.aiHeatmap, heatmap);
-  // The drawer already knows the target, so the live prediction is theirs to see.
-  assert.deepEqual(view.privateState!.aiGuess, { answer: word, confidence: 0.4, alternatives });
-  // Anyone else — solved or not — must not receive the answer, the runner-ups, or
-  // the map that points at what the model recognised.
+  // No multiplayer viewer, including the drawer, receives live answer text.
+  assert.equal(view.privateState!.aiGuess, undefined);
+  assert.equal(view.snapshot.game!.result, undefined);
+  // Other viewers also cannot use the model's attention map as an oracle.
   const outsider = await engine.resume(code, second.resumeToken);
   assert.equal(outsider.privateState!.aiGuess, undefined);
+  assert.equal(outsider.snapshot.game!.result, undefined);
   assert.equal(outsider.snapshot.game!.aiHeatmap, undefined);
 
   // An unavailable answer clears the map instead of leaving it on screen.

@@ -1,0 +1,2 @@
+.room-board-warning { border-color:#9f1d1d; box-shadow:0 0 0 3px #ef454566, 0 0 20px #ef454599; }
+.room-referee-warning { position:absolute; z-index:1; top:10px; left:50%; transform:translateX(-50%); display:flex; flex-wrap:wrap; justify-content:center; gap:4px 10px; width:max-content; max-width:calc(100% - 20px); padding:7px 12px; border:2px solid #9f1d1d; border-radius:999px; background:#fff5f5; color:#721616; font-size:12px; line-height:1.2; box-shadow:0 2px 8px #18132155; pointer-events:none; }
