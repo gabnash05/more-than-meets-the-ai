@@ -96,3 +96,18 @@
   .fd-history-viewport { min-height:480px; }
   .fd-history-head,.fd-history-row { grid-template-columns:32px minmax(0,1fr) 40px 78px; gap:4px; }
 }
+
+@media (min-width:901px) {
+  .fd-layout { grid-template-areas: "heading workspace history" "mode workspace history" "insights workspace history"; grid-template-rows:auto auto 1fr; }
+  .fd-workspace-heading { grid-area:heading; }
+  .fd-mode-panel { grid-area:mode; }
+  .fd-workspace { grid-area:workspace; }
+  .fd-sidebar { display:contents; }
+  .fd-ai-panel { grid-area:insights; }
+  .fd-history { grid-area:history; }
+  .fd-board { width:min(92%,calc((100svh - 250px)*1.333333)); }
+}
+@media (min-width:901px) and (max-width:1150px) {
+  .fd-layout { grid-template-areas: "heading workspace" "mode workspace" "insights workspace" "history history"; }
+}
+@media (max-width:900px) { .fd-board { width:94%; } }
