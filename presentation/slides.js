@@ -2,6 +2,38 @@
 (() => {
   const config = window.PRESENTATION;
   const slides = Array.from(document.querySelectorAll('.slide'));
+  // Short translations follow the English phrase they explain.
+  const translations = {
+    'THE IDEA': [['.lead','AIより先に絵を当てられる？']],
+    'THE INSPIRATION': [['.lead','一人がお題を描き、他の人が推測します。'],['.caption','次のプレイヤーが描きます。']],
+    'OUR TWIST': [['.box.blue p','人間と同時に絵を推測します。'],['.box.pink p','文字の可能性を警告。公平かはプレイヤーが判断します。'],['.caption','時計や看板の文字は絵の一部にもなります。']],
+    'GUESSER DATA': [['.lead','345種類の人間のスケッチ。線と描画時刻を保存。'],['.caption','時刻から描画途中の状態を再現できます。']],
+    'GUESSER / PREPARE': [['.pipeline li:nth-child(1)','整理してサンプルを選択'],['.pipeline li:nth-child(2)','元の絵を学習・検証・テストに分割'],['.pipeline li:nth-child(3)','完成画・途中画を生成'],['.pipeline li:nth-child(4)','切り抜き・余白追加・224×224'],['.lesson','同じ元の絵の画像は同じ分割に保ち、データ漏洩を防ぎます。']],
+    'GUESSER / LESSON': [['.sizes div:nth-child(1) p','各クラス500枚'],['.sizes div:nth-child(2) p','各クラス2,000枚'],['.sizes div:nth-child(3) p','各クラス5,000枚'],['.lesson','345種類を維持し、画像数を減らして実験を速めます。']],
+    'GUESSER / TRAIN': [['.lead','事前学習済みViT-Tinyと345クラスの分類器'],['.box.yellow p','完成したスケッチで学習'],['.box.lime p','完成画20%、描画時間10〜90%の途中画80%'],['.caption','初期重みと学習量を合わせ、検証結果でチェックポイントを選択。']],
+    'REFEREE DATA': [['.lead','通常とは異なる内容を含むスケッチ'],['.caption','文字と数字の存在に注目します。']],
+    'REFEREE / PIPELINE': [['.pipeline li:nth-child(1)','画像と注釈を読み込み'],['.pipeline li:nth-child(2)','文字・数字の有無をラベル化'],['.pipeline li:nth-child(3)','ViTを追加学習'],['.pipeline li:nth-child(4)','適合率・再現率・F1で評価'],['.caption','文字や数字を手がかりの可能性として警告します。']],
+    'REFEREE / MISTAKE': [['.polarity figure:nth-child(1) figcaption','学習画像：黒地に白'],['.polarity figure:nth-child(3) figcaption','ゲーム：白地に黒'],['.callout p','配備モデルの試験で白い空白画面に約50%'],['.lesson','空白画面も含め、モデルへの入力画像を確認します。']],
+    'REFEREE / REPAIR': [['.box.lime p','どちらの極性でも前景を正規化'],['.box.pink p','一様な画面を文字分類の前に空白と判定'],['.lesson','前処理は確認済み。修正版の本番再学習は未完了です。']],
+    'GUESSER / RESULTS': [['.metrics p:nth-child(1) span','A：完成画'],['.metrics p:nth-child(2) span','B：途中画'],['.caption','学習中の完成画の検証結果。描画途中や未使用テストでの性能は示していません。']],
+    'GUESSER / FIRST CORRECT': [['.lead','10段階のうち、初めて正解を予測した段階。'],['.caption','未使用テスト172,500枚。ゲームの得点ではありません。']],
+    'GUESSER / EXAMPLES': [['.specimen-status','モデルAの完成画の検証例。予測クラスの信頼度です。'],['.specimen-row h3','信頼度が低い例'],['.specimen-row + .specimen-row h3','信頼度が高い例']],
+    'REFEREE / RESULTS': [['.metrics p:nth-child(1) span','文字'],['.metrics p:nth-child(2) span','数字'],['.caption','代理ラベルと閾値0.5による過去の評価。実ゲームや修正版の性能は未検証です。']],
+    'REFEREE / TRAINING': [['.chart:nth-child(1) figcaption','文字の平均適合率'],['.chart:nth-child(2) figcaption','検証損失'],['.caption','過去の学習の検証曲線。平均適合率は正解率ではありません。']],
+    'LIVE DEMO': [['h2','Guesserに勝てる？']]
+  };
+  slides.forEach(slide => {
+    (translations[slide.dataset.label] || []).forEach(([selector, text]) => {
+      const target = slide.querySelector(selector);
+      if (!target) return;
+      const translation = document.createElement('span');
+      translation.className = 'japanese-translation';
+      translation.lang = 'ja';
+      translation.hidden = true;
+      translation.textContent = text;
+      target.append(translation);
+    });
+  });
   const totalSeconds = slides.reduce((sum, slide) => sum + Number(slide.dataset.seconds), 0);
   const formatTime = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
   let current = Math.max(0, Math.min(slides.length - 1, (Number(location.hash.slice(1)) || 1) - 1));
@@ -49,6 +81,12 @@
   byId('prev').onclick = () => show(current - 1);
   byId('next').onclick = () => show(current + 1);
   byId('notes-toggle').onclick = toggleNotes;
+  byId('japanese-toggle').onclick = () => {
+    const enabled = byId('japanese-toggle').getAttribute('aria-pressed') !== 'true';
+    byId('japanese-toggle').setAttribute('aria-pressed', String(enabled));
+    document.body.classList.toggle('japanese-enabled', enabled);
+    document.querySelectorAll('.japanese-translation').forEach(el => { el.hidden = !enabled; });
+  };
   byId('fullscreen').onclick = fullscreen;
   byId('timer').onclick = () => { if (runningSince === null) runningSince = performance.now(); else { elapsed += (performance.now() - runningSince) / 1000; runningSince = null; } updateTimer(); };
   function updateTimer() {

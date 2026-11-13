@@ -4,6 +4,7 @@ Open **`More-Than-Meets-the-AI.html`** in Chrome or Edge. This single file inclu
 
 - Arrow keys, Space or Page Down/Up: navigate. Home/End: first/last slide.
 - F: fullscreen. N: speaker notes with source context and timing.
+- Select 日本語 to show or hide concise Japanese translations alongside key slide content.
 - Click the timer to start/pause rehearsal. Reload to reset it.
 - The Guesser results slide switches between original accuracy and loss charts.
 - Browser Print supports landscape pages with controls and notes hidden.
