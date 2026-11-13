@@ -20,6 +20,7 @@ import type {
   RefereeWarning,
 } from "../../../../packages/game-contracts/src/room";
 import { DEFAULT_ROOM_SETTINGS } from "../../../../packages/game-contracts/src/room";
+import type { GuessHeatmapV1, GuessAlternativeV1 } from "../../../../packages/game-contracts/src/ai-inference";
 import type {
   GameStore,
   EventSink,
@@ -32,6 +33,9 @@ import type {
 import { individualScores, speedPoints, teamScore, type HumanSolve } from "./scoring";
 
 import type { Inference, Job, ModelIdentity, Outcome, Role } from "../ai/client";
+
+/** How often a solved round keeps refreshing its attention map, in draw milliseconds. */
+const EXPLANATION_INTERVAL_MS = 3000;
 
 type Phase = RoomSnapshot["phase"];
 type Player = {
@@ -80,7 +84,7 @@ type Game = {
   aiRound?: AiRoundResult;
   aiGuesses?: AiGuess[];
   refereeWarning?: RefereeWarning;
-  guesserProgress?: { attempts: number; sequence?: number; hash?: string; settledAt?: number };
+  guesserProgress?: { attempts: number; sequence?: number; hash?: string; settledAt?: number; explainedAt?: number };
   refereeAt?: number;
   refereeEvidence?: [boolean, boolean];
   aiJobs?: Record<string, { observation: GuesserObservation; completed: boolean }>;
@@ -347,6 +351,17 @@ export class RoomEngine {
   private inferenceTimer?: ReturnType<typeof setInterval>;
   private inferenceCursor: Partial<Record<Role, string>> = {};
   private activeInference = new Map<string, { role: Role; code: string; controller: AbortController; guessing: boolean }>();
+  // Keyed by room code and tagged with the drawing it belongs to, so a map or a
+  // prediction can never outlive its turn even if a reset path forgets to clear it.
+  private aiReadouts = new Map<string, {
+    generation: number;
+    turnId: string;
+    heatmap?: GuessHeatmapV1;
+    guess?: { answer: string; confidence: number; alternatives: GuessAlternativeV1[] };
+  }>();
+  // Guesser jobs dispatched after the round was already solved. They refresh the
+  // explanation only: no guess is recorded and the benchmark ledger is untouched.
+  private explanationJobs = new Set<string>();
   private idleSince = new Map<string, number>();
   private canvasBytes = new Map<string, number>();
   private roomBytes = new Map<string, number>();
@@ -500,7 +515,16 @@ export class RoomEngine {
     const at = this.drawMs - (group.deadlineAt - now);
     if (role === "referee") return at >= 1000 && (game.refereeAt === undefined || at >= game.refereeAt + 1000);
     const progress = game.guesserProgress;
-    return game.aiRound?.status !== "solved" && game.aiRound?.status !== "unavailable" && at >= Math.max(3000, inference.options.firstGuessMs) &&
+    if (game.aiRound?.status === "unavailable") return false;
+    if (game.aiRound?.status === "solved") {
+      // The AI has already guessed, so nothing here can score. Keep re-rendering
+      // the attention map while the drawing keeps changing, at a slower cadence,
+      // so the overlay explains the current canvas instead of freezing on the
+      // frame that solved it.
+      return at >= Math.max(3000, inference.options.firstGuessMs) && progress?.sequence !== group.sequence &&
+        (progress?.explainedAt === undefined || at >= progress.explainedAt + EXPLANATION_INTERVAL_MS);
+    }
+    return at >= Math.max(3000, inference.options.firstGuessMs) &&
       (progress?.attempts ?? 0) < Math.min(24, inference.options.maxGuesses) && progress?.sequence !== group.sequence &&
       (progress?.settledAt === undefined || at >= progress.settledAt + Math.max(3000, inference.options.guessCooldownMs));
   }
@@ -516,7 +540,12 @@ export class RoomEngine {
       const group = game.groups[0];
       const now = this.now();
       const at = this.drawMs - (group.deadlineAt - now);
-      if (due.includes("guesser")) game.guesserProgress ??= { attempts: 0 };
+      if (due.includes("guesser")) {
+        game.guesserProgress ??= { attempts: 0 };
+        // Stamp the explanation cadence separately from guessing: the two clocks
+        // answer different questions and must not throttle each other.
+        if (game.aiRound?.status === "solved") game.guesserProgress.explainedAt = at;
+      }
       if (due.includes("referee")) {
         if (game.refereeWarning && now >= game.refereeWarning.expiresAt) {
           this.clearRefereeWarning(game);
@@ -530,6 +559,9 @@ export class RoomEngine {
         const job: Job = { jobId: randomUUID(), turnId: game.turnId, canvasId: group.canvasId, generation: game.generation,
           sequence: group.sequence, deadlineAt: group.deadlineAt, modelId: model.modelId, artifactRevision: model.artifactRevision,
           ...(role === "guesser" ? { hint: this.hint(group, game.target!) } : {}) };
+        // A solved round only refreshes the explanation; tag the job so its
+        // result cannot be mistaken for a new guess.
+        if (role === "guesser" && game.aiRound?.status === "solved") this.explanationJobs.add(job.jobId);
         return { role, job };
       });
       return { jobs, operations };
@@ -577,7 +609,11 @@ export class RoomEngine {
         job.deadlineAt = Math.min(live.group.deadlineAt, this.now() + inference.options.requestTimeoutMs);
         return true;
       });
-      if (!send || !png || signal.aborted) return;
+      if (!send || !png || signal.aborted) {
+        // The job never reached the model, so drop its tag rather than leaking it.
+        this.explanationJobs.delete(job.jobId);
+        return;
+      }
       submittedAt = this.now();
       const timer = setTimeout(() => active.controller.abort("timeout"), Math.max(1, job.deadlineAt - submittedAt));
       try {
@@ -595,11 +631,41 @@ export class RoomEngine {
         active.guessing = false;
         if (role === "guesser" && outcome.status !== "evidence") {
           game.guesserProgress!.settledAt = this.drawMs - (group.deadlineAt - this.now());
+          const explaining = this.explanationJobs.delete(job.jobId);
+          if (explaining) {
+            // Refresh only the map for the drawing still on screen: the recorded
+            // guess, the round result and the ledger keep the values from the
+            // frame that actually solved it.
+            if (outcome.status === "answer" && outcome.heatmap) {
+              const previous = this.currentReadout(live.room.code, game.generation, game.turnId);
+              this.aiReadouts.set(live.room.code, {
+                generation: game.generation,
+                turnId: game.turnId,
+                heatmap: outcome.heatmap,
+                ...(previous?.guess ? { guess: previous.guess } : {}),
+              });
+              this.publish(live.room);
+            }
+            return;
+          }
           if (game.aiRound?.status === "solved" || game.aiRound?.status === "unavailable") return;
           if (outcome.status === "answer") {
             const answer = normalize(outcome.answer);
             const canonical = Number.isFinite(outcome.confidence) && outcome.confidence >= 0 && outcome.confidence <= 1
               ? live.room.aiMatch?.guesser?.prompts.find(word => normalize(word) === answer) : undefined;
+            if (canonical) {
+              // Keep one readout per drawing: the map and the prediction are
+              // replaced together, so a viewer can never see one from this guess
+              // beside the other from the last one.
+              this.aiReadouts.set(live.room.code, {
+                generation: game.generation,
+                turnId: game.turnId,
+                ...(outcome.heatmap ? { heatmap: outcome.heatmap } : {}),
+                guess: { answer: canonical, confidence: outcome.confidence, alternatives: outcome.alternatives ?? [] },
+              });
+            } else {
+              this.aiReadouts.delete(live.room.code);
+            }
             this.recordGuess(game, group, canonical ? { status: "answer", answer: canonical, confidence: outcome.confidence } : { status: "pass" });
             if (canonical && Number.isFinite(outcome.confidence) && outcome.confidence > 0.5 && outcome.confidence <= 1) {
               const event: AiGuessEvent = { type: "ai-guess", jobId: job.jobId, canvasId: job.canvasId, generation: job.generation, correct: normalize(canonical) === normalize(game.target!) };
@@ -683,10 +749,22 @@ export class RoomEngine {
       if (!game || !group || !job || job.completed || result.jobId !== observation.jobId || JSON.stringify(job.observation) !== JSON.stringify(observation) || room.phase !== "drawing" || group.closed || group.pause || game.generation !== observation.generation || game.turnId !== observation.turnId || this.now() >= observation.deadlineAt || this.now() >= group.deadlineAt || game.aiRound?.status === "solved" || game.aiRound?.status === "unavailable") return false;
       if (result.status === "answer" && result.confidence !== undefined && (!Number.isFinite(result.confidence) || result.confidence < 0 || result.confidence > 1)) return false;
       job.completed = true;
-      if (result.status === "unavailable") this.recordGuess(game, group, { status: "unavailable", reason: result.reason ?? "provider-unavailable" });
-      else {
+      if (result.status === "unavailable") {
+        this.aiReadouts.delete(room.code);
+        this.recordGuess(game, group, { status: "unavailable", reason: result.reason ?? "provider-unavailable" });
+      } else {
         const canonical = (room.aiMatch?.guesser?.prompts ?? PROMPTS).find(word => normalize(word) === normalize(result.answer));
-        if (canonical) this.recordGuess(game, group, { status: "answer", answer: canonical, confidence: result.confidence });
+        if (canonical) {
+          // Keep only the newest readout, tagged with the drawing it came from. A
+          // pass or an unavailable result clears it rather than leaving it stale.
+          this.aiReadouts.set(room.code, {
+            generation: game.generation,
+            turnId: game.turnId,
+            ...(result.heatmap ? { heatmap: result.heatmap } : {}),
+            guess: { answer: canonical, confidence: result.confidence ?? 0, alternatives: result.alternatives ?? [] },
+          });
+          this.recordGuess(game, group, { status: "answer", answer: canonical, confidence: result.confidence });
+        }
       }
       return true;
     });
@@ -839,6 +917,13 @@ export class RoomEngine {
       room.phase === "drawing"
     )
       privateState.target = game.target;
+    // The AI's answer would end the drawing for an unsolved guesser, and showing
+    // it to solved players would leak the word through them, so only the drawer —
+    // who already knows the target — ever receives it.
+    if (game && group && room.phase === "drawing") {
+      const guess = this.currentAiGuess(room.code, game.generation, game.turnId);
+      if (guess && group.drawerId === viewer.id) privateState.aiGuess = clone(guess);
+    }
     const snapshot: RoomSnapshot = {
       code: room.code,
       revision: room.revision,
@@ -922,6 +1007,14 @@ export class RoomEngine {
         },
         refereeWarning: room.phase === "drawing" && !group.pause && game.refereeWarning && game.refereeWarning.expiresAt > now ? game.refereeWarning : undefined,
         aiStatus: game.aiRound?.status === "unavailable" || !room.aiMatch?.guesser ? "unavailable" : game.aiRound?.status === "solved" ? "correct" : this.activeInference.get(this.inferenceKey(room.code, "guesser"))?.guessing ? "guessing" : "waiting",
+        // The map is the AI's reading of the drawing, so a guesser could use it as
+        // an oracle. During play only the drawer — who owns the word — receives
+        // it; the recap shows it to the whole room once the target is revealed.
+        aiHeatmap: room.phase === "result"
+          ? this.currentHeatmap(room.code, game.generation, game.turnId)
+          : room.phase === "drawing" && !group.pause && group.drawerId === viewer.id
+            ? this.currentHeatmap(room.code, game.generation, game.turnId)
+            : undefined,
         scoringEligibility: {
           eligible: false,
           reason: "AI inference is unavailable",
@@ -950,6 +1043,28 @@ export class RoomEngine {
     }
     return { snapshot, privateState };
   }
+  /**
+   * Return the stored heatmap only if it still belongs to the live drawing.
+   *
+   * The map is tagged with the generation and turn it was produced for, so a new
+   * turn or a recovered canvas invalidates it without relying on every reset path
+   * remembering to clear the entry.
+   */
+  private currentHeatmap(code: string, generation: number, turnId: string): GuessHeatmapV1 | undefined {
+    return this.currentReadout(code, generation, turnId)?.heatmap;
+  }
+
+  /** Return the stored prediction only if it still belongs to the live drawing. */
+  private currentAiGuess(code: string, generation: number, turnId: string) {
+    return this.currentReadout(code, generation, turnId)?.guess;
+  }
+
+  private currentReadout(code: string, generation: number, turnId: string) {
+    const stored = this.aiReadouts.get(code);
+    if (!stored || stored.generation !== generation || stored.turnId !== turnId) return undefined;
+    return stored;
+  }
+
   private scheduleArchivePublish(room: State): void {
     if (this.stopping || this.rooms.get(room.code) !== room || this.archivePublishTimers.has(room.code)) return;
     const generation = room.game?.generation;
