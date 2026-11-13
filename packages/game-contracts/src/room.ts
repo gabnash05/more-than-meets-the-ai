@@ -1,5 +1,6 @@
 import type { PlayerProfile } from "./player";
 import type { DrawingBatch, CanvasOperation } from "./drawing";
+import type { GuessHeatmapV1, GuessAlternativeV1 } from "./ai-inference";
 export type RoomMode = "individual" | "team";
 export interface RoomSettings {
   mode: RoomMode;
@@ -87,6 +88,8 @@ export interface RoomGame {
   scores: Record<string, number>;
   round?: number;
   aiStatus?: "waiting" | "guessing" | "correct" | "wrong" | "unavailable";
+  /** Latest Guesser attention map for the drawing in progress; absent when stale. */
+  aiHeatmap?: GuessHeatmapV1;
   refereeWarning?: RefereeWarning;
   result?: {
     aiBenchmark?: AiRoundResult;
@@ -134,6 +137,16 @@ export interface PrivateRoomState {
   role?: "drawer" | "guesser" | "spectator";
   target?: string;
   promptOptions?: { id: string; label: string }[];
+  /**
+   * The Guesser's latest answer, delivered only to the drawer. Anyone else seeing
+   * it — including a solved player — could pass the word to the room, so the
+   * server never sends it to them.
+   */
+  aiGuess?: {
+    answer: string;
+    confidence: number;
+    alternatives: GuessAlternativeV1[];
+  };
 }
 export interface RoomSession {
   snapshot: RoomSnapshot;
