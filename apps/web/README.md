@@ -60,3 +60,9 @@ AI round points/status appear in recap and its committed total/coverage alongsid
 Drawing status distinguishes locally queued unaccepted batches from the server-accepted sequence and contiguous durable prefix. Accepted but undurable envelopes remain stored until the watermark covers them. Replay/hydration does not emit drawing again. An unsendable tail is retired with a visible notice and a new client stream.
 
 For remote verification, set `NEXT_PUBLIC_ROOM_TRANSPORT=remote`, `NEXT_PUBLIC_ROOM_API_URL=http://127.0.0.1:3001` and `NEXT_PUBLIC_ROOM_SOCKET_URL=http://127.0.0.1:3001` before `npm run build`. Start the API and `npm run preview` separately, then run `npx playwright test --config playwright.multiplayer.config.ts`. This config uses one Chrome worker and does not start either server. Build local-demo production separately before running the default local browser suite. The isolated database test target is documented in the API README; never print its credentials.
+
+## Free Draw
+
+Open `/free-draw/` directly or use the card beneath the homepage room-code controls. No player profile is required. Free Draw uses `NEXT_PUBLIC_ROOM_API_URL` for its real inference API independently of the multiplayer transport switch; an empty URL uses same-origin `/api/free-draw`. A static preview without an API still permits drawing and local draft recovery, with AI shown as unavailable. API URLs are compiled at build time.
+
+See [Free Draw behavior, recovery and validation](../../docs/FREE-DRAW.md). Run its focused Chrome checks with `npx playwright test e2e/free-draw.spec.ts` after a production build. The AI test responses are fixtures, not model-accuracy evidence.

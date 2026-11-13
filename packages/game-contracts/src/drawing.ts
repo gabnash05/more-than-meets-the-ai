@@ -55,6 +55,8 @@ export interface DrawingCanvasHandle {
   undo(): void;
   redo(): void;
   clear(): void;
+  capturePNG(): Promise<Blob>;
+  restoreBitmap(blob: Blob): Promise<void>;
 }
 export interface DrawingCanvasProps {
   readOnly?: boolean;

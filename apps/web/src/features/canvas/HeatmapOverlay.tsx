@@ -123,7 +123,7 @@ function Thumb({ frame }: { frame: Frame }) {
  * when the pixels are identical. Identical payloads are therefore skipped, and the
  * backing store is only resized when its size actually differs.
  */
-export function HeatmapOverlay({ heatmap, guess, drawing }: { heatmap?: Heatmap; guess?: Guess; drawing?: string }) {
+export function HeatmapOverlay({ heatmap, guess, drawing, maxHistoryFrames }: { heatmap?: Heatmap; guess?: Guess; drawing?: string; maxHistoryFrames?: number }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const scratch = useRef<HTMLCanvasElement | null>(null);
   const history = useRef<Frame[]>([]);
@@ -154,6 +154,9 @@ export function HeatmapOverlay({ heatmap, guess, drawing }: { heatmap?: Heatmap;
       // Every map of the drawing is kept: memory is 196 bytes per frame, and a
       // heavy drawer can easily produce more than a dozen in one round.
       history.current = [...history.current, { signature, grid: Uint8Array.from(heatmap.grid), label }];
+      if (maxHistoryFrames !== undefined && history.current.length > maxHistoryFrames) {
+        history.current = history.current.slice(-maxHistoryFrames);
+      }
     }
 
     if (element.width !== GRID) element.width = GRID;
@@ -169,7 +172,7 @@ export function HeatmapOverlay({ heatmap, guess, drawing }: { heatmap?: Heatmap;
     const bufferContext = buffer.getContext("2d");
     if (!bufferContext) return;
     context.clearRect(0, 0, GRID, GRID);
-    const trail = history.current.slice(-TRAIL_FRAMES);
+    const trail = history.current.slice(-Math.min(TRAIL_FRAMES, maxHistoryFrames ?? TRAIL_FRAMES));
     trail.forEach((frame, index) => {
       // putImageData is blind to globalAlpha, so each frame is painted into the
       // scratch canvas and stamped down as an image at the weight for its age.
@@ -179,7 +182,7 @@ export function HeatmapOverlay({ heatmap, guess, drawing }: { heatmap?: Heatmap;
     });
     context.globalAlpha = 1;
     setFrames(history.current.slice(-STRIP_FRAMES));
-  }, [heatmap, guess, drawing]);
+  }, [heatmap, guess, drawing, maxHistoryFrames]);
 
   if (!heatmap) return null;
   const layout = heatmapLayout(heatmap.frame, heatmap.content);

@@ -31,6 +31,11 @@
 .player-login .player-create { width:100%; background:#181321; color:white; }
 .player-login .player-join-button { background:#27dceb; color:#181321; }
 .player-join { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:end; }
+.player-free-draw { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; padding:16px; border:2px dashed #181321; border-radius:16px; background:#fff9bf; }
+.player-free-draw h2 { font-size:22px; }
+.player-free-draw p { margin:0; }
+.player-free-draw-button { display:inline-flex; align-items:center; gap:8px; background:#27dceb; color:#181321; text-decoration:none; white-space:nowrap; }
+.player-login .player-free-draw-button:focus-visible { outline:3px solid #3455ff; outline-offset:3px; }
 .player-divider { height:1px; background:#d7d5dc; }
 .player-invite { border:2px solid #181321; background:#27dceb; padding:13px; border-radius:12px; }
 .player-error { font-weight:800; color:#8c1b1b; }

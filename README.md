@@ -29,6 +29,12 @@ Current human-v1 scoring awards personal raw speed points and capped, normalized
 
 Any visual strategy is allowed; written answer clues are prohibited, while incidental writing on objects is allowed. A separate transformer referee flags suspected written clues. Flags are advisory, and players resolve disputes.
 
+## Free Draw
+
+`/free-draw/` is the private solo drawing workspace. Enter through **Free Draw** below the homepage room-code controls; no player profile or room is required. It has no rounds, countdown or score. Switch between open drawing and a searchable model-class prompt, and independently toggle the Guesser, advisory Referee and existing attention overlay. Every prediction remains visible with confidence and threshold status for the current visit.
+
+The workspace uses the configured inference service, not demo predictions. Drawing remains available during outages. Its browser-local draft restores after refresh with Guesser paused. See [Free Draw behavior, API and validation](docs/FREE-DRAW.md).
+
 ## Canvas frontend
 
 The application is in [apps/web](apps/web). It retains the approved create/invite/join/lobby flow, drawing tools and browser-local demo adapter. Its remote adapter connects to the [NestJS room backend](apps/api/README.md) for authenticated guest sessions, shared lobby and drawing state, private selection from three words, human scoring, round rotation and final standings. Human scoring remains human-v1 with AI modifiers zero. The AI benchmark records unavailable outcomes as unscored and exposes committed totals and coverage. Remote Team settings and starts are deferred to the [Team gameplay plan](docs/TEAM-GAMEPLAY-NEXT-PLAN.md).
