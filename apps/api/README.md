@@ -70,3 +70,7 @@ AI results/totals extend existing JSON room/result records in the atomic finaliz
 Host Start now enters a server-owned three-second `starting` phase before the first word selection. Later rounds retain their existing selection/recap flow. General chat is available between turns and after authoritative drawing closure; active drawer/solved-player answer protection stays enabled.
 
 The Guesser defaults to a three-second initial delay and three-second cooldown after each completed inference, measured in active drawing time. The authority permits an answer only above 50% confidence. Low-confidence predictions consume the same cooldown/call cap and appear only in revealed history, without solving, scoring or emitting answer pulses. Committed round histories survive PostgreSQL recovery through existing JSON records; no SQL migration is needed. Existing memory-mode restart loss still applies.
+
+## Free Draw
+
+`/api/free-draw` serves independent anonymous solo inference sessions without creating multiplayer rooms or database records. It uses the existing configured inference provider and model readiness. See [Free Draw API, admission limits and checks](../../docs/FREE-DRAW.md). The raw PNG observation route needs the scoped 4 MiB Nginx limit in `deploy/nginx.conf`.

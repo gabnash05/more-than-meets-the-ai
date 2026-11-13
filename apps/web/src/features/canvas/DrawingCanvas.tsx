@@ -16,7 +16,7 @@ import { BitmapHistory, type Snapshot } from "./history";
 import { ReplayQueue } from "./replayQueue";
 import styles from "./DrawingCanvas.module.css";
 
-type Engine = { undo(): void; redo(): void; clear(): void; finish(): void; hydrate(operations: CanvasOperation[]): Promise<void>; applyOperations(operations: CanvasOperation[]): Promise<void> };
+type Engine = { undo(): void; redo(): void; clear(): void; finish(): void; capturePNG(): Promise<Blob>; restoreBitmap(blob: Blob): Promise<void>; hydrate(operations: CanvasOperation[]): Promise<void>; applyOperations(operations: CanvasOperation[]): Promise<void> };
 const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
   function DrawingCanvas(props, ref) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -31,6 +31,8 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         clear: () => engineRef.current?.clear(),
         hydrate: (operations) => engineRef.current?.hydrate(operations) ?? Promise.reject(new Error("Canvas is unavailable")),
         applyOperations: (operations) => engineRef.current?.applyOperations(operations) ?? Promise.reject(new Error("Canvas is unavailable")),
+        capturePNG: () => engineRef.current?.capturePNG() ?? Promise.reject(new Error("Canvas is unavailable")),
+        restoreBitmap: (blob) => engineRef.current?.restoreBitmap(blob) ?? Promise.reject(new Error("Canvas is unavailable")),
       }),
       [],
     );
@@ -414,6 +416,31 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       };
       const engine: Engine = {
         finish,
+        capturePNG: async () => {
+          await ready;
+          while (busy) await new Promise<void>((resolve, reject) => {
+            pendingFillWaiters.add(reject);
+            queue.push(() => { pendingFillWaiters.delete(reject); resolve(); });
+          });
+          if (!alive) throw new Error("Canvas was disposed");
+          const opaque = document.createElement("canvas");
+          opaque.width = CANVAS_WIDTH; opaque.height = CANVAS_HEIGHT;
+          const target = opaque.getContext("2d");
+          if (!target) throw new Error("Could not capture drawing canvas");
+          target.fillStyle = "white"; target.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+          target.drawImage(canvas, 0, 0);
+          return await new Promise<Blob>((resolve, reject) => opaque.toBlob(blob => blob ? resolve(blob) : reject(new Error("Could not encode drawing canvas")), "image/png"));
+        },
+        restoreBitmap: async blob => {
+          await ready;
+          if (!alive) throw new Error("Canvas was disposed");
+          const bitmap = await createImageBitmap(blob);
+          try {
+            context.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            context.drawImage(bitmap, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            hasInk = detectInk(); history = new BitmapHistory(); seen.clear(); status();
+          } finally { bitmap.close(); }
+        },
         hydrate: operations => scheduleReplay(operations, true),
         applyOperations: operations => scheduleReplay(operations, false),
         undo: () =>

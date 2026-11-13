@@ -174,6 +174,14 @@ export default function LoginScreen() {
               </label>
               <button className="player-button player-join-button" type="submit" value="join" disabled={pending}>Join room</button>
             </div>
+            <section className="player-free-draw" aria-labelledby="player-free-draw-title">
+              <div>
+                <p className="player-eyebrow">Free Draw</p>
+                <h2 id="player-free-draw-title">Draw solo.</h2>
+                <p>Explore what the AI sees.</p>
+              </div>
+              <a className="player-button player-free-draw-button" href="/free-draw/">Start drawing <span aria-hidden="true">→</span></a>
+            </section>
           </>}
         </form>
       </div>

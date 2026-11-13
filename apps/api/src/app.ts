@@ -9,6 +9,8 @@ import type { GameStore, GuesserProvider } from "./game/ports";
 import { UnavailableGuesserProvider } from "./game/unavailable-provider";
 import type { PlayerProfile } from "../../../packages/game-contracts/src/player";
 import { MemoryGameStore, PrismaGameStore } from "./store";
+import { FreeDrawService } from "./free-draw/service";
+import { FreeDrawController, FREE_DRAW } from "./free-draw/controller";
 
 export interface AppOptions { inference?: Inference; guesserProvider?: GuesserProvider; store?: GameStore; databaseUrl?: string; storeMode?: "memory" | "postgres"; origins: string[]; engineConfig?: { chooseMs?: number; drawMs?: number; recapMs?: number; graceMs?: number } }
 const RUNTIME = Symbol("runtime");
@@ -16,11 +18,13 @@ class Runtime {
   server?: Server;
   readonly store: GameStore;
   readonly engine: RoomEngine;
+  readonly freeDraw: FreeDrawService;
   constructor(readonly options: AppOptions) {
     this.store = options.store ?? (options.storeMode === "memory" ? new MemoryGameStore() : new PrismaGameStore(options.databaseUrl ?? ""));
     this.engine = new RoomEngine({ inference: options.inference, guesserProvider: options.guesserProvider ?? new UnavailableGuesserProvider(), config: options.engineConfig, store: this.store, eventSink: (id, event) => this.server?.to(id).emit("room:event", event), disconnectSink: id => this.server?.sockets.sockets.get(id)?.disconnect(true) });
+    this.freeDraw = new FreeDrawService(options.inference);
   }
-  async close() { await this.engine.shutdown(); await this.options.inference?.close(); if (this.store instanceof PrismaGameStore) await this.store.close(); }
+  async close() { this.freeDraw.close(); await this.engine.shutdown(); await this.options.inference?.close(); if (this.store instanceof PrismaGameStore) await this.store.close(); }
 }
 function errorBody(error: unknown) {
   if (error instanceof HttpException) return { status: error.getStatus(), code: "unauthorized", message: "Session is invalid." };
@@ -85,7 +89,7 @@ export async function createApplication(options: AppOptions): Promise<{ app: INe
   for (const [name, value] of Object.entries(options.engineConfig ?? {})) if (!Number.isSafeInteger(value) || value < 1 || value > 3600000) throw new Error(`Invalid engine duration: ${name}`);
   const runtime = new Runtime(options);
   await runtime.engine.initialize();
-  @Module({ controllers: [RoomsController, HealthController], providers: [{ provide: RUNTIME, useValue: runtime }, RoomGateway] }) class AppModule {}
+  @Module({ controllers: [RoomsController, HealthController, FreeDrawController], providers: [{ provide: RUNTIME, useValue: runtime }, { provide: FREE_DRAW, useValue: runtime.freeDraw }, RoomGateway] }) class AppModule {}
   const app = await NestFactory.create(AppModule, { logger: ["error", "warn"] });
   app.use((req: { headers: { origin?: string } }, res: { status(code: number): { json(value: unknown): void } }, next: () => void) => {
     if (req.headers.origin && !options.origins.includes(req.headers.origin)) { res.status(403).json({ code: "origin", message: "Origin is not allowed." }); return; }
@@ -93,5 +97,5 @@ export async function createApplication(options: AppOptions): Promise<{ app: INe
   });
   app.enableCors({ origin: options.origins });
   await app.init();
-  return { app, close: async () => { await app.close(); await runtime.close(); } };
+  return { app, close: async () => { runtime.freeDraw.close(); await app.close(); await runtime.close(); } };
 }
