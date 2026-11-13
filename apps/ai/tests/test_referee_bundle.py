@@ -6,9 +6,9 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
-from ai_service.bundles import load_bundle
-
 from models.referee.inference import vit
+
+from ai_service.bundles import load_bundle
 
 LABELS = ["text", "number", "symbol", "circle"]
 
