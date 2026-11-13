@@ -357,7 +357,7 @@ export default function RoomScreen() {
   const startSeconds = snap?.startDeadlineAt ? Math.max(0, Math.ceil((snap.startDeadlineAt - clock - clockOffset) / 1000)) : 3;
   const seconds = game?.pause ? Math.ceil(game.pause.remainingMs / 1000) : game?.deadlineAt ? Math.max(0, Math.ceil((game.deadlineAt - clock - clockOffset) / 1000)) : null;
   const displayTime = seconds === null ? game?.time ?? "--:--" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-  const refereeWarning = drawing && !paused && snap?.settings.aiRefereeEnabled !== false && game?.refereeWarning && game.refereeWarning.expiresAt > clock + clockOffset ? game.refereeWarning : undefined;
+  const refereeWarning = drawing && !paused && snap?.settings.aiRefereeEnabled !== false && game?.refereeWarning ? game.refereeWarning : undefined;
   useEffect(() => {
     if (!code || !game?.canvasId) return;
     const b = createDrawingBatcher({

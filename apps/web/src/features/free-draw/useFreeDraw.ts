@@ -128,7 +128,6 @@ export function useFreeDraw(): FreeDrawController {
     referee: 1000,
   });
   const epoch = useRef({ guesser: 0, referee: 0, heatmap: 0 });
-  const warningTimer = useRef<number | undefined>(undefined);
   const canvasStatusRef = useRef(emptyStatus);
 
   const invalidate = useCallback(
@@ -145,10 +144,6 @@ export function useFreeDraw(): FreeDrawController {
         retryDelay.current = { guesser: 1000, referee: 1000 };
         capturedFrame.current = undefined;
       }
-      if (warningTimer.current !== undefined)
-        window.clearTimeout(warningTimer.current);
-      warningTimer.current = undefined;
-      setWarning(undefined);
       cancelRequests();
     },
     [cancelRequests],
@@ -309,7 +304,6 @@ export function useFreeDraw(): FreeDrawController {
       setHistory([]);
       setSolved(false);
       setHeatmap(undefined);
-      setWarning(undefined);
       runRef.current = createUuid();
     },
     [mode, invalidate],
@@ -331,7 +325,6 @@ export function useFreeDraw(): FreeDrawController {
       setHistory([]);
       setSolved(false);
       setHeatmap(undefined);
-      setWarning(undefined);
       runRef.current = createUuid();
     },
     [labels, invalidate],
@@ -343,9 +336,6 @@ export function useFreeDraw(): FreeDrawController {
         delete successRevision.current.referee;
         cancelRequests("referee");
         if (toggles.referee) {
-          if (warningTimer.current !== undefined)
-            window.clearTimeout(warningTimer.current);
-          warningTimer.current = undefined;
           setWarning(undefined);
         }
       } else {
@@ -393,12 +383,7 @@ export function useFreeDraw(): FreeDrawController {
       capturedFrame.current = { key, promise };
       return promise;
     };
-    const clearWarning = () => {
-      if (warningTimer.current !== undefined)
-        window.clearTimeout(warningTimer.current);
-      warningTimer.current = undefined;
-      setWarning(undefined);
-    };
+    const clearWarning = () => setWarning(undefined);
     const fail = (role: Role, busy: boolean) => {
       const delay = busy
         ? Math.min(2000, Math.max(250, (retryDelay.current[role] ?? 1000) / 4))
@@ -412,7 +397,6 @@ export function useFreeDraw(): FreeDrawController {
         ...previous,
         [role]: busy ? "waiting" : "unavailable",
       }));
-      if (role === "referee") clearWarning();
     };
     const infer = async (role: Role, session: FreeDrawSession) => {
       const controller = new AbortController();
@@ -514,12 +498,7 @@ export function useFreeDraw(): FreeDrawController {
             setHeatmapGuess(undefined);
           }
         } else if (outcome.status === "evidence" && outcome.scores[0] >= 0.3) {
-          clearWarning();
           setWarning({ confidence: outcome.scores[0] });
-          warningTimer.current = window.setTimeout(() => {
-            warningTimer.current = undefined;
-            setWarning(undefined);
-          }, 3000);
         } else clearWarning();
       } catch (error) {
         if (
