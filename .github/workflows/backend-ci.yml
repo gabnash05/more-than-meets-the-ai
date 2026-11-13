@@ -168,14 +168,5 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379/15
         run: uv run --frozen --no-sync python -m pytest -q tests
 
-      - name: Lint inference worker path
-        run: >-
-          uv run --frozen --no-sync ruff check
-          ai_service/main.py
-          ai_service/inference.py
-          ai_service/queue_worker.py
-          ai_service/queue_contract.py
-          tests/test_queue_worker.py
-          tests/test_queue_contract.py
-          tests/test_inference.py
-          tests/test_routes.py
+      - name: Lint inference service
+        run: uv run --frozen --no-sync ruff check
