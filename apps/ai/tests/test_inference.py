@@ -7,7 +7,12 @@ import pytest
 from PIL import Image
 
 from ai_service.bundles import Bundle
-from ai_service.inference import InvalidImage, Observation, _sanitise_heatmap, infer_observation
+from ai_service.inference import (
+    InvalidImage,
+    Observation,
+    _sanitise_heatmap,
+    infer_observation,
+)
 
 
 def canonical_png() -> bytes:
