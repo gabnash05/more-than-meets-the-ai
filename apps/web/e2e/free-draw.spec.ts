@@ -268,7 +268,7 @@ test("mobile keeps mode before canvas, toolbar under canvas, and AI/history belo
   expect(measurements.aiTop).toBeLessThan(measurements.historyTop);
 });
 
-test("desktop places drawing mode left of the canvas while AI and history stay right", async ({ page }) => {
+test("desktop places heading, drawing mode, and AI left of the canvas with history right", async ({ page }) => {
   await mockFreeDraw(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/free-draw/");
@@ -277,9 +277,10 @@ test("desktop places drawing mode left of the canvas while AI and history stay r
       const element = document.querySelector<HTMLElement>(selector);
       if (!element) throw new Error(`Missing layout element: ${selector}`);
       const bounds = element.getBoundingClientRect();
-      return { left: bounds.left, right: bounds.right };
+      return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom };
     };
     return {
+      heading: rect(".fd-workspace-heading"),
       mode: rect(".fd-mode-panel"),
       canvas: rect("[data-testid=drawing-canvas]"),
       ai: rect(".fd-ai-panel"),
@@ -287,7 +288,9 @@ test("desktop places drawing mode left of the canvas while AI and history stay r
     };
   });
   expect(positions.mode.right).toBeLessThan(positions.canvas.left);
-  expect(positions.canvas.right).toBeLessThan(positions.ai.left);
+  expect(positions.heading.bottom).toBeLessThan(positions.mode.top);
+  expect(positions.mode.bottom).toBeLessThan(positions.ai.top);
+  expect(positions.ai.right).toBeLessThan(positions.canvas.left);
   expect(positions.canvas.right).toBeLessThan(positions.history.left);
 });
 

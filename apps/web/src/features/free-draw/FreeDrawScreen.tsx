@@ -324,6 +324,12 @@ function Workspace() {
         <span className="fd-header-mode">Free Draw</span>
       </header>
       <div className="fd-layout">
+          <div className="fd-workspace-heading">
+            <div>
+              <p className="fd-eyebrow">Free Draw</p>
+              <h1>Make your mark.</h1>
+            </div>
+          </div>
         <section className="fd-panel fd-mode-panel" aria-labelledby="fd-mode-title">
           <p className="fd-eyebrow">Start with a blank page or a target</p>
           <h2 id="fd-mode-title">Drawing mode</h2>
@@ -334,12 +340,6 @@ function Workspace() {
           {controller.mode === "prompt" && <PromptPicker controller={controller} />}
         </section>
         <section className="fd-workspace" aria-label="Drawing workspace">
-          <div className="fd-workspace-heading">
-            <div>
-              <p className="fd-eyebrow">Free Draw</p>
-              <h1>Make your mark.</h1>
-            </div>
-          </div>
           <div className="fd-board-wrap">
             <div className={`fd-board${controller.warning ? " room-board-warning" : ""}`} aria-label="Drawing surface">
               <DrawingCanvas
