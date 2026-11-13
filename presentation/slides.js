@@ -4,7 +4,7 @@
   const slides = Array.from(document.querySelectorAll('.slide'));
   // Short translations follow the English phrase they explain.
   const translations = {
-    'THE IDEA': [['.lead','AIより先に絵を当てられる？']],
+    'THE IDEA': [['h1','描画ゲームにおける描画途中のスケッチのVision Transformerによる認識'],['.lead','AIより先に絵を当てられる？']],
     'THE INSPIRATION': [['.lead','一人がお題を描き、他の人が推測します。'],['.caption','次のプレイヤーが描きます。']],
     'OUR TWIST': [['.box.blue p','人間と同時に絵を推測します。'],['.box.pink p','文字の可能性を警告。公平かはプレイヤーが判断します。'],['.caption','時計や看板の文字は絵の一部にもなります。']],
     'GUESSER DATA': [['.lead','345種類の人間のスケッチ。線と描画時刻を保存。'],['.caption','時刻から描画途中の状態を再現できます。']],

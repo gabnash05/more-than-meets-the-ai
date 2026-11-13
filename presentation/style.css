@@ -29,3 +29,7 @@ main{height:calc(100svh - 126px);min-height:570px}.slide{height:100%;padding:24p
 
 /* Optional translations do not occupy space when hidden. */
 .slide .japanese-translation{display:block;font-family:Plex,"Yu Gothic","Meiryo",sans-serif;font-size:clamp(13px,1.1vw,16px);line-height:1.35;letter-spacing:normal;font-weight:500;margin-top:4px}.japanese-enabled .slide.active{overflow-y:auto}.keys #japanese-toggle[aria-pressed="true"]{text-decoration:underline;text-underline-offset:4px}
+
+/* Fit the full research title on the cover. */
+.cover h1{font-size:clamp(30px,4.1vw,62px);line-height:1.08;letter-spacing:-.04em}
+@media(max-width:800px){.cover h1{font-size:clamp(27px,6vw,45px)}}
