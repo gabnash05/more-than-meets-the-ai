@@ -427,15 +427,20 @@ test("a solved round refreshes the explanation without recording another guess",
     // deduplicated by the identical-canvas hash.
     async key => Buffer.from(key),
   );
-  const latest = () => (room.events.filter(event => event.type === "snapshot").at(-1) as Extract<RoomEvent, { type: "snapshot" }>).snapshot.game;
+  // The map is drawer-only, so read the drawer's snapshot instead of whichever
+  // player happened to be emitted last.
+  const drawerGame = () => room.events
+    .filter((event): event is Extract<RoomEvent, { type: "snapshot" }> => event.type === "snapshot")
+    .filter(event => event.privateState?.role === "drawer")
+    .at(-1)?.snapshot.game;
   try {
     word = room.target;
     room.advance(4000);
     await room.ink();
     await waitFor(() => calls === 1);
     await delay(60);
-    assert.equal(latest()?.aiStatus, "correct");
-    assert.equal(latest()?.aiHeatmap?.grid[0], 1);
+    assert.equal(drawerGame()?.aiStatus, "correct");
+    assert.equal(drawerGame()?.aiHeatmap?.grid[0], 1);
     // One guess reaches both connected players, so count the pulses rather than
     // assuming a single event per prediction.
     const pulsesAfterSolve = room.events.filter(event => event.type === "ai-guess").length;
@@ -445,8 +450,13 @@ test("a solved round refreshes the explanation without recording another guess",
     await room.ink(false, { x: 320, y: 260, time: 0 });
     await waitFor(() => calls === 2);
     await delay(60);
-    assert.equal(latest()?.aiHeatmap?.grid[0], 2);
-    assert.equal(latest()?.aiStatus, "correct");
+    assert.equal(drawerGame()?.aiHeatmap?.grid[0], 2);
+    assert.equal(drawerGame()?.aiStatus, "correct");
     assert.equal(room.events.filter(event => event.type === "ai-guess").length, pulsesAfterSolve);
+    // Nobody else receives the map: it would be an oracle for an unsolved guesser.
+    const othersWithMap = room.events
+      .filter((event): event is Extract<RoomEvent, { type: "snapshot" }> => event.type === "snapshot")
+      .filter(event => event.privateState?.role !== "drawer" && event.snapshot.game?.aiHeatmap !== undefined);
+    assert.equal(othersWithMap.length, 0);
   } finally { await room.engine.shutdown(); }
 });

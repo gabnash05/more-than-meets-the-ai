@@ -67,7 +67,9 @@ for (const width of [360, 1440]) {
           await expect(history.getByRole("listitem")).toHaveCount(count + 1);
           const [cardBox, finalBox, historyBox, chatBox] = await Promise.all([card.boundingBox(), final.boundingBox(), history.boundingBox(), chat.boundingBox()]);
           expect(cardBox!.height).toBeGreaterThan(224);
-          expect(historyBox!.height).toBeGreaterThanOrEqual(280);
+          // The list shares the card with a two-line answer strip and a column
+          // header, so it is the scroll region rather than a fixed 280px pane.
+          expect(historyBox!.height).toBeGreaterThanOrEqual(250);
           expect(finalBox!.y + finalBox!.height).toBeLessThanOrEqual(historyBox!.y + 1);
           if (chatTop === undefined) chatTop = chatBox!.y;
           else expect(Math.abs(chatBox!.y - chatTop)).toBeLessThanOrEqual(1);

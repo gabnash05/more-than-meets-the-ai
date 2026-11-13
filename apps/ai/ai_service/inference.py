@@ -78,7 +78,7 @@ def _sanitise_heatmap(value: object) -> dict | None:
         rectangle = value.get(name)
         if not isinstance(rectangle, dict) or set(rectangle) != {"x", "y", "width", "height"}:
             return None
-        for key, number in rectangle.items():
+        for number in rectangle.values():
             if isinstance(number, bool) or not isinstance(number, (int, float)) or not isfinite(number):
                 return None
         if rectangle["width"] < 0 or rectangle["height"] < 0:

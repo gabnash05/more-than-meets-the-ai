@@ -8,9 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from ai_service.bundles import load_bundle
-
 from models.guesser.inference import vit
+
+from ai_service.bundles import load_bundle
 
 
 class DummyAdapter:

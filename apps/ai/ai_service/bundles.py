@@ -8,10 +8,9 @@ from hashlib import file_digest, sha256
 from pathlib import Path
 from typing import Protocol
 
-from PIL import Image
-
 from models.guesser.inference.quickdraw import HASHES, REVISION, QuickDraw
 from models.referee.inference.fixture import RefereeFixture
+from PIL import Image
 
 MODEL_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}")
 REFEREE_FILES = {
