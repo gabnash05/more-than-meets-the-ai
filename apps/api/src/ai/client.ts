@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { CanvasOperation } from "../../../../packages/game-contracts/src/drawing";
+import { isGuessHeatmapV1, isGuessAlternativesV1 } from "../../../../packages/game-contracts/src/ai-inference";
+import type { GuessHeatmapV1, GuessAlternativeV1 } from "../../../../packages/game-contracts/src/ai-inference";
 import { ChromiumRenderer } from "./renderer";
 import { InferenceQueue } from "./redis-queue";
 import { RedisQueueConnection } from "./redis-connection";
@@ -18,7 +20,7 @@ export interface Job extends ModelIdentity {
   hint?: string;
 }
 export type Outcome =
-  | { status: "answer"; answer: string; confidence: number }
+  | { status: "answer"; answer: string; confidence: number; alternatives?: GuessAlternativeV1[]; heatmap?: GuessHeatmapV1 }
   | { status: "pass"; reason?: string }
   | { status: "evidence"; scores: [number, number] }
   | { status: "unavailable"; reason: string };
@@ -112,7 +114,9 @@ export class InferenceClient implements Inference {
     if (result.status === "unavailable") return { status: "unavailable", reason: "provider-unavailable" };
     if (role === "guesser" && result.status === "pass") return { status: "pass", reason: result.reason === "no-evidence" ? "no-evidence" : undefined };
     if (role === "guesser" && result.status === "answer" && typeof result.answer === "string" && result.answer.length <= 100 && typeof result.confidence === "number" && Number.isFinite(result.confidence) && result.confidence >= 0 && result.confidence <= 1) {
-      return { status: "answer", answer: result.answer, confidence: result.confidence };
+      const heatmap = isGuessHeatmapV1(result.heatmap) ? result.heatmap : undefined;
+      const alternatives = isGuessAlternativesV1(result.alternatives) ? result.alternatives : undefined;
+      return { status: "answer", answer: result.answer, confidence: result.confidence, ...(heatmap ? { heatmap } : {}), ...(alternatives ? { alternatives } : {}) };
     }
     if (role === "referee" && result.status === "evidence" && Array.isArray(result.scores) && result.scores.length === 2 && result.scores.every(score => typeof score === "number" && Number.isFinite(score) && score >= 0 && score <= 1)) {
       return { status: "evidence", scores: [result.scores[0], result.scores[1]] };
