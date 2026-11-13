@@ -12,6 +12,7 @@
   background: white;
   border: 3px solid var(--color-ink);
   border-radius: 22px;
+  container-type: inline-size;
 }
 .card.solved { background: #dcf8e4; border-color: #188245; }
 .pulse { position:absolute; inset:0; border-radius:inherit; pointer-events:none; animation:accepted-pulse .6s ease-out; }
@@ -39,35 +40,86 @@
 .wrong { background: #ffe4e4; box-shadow: inset 0 0 20px #ff434355, 0 0 14px #ff434344; }
 .wrong .dots i { background: #a52626; }
 .statusLabel { text-align: center; font-weight: 800; font-size: 13px; line-height: 18px; }
-.resultStack { height: 148px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr); gap: 8px; }
-.finalStrip { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; padding: 5px 9px; gap: 8px; border: 2px solid var(--color-ink); border-radius: 10px 14px 12px 9px; text-align: center; }
-.confidence { font-size:10px; font-weight:800; white-space:nowrap; }
+.topGuesses { display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; color: #4a4453; }
+.topGuesses li { display: flex; justify-content: space-between; gap: 8px; }
+.topGuesses b { font-weight: 800; color: #181321; }
+.resultStack { height: 364px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 8px; }
+
+/* The answer reads as two stacked lines inside one strip: a quiet caption row
+   (what this is, how sure) and the word itself. The old single row squeezed the
+   caption into a 54px column and broke it across three lines. */
+.finalStrip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "label confidence icon" "word word word";
+  align-items: center;
+  gap: 2px 8px;
+  min-height: 62px;
+  padding: 7px 10px;
+  border: 2px solid var(--color-ink);
+  border-radius: 12px;
+  text-align: left;
+}
+.finalLabel { grid-area: label; font-size: 9px; line-height: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Two lines at most: a long guess such as "halftone pattern that keeps going"
+   wraps instead of clipping to an unusable stub, and the strip grows with it. */
+.finalStrip strong { grid-area: word; font-family: var(--font-display); font-size: 24px; line-height: 1.05; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.finalStrip strong.longWord { font-size: 20px; }
+.confidence { grid-area: confidence; padding: 1px 7px; border: 1.5px solid var(--color-ink); border-radius: 999px; background: white; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.finalIcon { grid-area: icon; display: grid; place-items: center; width: 22px; height: 22px; border: 2px solid var(--color-ink); border-radius: 50%; background: white; font-size: 13px; line-height: 1; font-weight: 800; }
 .finalCorrect { background: var(--color-green); }
 .finalWrong { background: var(--color-red); }
-.finalLabel { font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.finalStrip strong { font-family: var(--font-display); font-size: 22px; line-height: 1.02; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.finalStrip strong.longWord { font-size: 20px; }
-.finalIcon { display: grid; place-items: center; width: 20px; height: 20px; border: 1.5px solid var(--color-ink); border-radius: 50%; background: white; font-size: 14px; line-height: 1; font-weight: 800; }
-.previousSection { min-width: 0; min-height: 0; display: grid; grid-template-rows: 14px minmax(0, 1fr); gap: 2px; }
-.previousLabel { display: flex; align-items: center; justify-content: space-between; font-size: 9px; font-weight: 800; line-height: 14px; letter-spacing: .04em; text-transform: uppercase; color: #514b5b; }
-.previousList { height: 76px; min-height: 76px; max-height: 76px; min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #18132166 transparent; }
-.previousWord { display: flex; align-items: center; gap: 7px; height: 19px; min-height: 19px; font-size: 12px; font-weight: 700; line-height: 18px; padding: 0 3px; border-bottom: 1px solid #18132118; opacity: 1; }
-.previousWord > span:last-of-type { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.previousWord small { flex:none; font-size:10px; color:#625b6e; }
-.attemptNumber { font-size: 9px; color: #625b6e; width: 12px; flex: none; text-align: right; }
-.previousEmpty { font-size: 11px; line-height: 18px; color: #625b6e; }
+.finalNeutral { background: #eeeef0; color: #4f4a59; }
+
+.previousSection { min-width: 0; min-height: 0; display: grid; grid-template-rows: 16px 12px minmax(0, 1fr); gap: 4px; }
+.listHead { display: grid; grid-template-columns: 14px minmax(0, 1fr) 34px 36px; column-gap: 8px; padding: 0 4px; font-size: 8px; line-height: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #6b6579; }
+.listHead span:nth-child(3), .listHead span:nth-child(4) { text-align: right; }
+.previousLabel { display: flex; align-items: center; justify-content: space-between; font-size: 9px; font-weight: 800; line-height: 16px; letter-spacing: .08em; text-transform: uppercase; color: #4f4a59; }
+/* The count is a capsule, not a bare digit floating at the end of a label. */
+.previousLabel b { display: grid; place-items: center; min-width: 18px; height: 16px; padding: 0 5px; border: 1.5px solid var(--color-ink); border-radius: 999px; background: white; font-size: 9px; font-weight: 800; letter-spacing: 0; font-variant-numeric: tabular-nums; color: var(--color-ink); }
+/* No panel behind the rows: a tinted sheet showed only on the green card and made
+   the two states look like different components. The rules carry the grouping. */
+.previousList { height: 256px; min-height: 0; max-height: 256px; min-width: 0; padding: 2px 4px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #18132166 transparent; }
+
+.previousWord {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 34px 36px;
+  grid-template-areas: "rank word time confidence" "rank status status status";
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 1px;
+  min-height: 34px;
+  padding: 5px 4px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  border-bottom: 1px solid #1813211f;
+}
+.previousWord:last-child { border-bottom: 0; }
+.attemptNumber { grid-area: rank; font-size: 9px; font-weight: 800; line-height: 1.25; color: #6b6579; font-variant-numeric: tabular-nums; text-align: right; }
+.previousWord > span:nth-of-type(2) { grid-area: word; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.previousWord small { font-size: 10px; font-weight: 700; color: #4f4a59; font-variant-numeric: tabular-nums; }
+.previousWord small:nth-of-type(1) { grid-area: time; text-align: right; }
+.previousWord small:nth-of-type(2) { grid-area: confidence; text-align: right; color: var(--color-ink); font-weight: 800; }
+.previousWord small:nth-of-type(3) { grid-area: status; font-size: 10px; font-weight: 700; color: #4f4a59; }
+.previousWord[data-status="correct"] > span:nth-of-type(2),
+.previousWord[data-status="correct"] small:nth-of-type(3) { color: #146234; }
+.previousWord[data-status="incorrect"] small:nth-of-type(3) { color: #a52626; }
+.previousWord[data-status="skipped"] > span:nth-of-type(2) { color: #4f4a59; }
+.previousEmpty { font-size: 11px; line-height: 18px; padding: 4px; color: #4f4a59; }
+/* The sidebar card is 250px on a laptop; there the full caption cannot fit, so it
+   swaps for a shorter one rather than trailing an ellipsis through a label. */
+.labelShort { display: none; }
+@container (max-width: 230px) {
+  .labelLong { display: none; }
+  .labelShort { display: inline; }
+  .previousLabel { letter-spacing: .04em; }
+}
 @keyframes dot-tumble { 0%, 42%, 100% { transform: translate(0, 0) scale(1); } 9% { transform: translate(4px, -9px) scale(.9); } 19% { transform: translate(8px, 0) scale(1); } 29% { transform: translate(3px, 6px) scale(.9); } 38% { transform: translate(0, 0) scale(1); } }
 @keyframes guess-ring { 0% { transform: translate(-50%, -50%) scale(.15); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(3.3); opacity: 0; } }
 @keyframes guess-center { 0%, 100% { transform: scale(1); } 25% { transform: scale(.65); } 55% { transform: scale(1.25); } }
 @media (prefers-reduced-motion: reduce) { .waiting .dots i, .guessing::before, .guessing::after, .guessing .dots, .pulse { animation: none; } .guessing::before, .guessing::after { display: none; } .pulse { box-shadow:inset 0 0 0 3px var(--pulse-color); } }
 
-.notSubmitted { color: #67636d; background: #eeeef0; }
-.previousWord { height: auto; min-height: 26px; flex-wrap: wrap; padding: 4px 3px; }
-.previousWord small:last-child { flex-basis: 100%; margin-left: 19px; }
-.finalLabel { max-width: 54px; }
-
-.finalNeutral { background:#eeeef0; color:#67636d; }
-
 .resultCard { height: 440px; min-height: 440px; max-height: 440px; }
 .resultCard .content, .resultCard .resultStack { height: 364px; }
-.resultCard .previousList { height: 292px; min-height: 0; max-height: 292px; overflow-x: hidden; }
+.resultCard .previousList { height: 256px; min-height: 0; max-height: 256px; overflow-x: hidden; }

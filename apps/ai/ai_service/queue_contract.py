@@ -74,10 +74,47 @@ class RefereeJobV1(_Binding):
 InferenceJobV1 = GuessJobV1 | RefereeJobV1
 
 
+class GuessGeometryV1(_Strict):
+    """A rectangle in canvas pixels, as returned by the adapter's fit step."""
+
+    x: float
+    y: float
+    width: float = Field(ge=0)
+    height: float = Field(ge=0)
+
+
+class GuessHeatmapV1(_Strict):
+    """Where the Guesser looked, as a 14x14 grid of relative focus.
+
+    The grid is quantised to 0-255 so the payload has a fixed, small size. The
+    geometry maps the model's square input back onto the canvas: `frame` covers
+    the whole input including the white padding, `content` covers just the ink.
+    """
+
+    grid: list[int] = Field(min_length=196, max_length=196)
+    frame: GuessGeometryV1
+    content: GuessGeometryV1
+
+    @model_validator(mode="after")
+    def _grid_is_quantised(self) -> "GuessHeatmapV1":
+        if any(value < 0 or value > 255 for value in self.grid):
+            raise ValueError("invalid-heatmap-grid")
+        return self
+
+
+class GuessAlternativeV1(_Strict):
+    """A runner-up class the model considered, with its probability."""
+
+    answer: str = Field(min_length=1, max_length=100)
+    confidence: float = Field(ge=0, le=1)
+
+
 class GuessAnswerResultV1(_Binding):
     status: Literal["answer"]
     answer: str = Field(min_length=1, max_length=100)
     confidence: float = Field(ge=0, le=1)
+    alternatives: list[GuessAlternativeV1] | None = Field(default=None, max_length=2)
+    heatmap: GuessHeatmapV1 | None = None
 
     @model_validator(mode="after")
     def _guesser_role(self) -> "GuessAnswerResultV1":
@@ -157,6 +194,6 @@ def result_binding(job: InferenceJobV1) -> dict[str, object]:
 
 def validate_result_binding(result: InferenceResultV1, job: InferenceJobV1) -> None:
     """Reject a result whose identity fields do not match the dispatched job."""
-    actual = result.model_dump(exclude={"status", "answer", "confidence", "reason", "scores"})
+    actual = result.model_dump(exclude={"status", "answer", "confidence", "reason", "scores", "heatmap", "alternatives"})
     if actual != result_binding(job):
         raise ValueError("invalid-result-binding")

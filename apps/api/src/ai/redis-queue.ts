@@ -290,7 +290,15 @@ export class InferenceQueue {
 export { InferenceQueue as GuesserQueue };
 
 function toOutcome(result: InferenceResultV1): Outcome {
-  if (result.status === "answer") return { status: "answer", answer: result.answer, confidence: result.confidence };
+  if (result.status === "answer") {
+    return {
+      status: "answer",
+      answer: result.answer,
+      confidence: result.confidence,
+      ...(result.heatmap ? { heatmap: result.heatmap } : {}),
+      ...(result.alternatives ? { alternatives: result.alternatives } : {}),
+    };
+  }
   if (result.status === "pass") return { status: "pass", reason: result.reason === "no-evidence" ? "no-evidence" : undefined };
   if (result.status === "evidence") return { status: "evidence", scores: result.scores };
   return { status: "unavailable", reason: result.reason };

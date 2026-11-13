@@ -119,3 +119,33 @@ test("referee result validation rejects bad scores and binding drift", () => {
     assert.throws(() => parseRefereeResultV1(value, job));
   }
 });
+
+test("answer results carry a bounded attention heatmap", () => {
+  const job = parseGuessJobV1(read("job.valid.json"));
+  const result = parseGuessResultV1(read("result.answer-heatmap.valid.json"), job);
+  if (result.status !== "answer") throw new Error("fixture must be an answer");
+  assert.equal(result.heatmap?.grid.length, 196);
+  assert.deepEqual(result.heatmap?.frame, { x: 96.5, y: 32, width: 832, height: 704 });
+  assert.equal(Math.max(...result.heatmap!.grid), 255);
+  assert.deepEqual(result.alternatives, [
+    { answer: "hourglass", confidence: 0.11 },
+    { answer: "triangle", confidence: 0.04 },
+  ]);
+
+  const base = record("result.answer-heatmap.valid.json");
+  const mutations: ((value: Record<string, unknown>) => void)[] = [
+    value => { (value.heatmap as Record<string, unknown>).grid = ((value.heatmap as Record<string, unknown>).grid as number[]).slice(0, 195); },
+    value => { ((value.heatmap as Record<string, unknown>).grid as number[])[7] = 256; },
+    value => { ((value.heatmap as Record<string, unknown>).grid as number[])[7] = 1.5; },
+    value => { (value.heatmap as Record<string, unknown>).frame = { x: 0, y: 0, width: -1, height: 10 }; },
+    value => { (value.heatmap as Record<string, unknown>).extra = true; },
+    value => { (value.alternatives as unknown[]).push({ answer: "cloud", confidence: 0.01 }); },
+    value => { ((value.alternatives as Record<string, unknown>[])[0]).confidence = 1.2; },
+    value => { ((value.alternatives as Record<string, unknown>[])[0]).reason = "shape"; },
+  ];
+  for (const mutate of mutations) {
+    const value = structuredClone(base);
+    mutate(value);
+    assert.throws(() => parseGuessResultV1(value, job));
+  }
+});

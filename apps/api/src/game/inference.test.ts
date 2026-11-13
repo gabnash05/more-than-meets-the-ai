@@ -87,8 +87,7 @@ async function startRoom(
   const target = choice.privateState!.promptOptions![0].label;
   const generation = game.generation;
   await send(hostConnection, "room:choose-prompt", { generation, payload: { id: choice.privateState!.promptOptions![0].id } });
-  const ink = async (clear = false) => {
-    const point = { x: 100, y: 100, time: 0 };
+  const ink = async (clear = false, point = { x: 100, y: 100, time: 0 }) => {
     const base = { opId: randomUUID(), actionId: randomUUID(), at: Date.now(), clientSeq: 1 };
     await send(hostConnection, "room:drawing", { generation, payload: {
       roomCode: code, canvasId: game.canvasId, generation, streamId: randomUUID(), clientSeq: clear ? [1, 1] : [1, 2],
@@ -408,5 +407,46 @@ test("only confidence above one half submits a canonical inference", async () =>
     assert.deepEqual(result.aiGuesses?.map(guess => guess.submitted), [false, false, true]);
     assert.equal(result.aiBenchmark?.status, "solved");
     assert.equal(room.events.filter(event => event.type === "ai-guess").length, 2);
+  } finally { await room.engine.shutdown(); }
+});
+
+test("a solved round refreshes the explanation without recording another guess", async () => {
+  let word = "";
+  let calls = 0;
+  const map = (value: number) => ({
+    grid: Array.from({ length: 196 }, () => value),
+    frame: { x: 0, y: 0, width: 1024, height: 768 },
+    content: { x: 100, y: 100, width: 800, height: 600 },
+  });
+  const room = await fixture(
+    async () => {
+      calls += 1;
+      return { status: "answer" as const, answer: word, confidence: 0.9, heatmap: map(calls), alternatives: [] };
+    },
+    // Vary the rendered bytes with the canvas sequence so a new stroke is not
+    // deduplicated by the identical-canvas hash.
+    async key => Buffer.from(key),
+  );
+  const latest = () => (room.events.filter(event => event.type === "snapshot").at(-1) as Extract<RoomEvent, { type: "snapshot" }>).snapshot.game;
+  try {
+    word = room.target;
+    room.advance(4000);
+    await room.ink();
+    await waitFor(() => calls === 1);
+    await delay(60);
+    assert.equal(latest()?.aiStatus, "correct");
+    assert.equal(latest()?.aiHeatmap?.grid[0], 1);
+    // One guess reaches both connected players, so count the pulses rather than
+    // assuming a single event per prediction.
+    const pulsesAfterSolve = room.events.filter(event => event.type === "ai-guess").length;
+
+    // Keep drawing after the solve: the map follows the canvas, the guess does not repeat.
+    room.advance(9000);
+    await room.ink(false, { x: 320, y: 260, time: 0 });
+    await waitFor(() => calls === 2);
+    await delay(60);
+    assert.equal(latest()?.aiHeatmap?.grid[0], 2);
+    assert.equal(latest()?.aiStatus, "correct");
+    assert.equal(room.events.filter(event => event.type === "ai-guess").length, pulsesAfterSolve);
   } finally { await room.engine.shutdown(); }
 });

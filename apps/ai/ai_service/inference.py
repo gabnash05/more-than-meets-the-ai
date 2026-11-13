@@ -8,6 +8,7 @@ between transports.
 import json
 import logging
 from io import BytesIO
+from math import isfinite
 from time import time
 
 from PIL import Image
@@ -57,6 +58,58 @@ def decode_png(data: bytes) -> Image.Image:
         raise InvalidImage("expected-canonical-png") from exc
 
 
+def _sanitise_heatmap(value: object) -> dict | None:
+    """Return a contract-safe heatmap, or None when it cannot be trusted.
+
+    The grid must be 196 integers in 0-255 and both rectangles must carry exactly
+    four finite, non-negative numbers. A malformed map is dropped rather than
+    emitted: it must never cost the room an otherwise valid answer, and it must
+    never reach the API parser, which would reject the whole result.
+    """
+    if not isinstance(value, dict):
+        return None
+    grid = value.get("grid")
+    if not isinstance(grid, list) or len(grid) != 196:
+        return None
+    if any(isinstance(cell, bool) or not isinstance(cell, int) or not 0 <= cell <= 255 for cell in grid):
+        return None
+    geometry: dict[str, dict[str, float]] = {}
+    for name in ("frame", "content"):
+        rectangle = value.get(name)
+        if not isinstance(rectangle, dict) or set(rectangle) != {"x", "y", "width", "height"}:
+            return None
+        for key, number in rectangle.items():
+            if isinstance(number, bool) or not isinstance(number, (int, float)) or not isfinite(number):
+                return None
+        if rectangle["width"] < 0 or rectangle["height"] < 0:
+            return None
+        geometry[name] = {key: float(number) for key, number in rectangle.items()}
+    return {"grid": list(grid), **geometry}
+
+
+def _sanitise_alternatives(value: object) -> list[dict] | None:
+    """Return up to two runner-up guesses, or None when the shape is unusable.
+
+    Runner-ups narrow the answer almost as much as the top-1, so they are only
+    forwarded when they are complete and in range; anything doubtful is dropped
+    rather than passed to the room.
+    """
+    if not isinstance(value, list) or not value or len(value) > 2:
+        return None
+    cleaned: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"answer", "confidence"}:
+            return None
+        answer = item["answer"]
+        confidence = item["confidence"]
+        if not isinstance(answer, str) or not 1 <= len(answer) <= 100:
+            return None
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            return None
+        cleaned.append({"answer": answer, "confidence": float(confidence)})
+    return cleaned
+
+
 def infer_observation(job: Observation, bundle: Bundle, data: bytes, role: str) -> dict:
     """Run one model observation and return a result bound to ``job``.
 
@@ -101,4 +154,14 @@ def infer_observation(job: Observation, bundle: Bundle, data: bytes, role: str) 
             "modelId": bundle.model_id,
             "artifactRevision": bundle.revision,
         }, separators=(",", ":")))
+        heatmap = _sanitise_heatmap(result.get("heatmap"))
+        if heatmap is None:
+            result.pop("heatmap", None)
+        else:
+            result["heatmap"] = heatmap
+        alternatives = _sanitise_alternatives(result.get("alternatives"))
+        if alternatives is None:
+            result.pop("alternatives", None)
+        else:
+            result["alternatives"] = alternatives
     return {**binding, **result}

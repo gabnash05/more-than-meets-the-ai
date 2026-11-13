@@ -1,3 +1,5 @@
+import type { GuessHeatmapV1, GuessAlternativeV1 } from "../../../../packages/game-contracts/src/ai-inference";
+
 /** Durable, JSON-compatible room state. Runtime timers and connection IDs are not stored. */
 export interface PersistedRoom {
   code: string;
@@ -46,7 +48,7 @@ export interface GuesserObservation {
   sequence: number;
   hint: string;
 }
-export type GuesserResult = { jobId: string; status: "answer"; answer: string; confidence?: number } | { jobId: string; status: "unavailable"; reason?: string };
+export type GuesserResult = { jobId: string; status: "answer"; answer: string; confidence?: number; alternatives?: GuessAlternativeV1[]; heatmap?: GuessHeatmapV1 } | { jobId: string; status: "unavailable"; reason?: string };
 export interface GuesserProvider {
   guess(observation: GuesserObservation): Promise<GuesserResult>;
 }

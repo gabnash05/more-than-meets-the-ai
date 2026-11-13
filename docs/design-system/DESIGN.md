@@ -56,6 +56,17 @@ Use 4, 8, 12, 16, 24, 32, 48, 64, and 96px, expressed in rem.
 
 Compact layouts change the gaps, not the minimum body font size.
 
+## Layout stability
+The room is a live surface: snapshots arrive several times a second, so anything whose text changes must not change the size of the box around it.
+
+- Panels below the board (tools, chat, AI card) keep a fixed height, so a status change never moves them.
+- Transient status — saving, queued changes, canvas ready — sits on the board as a capsule, out of the column flow. Long copy truncates; the full sentence lives in `title`. It never wraps to a second line.
+- A label that appears and disappears (the attention legend's caption) keeps its slot and toggles visibility instead of presence.
+- Widths come from `minmax(0, 1fr)` grid tracks and `aspect-ratio` on the board, so the same structure holds from 390px to 1680px without reflowing at a breakpoint.
+- Dynamic content goes inside a reserved box; it never gets to push the layout. Verify a change by measuring element boxes over a live round, not by eye.
+- Colour is evidence, so it must sit on the thing it describes. An overlay that tints empty paper is decoration; mask it to the marks it explains (`mix-blend-mode: screen` over ink on white). Any caption that carries the meaning — "attention, not its reasoning" — stays visible, never a tooltip.
+- Hints are yellow stickers: `--color-base` fill, 2px ink outline, 12px radius, a 10px diamond arrow in the same fill with ink on two sides. Typed Nunito 700 at 12px, 228px wide, never a shadow. They open on hover where hover exists and on keyboard focus; on a touch screen they stay closed, because a stuck tip covers the board. The text is always in `aria-describedby`, so nothing depends on seeing it.
+
 ## Roundness
 Small 12px; medium 24px; large 32px; extra-large 48px; capsule 9999px.
 Use larger radii for larger surfaces. A capsule is deliberately round, not an accidental default for every region.
