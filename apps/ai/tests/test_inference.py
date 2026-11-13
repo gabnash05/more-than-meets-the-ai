@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from ai_service.bundles import Bundle
-from ai_service.inference import InvalidImage, Observation, infer_observation
+from ai_service.inference import InvalidImage, Observation, _sanitise_heatmap, infer_observation
 
 
 def canonical_png() -> bytes:
@@ -98,3 +98,54 @@ def test_invalid_confidence_and_bad_pass_shape_are_rejected() -> None:
     result = infer_observation(job(), bundle(adapter), canonical_png(), "guesser")
     assert result["status"] == "unavailable"
     assert result["reason"] == "invalid-confidence"
+
+
+def test_heatmaps_are_emitted_only_when_well_formed() -> None:
+    geometry = {"x": 0, "y": 0, "width": 1024, "height": 768}
+    grid = [index % 256 for index in range(196)]
+    assert _sanitise_heatmap({"grid": grid, "frame": geometry, "content": geometry}) == {
+        "grid": grid,
+        "frame": {"x": 0.0, "y": 0.0, "width": 1024.0, "height": 768.0},
+        "content": {"x": 0.0, "y": 0.0, "width": 1024.0, "height": 768.0},
+    }
+    for broken in (
+        None,
+        {"grid": grid[:195], "frame": geometry, "content": geometry},
+        {"grid": [256] + grid[1:], "frame": geometry, "content": geometry},
+        {"grid": [1.5] + grid[1:], "frame": geometry, "content": geometry},
+        {"grid": grid, "frame": geometry},
+        {"grid": grid, "frame": {**geometry, "extra": 1}, "content": geometry},
+        {"grid": grid, "frame": {**geometry, "width": -1}, "content": geometry},
+    ):
+        assert _sanitise_heatmap(broken) is None
+
+
+def test_a_bad_heatmap_never_costs_the_answer() -> None:
+    adapter = Adapter({"status": "answer", "answer": "zigzag", "confidence": 0.82, "heatmap": {"grid": [1, 2, 3]}})
+    result = infer_observation(job(), bundle(adapter), canonical_png(), "guesser")
+    assert result["status"] == "answer"
+    assert result["answer"] == "zigzag"
+    assert "heatmap" not in result
+
+
+def test_runner_ups_are_forwarded_only_when_complete() -> None:
+    good = [{"answer": "hourglass", "confidence": 0.11}, {"answer": "triangle", "confidence": 0.04}]
+    adapter = Adapter({"status": "answer", "answer": "zigzag", "confidence": 0.82, "alternatives": good})
+    assert infer_observation(job(), bundle(adapter), canonical_png(), "guesser")["alternatives"] == [
+        {"answer": "hourglass", "confidence": 0.11},
+        {"answer": "triangle", "confidence": 0.04},
+    ]
+    for broken in (
+        [{"answer": "hourglass", "confidence": 1.2}],
+        [{"answer": "hourglass"}],
+        good + [{"answer": "cloud", "confidence": 0.01}],
+        "hourglass",
+    ):
+        result = infer_observation(
+            job(),
+            bundle(Adapter({"status": "answer", "answer": "zigzag", "confidence": 0.82, "alternatives": broken})),
+            canonical_png(),
+            "guesser",
+        )
+        assert result["answer"] == "zigzag"
+        assert "alternatives" not in result
