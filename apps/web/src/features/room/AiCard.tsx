@@ -62,10 +62,7 @@ export function AiCard({ game, result, unavailable = false, disabled = false, pu
         {disabled ? <div className={styles.liveState} role="status"><strong>AI disabled</strong><p>The host turned off AI guessing for this match.</p></div> : showAnswers ? (
           <div className={styles.resultStack}>
             <div className={`${styles.finalStrip} ${!finalGuess && !answer?.finalAnswer ? styles.finalNeutral : status === "correct" ? styles.finalCorrect : styles.finalWrong}`} data-testid="ai-final-answer">
-              <span className={styles.finalLabel}>
-                <span className={styles.labelLong}>Last submitted guess</span>
-                <span className={styles.labelShort}>Final guess</span>
-              </span>
+              <span className={styles.finalLabel}>Last submitted guess</span>
               <strong className={finalAnswer.length > 7 ? styles.longWord : ""}>{finalAnswer}</strong>
               {finalConfidence !== undefined && <span className={styles.confidence}>{Math.round(finalConfidence * 100)}%</span>}
               <span className={styles.finalIcon} aria-label={status === "correct" ? "Correct" : "Incorrect"}>{status === "correct" ? "✓" : "×"}</span>
