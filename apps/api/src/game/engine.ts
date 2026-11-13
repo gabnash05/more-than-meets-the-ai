@@ -547,10 +547,6 @@ export class RoomEngine {
         if (game.aiRound?.status === "solved") game.guesserProgress.explainedAt = at;
       }
       if (due.includes("referee")) {
-        if (game.refereeWarning && now >= game.refereeWarning.expiresAt) {
-          this.clearRefereeWarning(game);
-          this.publish(room);
-        }
         game.refereeAt = at;
       }
       const operations = group.operations.slice();
@@ -687,10 +683,11 @@ export class RoomEngine {
             if (outcome.scores[0] >= 0.3) evidence[0] = true;
             if (outcome.scores[1] >= 0.5) evidence[1] = true;
           }
-          const now = this.now();
-          game.refereeWarning = outcome.status === "evidence" && outcome.scores[0] >= 0.3
-            ? { confidence: outcome.scores[0], expiresAt: now + 3000 }
-            : undefined;
+          if (outcome.status === "evidence") {
+            game.refereeWarning = outcome.scores[0] >= 0.3
+              ? { confidence: outcome.scores[0] }
+              : undefined;
+          }
           if (game.refereeWarning !== previousWarning) this.publish(live.room);
         }
       });
@@ -705,7 +702,6 @@ export class RoomEngine {
             this.recordGuess(live.game, live.group, { status: "unavailable", reason: "render-failed" });
             this.publish(live.room);
           }
-          if (role === "referee" && this.clearRefereeWarning(live.game)) this.publish(live.room);
         });
       }
     } finally {
@@ -998,7 +994,7 @@ export class RoomEngine {
           sequence: group.sequence,
           durableSequence: group.durableSequence,
         },
-        refereeWarning: room.phase === "drawing" && !group.pause && game.refereeWarning && game.refereeWarning.expiresAt > now ? game.refereeWarning : undefined,
+        refereeWarning: room.phase === "drawing" && !group.pause && game.refereeWarning ? game.refereeWarning : undefined,
         aiStatus: game.aiRound?.status === "unavailable" || !room.aiMatch?.guesser ? "unavailable" : game.aiRound?.status === "solved" ? "correct" : this.activeInference.get(this.inferenceKey(room.code, "guesser"))?.guessing ? "guessing" : "waiting",
         // The map is the AI's reading of the drawing, so a guesser could use it as
         // an oracle. During play only the drawer — who owns the word — receives

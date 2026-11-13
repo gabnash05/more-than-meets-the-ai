@@ -67,7 +67,6 @@ export interface AiGuessEvent {
 }
 export interface RefereeWarning {
   confidence: number;
-  expiresAt: number;
 }
 export interface RoomGame {
   choosingPlayerId?: string;

@@ -373,6 +373,10 @@ test("Guesser result appears during a held stroke before the separate delayed Re
   expect(refereeCompleted).toBe(true);
   expect(combinedRequests).toBe(0);
   await page.mouse.up();
+  await page.waitForTimeout(3500);
+  await expect(page.getByTestId("referee-warning")).toBeVisible();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(page.getByTestId("referee-warning")).toHaveCount(0);
 });
 
 test("history stays tall and readable beyond the viewport and expands on demand", async ({ page }) => {
