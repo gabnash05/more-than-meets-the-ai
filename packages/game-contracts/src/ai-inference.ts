@@ -44,11 +44,38 @@ export interface RefereeJobV1 extends InferenceBindingV1 {
 
 export type InferenceJobV1 = GuessJobV1 | RefereeJobV1;
 
+export interface GuessGeometryV1 {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Where the Guesser looked, as a 14x14 grid of relative focus.
+ *
+ * Values are quantised to 0-255 so the payload has a fixed size. `frame` maps the
+ * model's square input onto the canvas, padding included; `content` is the ink's
+ * rectangle, so a viewer can clip the blank margin instead of painting it.
+ */
+export interface GuessHeatmapV1 {
+  grid: number[];
+  frame: GuessGeometryV1;
+  content: GuessGeometryV1;
+}
+
+export interface GuessAlternativeV1 {
+  answer: string;
+  confidence: number;
+}
+
 export interface GuessAnswerResultV1 extends InferenceBindingV1 {
   role: "guesser";
   status: "answer";
   answer: string;
   confidence: number;
+  alternatives?: GuessAlternativeV1[];
+  heatmap?: GuessHeatmapV1;
 }
 
 export interface GuessPassResultV1 extends InferenceBindingV1 {
@@ -122,6 +149,54 @@ function hasBinding(value: Record<string, unknown>): boolean {
   );
 }
 
+const HEATMAP_CELLS = 196;
+const GEOMETRY_KEYS = new Set(["x", "y", "width", "height"]);
+const HEATMAP_KEYS = new Set(["grid", "frame", "content"]);
+const ALTERNATIVE_KEYS = new Set(["answer", "confidence"]);
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** Accept at most two runner-ups, each a short label with a probability. */
+export function isGuessAlternativesV1(value: unknown): value is GuessAlternativeV1[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 2) return false;
+  return value.every(
+    item =>
+      isRecord(item) &&
+      hasOnlyKeys(item, ALTERNATIVE_KEYS) &&
+      hasText(item.answer, 1, 100) &&
+      isFiniteNumber(item.confidence) &&
+      item.confidence >= 0 &&
+      item.confidence <= 1
+  );
+}
+
+function hasGeometry(value: unknown): value is GuessGeometryV1 {
+  if (!isRecord(value) || !hasOnlyKeys(value, GEOMETRY_KEYS)) return false;
+  return (
+    isFiniteNumber(value.x) &&
+    isFiniteNumber(value.y) &&
+    isFiniteNumber(value.width) &&
+    isFiniteNumber(value.height) &&
+    value.width >= 0 &&
+    value.height >= 0
+  );
+}
+
+/**
+ * Accept only a fully-formed heatmap: exactly 196 quantised cells and two
+ * rectangles with finite, non-negative extents.
+ */
+export function isGuessHeatmapV1(value: unknown): value is GuessHeatmapV1 {
+  if (!isRecord(value) || !hasOnlyKeys(value, HEATMAP_KEYS)) return false;
+  if (!Array.isArray(value.grid) || value.grid.length !== HEATMAP_CELLS) return false;
+  const quantised = value.grid.every(
+    cell => typeof cell === "number" && Number.isInteger(cell) && cell >= 0 && cell <= 255
+  );
+  return quantised && hasGeometry(value.frame) && hasGeometry(value.content);
+}
+
 /** Return true only for a structurally valid Guesser job envelope. */
 export function isGuessJobV1(value: unknown): value is GuessJobV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, JOB_KEYS) || !hasBinding(value)) return false;
@@ -171,7 +246,7 @@ function hasResultBinding(value: Record<string, unknown>, job: InferenceJobV1): 
  */
 export function parseGuessResultV1(value: unknown, job: GuessJobV1): GuessResultV1 {
   if (!isRecord(value) || !hasResultBinding(value, job)) throw new Error("invalid-guess-result");
-  const allowed = new Set<string>([...BINDING_KEYS, "status", "answer", "confidence", "reason"]);
+  const allowed = new Set<string>([...BINDING_KEYS, "status", "answer", "confidence", "reason", "heatmap", "alternatives"]);
   if (!hasOnlyKeys(value, allowed)) throw new Error("invalid-guess-result");
   if (value.role !== "guesser") throw new Error("invalid-result-binding");
   if (value.status === "answer") {
@@ -179,6 +254,8 @@ export function parseGuessResultV1(value: unknown, job: GuessJobV1): GuessResult
     if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) {
       throw new Error("invalid-confidence");
     }
+    if (value.heatmap !== undefined && !isGuessHeatmapV1(value.heatmap)) throw new Error("invalid-heatmap");
+    if (value.alternatives !== undefined && !isGuessAlternativesV1(value.alternatives)) throw new Error("invalid-alternatives");
     return value as unknown as GuessResultV1;
   }
   if (value.status === "pass") {
