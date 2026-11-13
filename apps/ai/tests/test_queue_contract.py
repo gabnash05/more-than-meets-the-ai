@@ -1,5 +1,6 @@
 """Mirror the TypeScript Guesser job/result contract fixtures."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -104,3 +105,56 @@ def test_result_binding_must_match_the_job() -> None:
     )
     with pytest.raises(ValueError, match="invalid-result-binding"):
         validate_result_binding(parse_result_json(drifted), job)
+
+
+def test_answer_results_may_carry_a_bounded_heatmap() -> None:
+    payload = json.loads(read("result.answer-heatmap.valid.json"))
+    result = parse_result_json(json.dumps(payload))
+    assert result.status == "answer"
+    assert result.heatmap is not None
+    assert len(result.heatmap.grid) == 196
+    assert result.heatmap.frame.model_dump() == {"x": 96.5, "y": 32.0, "width": 832.0, "height": 704.0}
+    assert result.alternatives is not None
+    assert [(item.answer, item.confidence) for item in result.alternatives] == [("hourglass", 0.11), ("triangle", 0.04)]
+    validate_result_binding(result, parse_job_json(read("job.valid.json")))
+
+
+def test_heatmaps_outside_the_contract_are_rejected() -> None:
+    payload = json.loads(read("result.answer-heatmap.valid.json"))
+
+    def truncated(heatmap: dict) -> None:
+        heatmap["grid"] = heatmap["grid"][:195]
+
+    def out_of_range(heatmap: dict) -> None:
+        heatmap["grid"][7] = 256
+
+    def fractional(heatmap: dict) -> None:
+        heatmap["grid"][7] = 1.5
+
+    def missing_content(heatmap: dict) -> None:
+        del heatmap["content"]
+
+    for mutate in (truncated, out_of_range, fractional, missing_content):
+        broken = json.loads(json.dumps(payload))
+        mutate(broken["heatmap"])
+        with pytest.raises(ValidationError):
+            parse_result_json(json.dumps(broken))
+
+
+def test_runner_up_guesses_are_bounded_to_two() -> None:
+    payload = json.loads(read("result.answer-heatmap.valid.json"))
+
+    def three(alternatives: list) -> None:
+        alternatives.append({"answer": "cloud", "confidence": 0.01})
+
+    def out_of_range(alternatives: list) -> None:
+        alternatives[0]["confidence"] = 1.2
+
+    def extra_field(alternatives: list) -> None:
+        alternatives[0]["reason"] = "shape"
+
+    for mutate in (three, out_of_range, extra_field):
+        broken = json.loads(json.dumps(payload))
+        mutate(broken["alternatives"])
+        with pytest.raises(ValidationError):
+            parse_result_json(json.dumps(broken))
