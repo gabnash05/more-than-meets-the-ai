@@ -107,12 +107,10 @@
 .previousWord[data-status="incorrect"] small:nth-of-type(3) { color: #a52626; }
 .previousWord[data-status="skipped"] > span:nth-of-type(2) { color: #4f4a59; }
 .previousEmpty { font-size: 11px; line-height: 18px; padding: 4px; color: #4f4a59; }
-/* The sidebar card is 250px on a laptop; there the full caption cannot fit, so it
-   swaps for a shorter one rather than trailing an ellipsis through a label. */
-.labelShort { display: none; }
+/* The sidebar card is 250px on a laptop; there the caption fits by tightening the
+   type rather than truncating or swapping the wording. */
 @container (max-width: 230px) {
-  .labelLong { display: none; }
-  .labelShort { display: inline; }
+  .finalLabel { font-size: 8px; letter-spacing: .02em; }
   .previousLabel { letter-spacing: .04em; }
 }
 @keyframes dot-tumble { 0%, 42%, 100% { transform: translate(0, 0) scale(1); } 9% { transform: translate(4px, -9px) scale(.9); } 19% { transform: translate(8px, 0) scale(1); } 29% { transform: translate(3px, 6px) scale(.9); } 38% { transform: translate(0, 0) scale(1); } }
