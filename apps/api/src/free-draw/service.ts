@@ -13,7 +13,8 @@ const MAX_SESSIONS = 256;
 const IDLE_MS = 15 * 60_000;
 const MAX_HISTORY = 128;
 const MAX_BODY = 4 * 1024 * 1024;
-const MIN_INTERVAL = 3000;
+const GUESSER_MIN_INTERVAL = 500;
+const REFEREE_MIN_INTERVAL = 1000;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const ANCILLARY_CHUNKS = new Set(["sRGB", "gAMA", "pHYs"]);
 
@@ -21,8 +22,8 @@ interface SessionState {
   id: string;
   token: string;
   lastUsed: number;
-  lastAdmission: number;
-  activeObservation: boolean;
+  lastAdmission: Partial<Record<Role, number>>;
+  activeRoles: Set<Role>;
   requests: Set<string>;
   active: Set<AbortController>;
 }
@@ -96,7 +97,8 @@ export class FreeDrawService {
     return {
       guesser: { available: labels.length > 0, labels },
       referee: { available: !!referee },
-      minIntervalMs: MIN_INTERVAL,
+      minIntervalMs: GUESSER_MIN_INTERVAL,
+      refereeMinIntervalMs: REFEREE_MIN_INTERVAL,
     };
   }
 
@@ -110,8 +112,8 @@ export class FreeDrawService {
       id: sessionId,
       token,
       lastUsed: this.now(),
-      lastAdmission: 0,
-      activeObservation: false,
+      lastAdmission: {},
+      activeRoles: new Set(),
       requests: new Set(),
       active: new Set(),
     });
@@ -144,16 +146,20 @@ export class FreeDrawService {
     if (session.requests.has(observation.requestId)) throw new FreeDrawError("duplicate-request", 409);
 
     const now = this.now();
-    const elapsed = now - session.lastAdmission;
-    if (session.lastAdmission && elapsed < MIN_INTERVAL) {
-      throw new FreeDrawError("cooldown", 429, Math.ceil((MIN_INTERVAL - elapsed) / 1000));
+    for (const role of observation.roles) {
+      const limit = role === "guesser" ? GUESSER_MIN_INTERVAL : REFEREE_MIN_INTERVAL;
+      if (session.activeRoles.has(role)) throw new FreeDrawError("busy", 429, 1);
+      const elapsed = now - (session.lastAdmission[role] ?? 0);
+      if (session.lastAdmission[role] !== undefined && elapsed < limit)
+        throw new FreeDrawError("cooldown", 429, Math.max(1, Math.ceil((limit - elapsed) / 1000)));
     }
-    if (session.activeObservation) throw new FreeDrawError("busy", 429, 1);
     if (this.activeJobs + observation.roles.length > 2) throw new FreeDrawError("busy", 429, 1);
 
-    session.activeObservation = true;
     session.lastUsed = now;
-    session.lastAdmission = now;
+    for (const role of observation.roles) {
+      session.activeRoles.add(role);
+      session.lastAdmission[role] = now;
+    }
     session.requests.add(observation.requestId);
     if (session.requests.size > MAX_HISTORY) session.requests.delete(session.requests.values().next().value!);
 
@@ -164,7 +170,7 @@ export class FreeDrawService {
       }));
       return { ...observation, sessionId: session.id, outcomes };
     } finally {
-      session.activeObservation = false;
+      for (const role of observation.roles) session.activeRoles.delete(role);
       session.lastUsed = this.now();
     }
   }

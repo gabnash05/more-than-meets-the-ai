@@ -211,3 +211,18 @@
 .room-ai-history [role="listitem"] { font-size:14px; line-height:20px; min-height:44px; padding:8px 6px; }
 .room-ai-history [role="listitem"] small { font-size:12px; }
 .room-ai-history [role="listitem"] > span:first-child { font-size:12px; width:16px; }
+
+.room-ai-history { margin:24px 0; padding:20px; background:white; text-align:left; }
+.room-ai-review-heading { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:16px; }
+.room-ai-review-heading h3 { font-family:var(--font-display); font-size:24px; line-height:1.25; margin:4px 0; }
+.room-ai-review-heading label { display:grid; gap:6px; font-size:14px; font-weight:800; }
+.room-ai-round-select { min-height:44px; max-width:100%; padding:8px 12px; background:white; color:#181321; border:2px solid #181321; border-radius:10px; font:inherit; }
+.room-ai-review-summary { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin:20px 0 10px; padding:16px; border:2px solid #181321; border-radius:12px; background:#fff8d9; }
+.room-ai-review-summary span { font-size:14px; }
+.room-ai-review-summary h4 { font-family:var(--font-display); font-size:32px; line-height:1.2; margin:5px 0 0; overflow-wrap:anywhere; }
+.room-ai-review-summary>strong { font-size:16px; }
+.room-ai-review-counts { font-size:14px; margin-bottom:18px; }
+.room-ai-history [role="list"] { height:auto; min-height:0; max-height:none; overflow:visible; margin-top:8px; }
+.room-ai-history [role="listitem"] { min-height:80px; padding:16px 6px; font-size:16px; line-height:1.4; }
+.room-ai-history [role="listitem"] small { font-size:14px; }
+@media (max-width:540px) { .room-ai-history { padding:14px; } .room-ai-review-heading { flex-direction:column; } .room-ai-review-heading label { width:100%; } }

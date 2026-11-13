@@ -36,7 +36,7 @@ async function mockFreeDraw(
         capabilities: {
           guesser: { available: true, labels },
           referee: { available: true },
-          minIntervalMs: 3000,
+          minIntervalMs: 500,
         },
       },
     }),
@@ -46,7 +46,7 @@ async function mockFreeDraw(
       json: {
         guesser: { available: true, labels },
         referee: { available: true },
-        minIntervalMs: 3000,
+        minIntervalMs: 500,
       },
     }),
   );
@@ -113,131 +113,62 @@ test("Free Draw opens without a profile and selects a searchable prompt by keybo
   await expect(page.getByText("Prompt: cat")).toBeVisible();
 });
 
-test("threshold status, independent insight toggles, draft restore, and clear controls", async ({
+test("threshold status, independent insight toggles, fresh reload, and Home entry defaults", async ({
   page,
 }) => {
   await mockFreeDraw(page, 0.5, "cat");
   await page.goto("/free-draw/");
-  await expect(
-    page.getByRole("button", { name: "Guesser On" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "brush", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "eraser", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "fill", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Color #181321" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "No prompt" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Heatmap Off" }).click();
-  await expect(
-    page.getByRole("button", { name: "Guesser On" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await expect(
-    page.getByRole("button", { name: "Heatmap On" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Guesser On" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Guesser On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Heatmap On" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Heatmap On" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Guesser Off" }).click();
   await drawStroke(page);
-  await expect(
-    page.getByRole("listitem").filter({ hasText: "Below threshold" }),
-  ).toBeVisible({ timeout: 12000 });
+  await expect(page.getByRole("listitem").filter({ hasText: "Below threshold" })).toBeVisible({ timeout: 12000 });
   await expect(page.getByText("50%", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Where the AI looked — attention, not its reasoning."),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Clear history" }),
-  ).toBeEnabled();
-  await expect(
-    page.getByRole("button", { name: "Restart Guesser" }),
-  ).toBeVisible();
+  await expect(page.getByText("Where the AI looked — attention, not its reasoning.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear history" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Restart Guesser" })).toBeVisible();
   await page.getByRole("button", { name: "Clear history" }).click();
   await expect(page.getByText("No predictions yet")).toBeVisible();
 
+  const inkCount = async (element: Locator) => element.evaluate((node) => {
+    const source = node as HTMLCanvasElement;
+    const sample = document.createElement("canvas");
+    sample.width = 64;
+    sample.height = 48;
+    const context = sample.getContext("2d");
+    if (!context) return 0;
+    context.fillStyle = "white";
+    context.fillRect(0, 0, sample.width, sample.height);
+    context.drawImage(source, 0, 0, sample.width, sample.height);
+    const pixels = context.getImageData(0, 0, sample.width, sample.height).data;
+    let count = 0;
+    for (let index = 0; index < pixels.length; index += 4)
+      if (pixels[index] < 245 || pixels[index + 1] < 245 || pixels[index + 2] < 245) count++;
+    return count;
+  });
   const canvas = page.getByTestId("drawing-canvas");
-  const inkCount = async (element: Locator) =>
-    element.evaluate((node) => {
-      const source = node as HTMLCanvasElement;
-      const sample = document.createElement("canvas");
-      sample.width = 64;
-      sample.height = 48;
-      const context = sample.getContext("2d");
-      if (!context) return 0;
-      context.fillStyle = "white";
-      context.fillRect(0, 0, sample.width, sample.height);
-      context.drawImage(source, 0, 0, sample.width, sample.height);
-      const pixels = context.getImageData(
-        0,
-        0,
-        sample.width,
-        sample.height,
-      ).data;
-      let count = 0;
-      for (let index = 0; index < pixels.length; index += 4)
-        if (
-          pixels[index] < 245 ||
-          pixels[index + 1] < 245 ||
-          pixels[index + 2] < 245
-        )
-          count += 1;
-      return count;
-    });
   await expect.poll(() => inkCount(canvas)).toBeGreaterThan(0);
-  const inkBeforeReload = await inkCount(canvas);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          new Promise<number>((resolve) => {
-            const request = indexedDB.open("mmtai-free-draw", 1);
-            request.onsuccess = () => {
-              const db = request.result;
-              const get = db
-                .transaction("current")
-                .objectStore("current")
-                .get("snapshot");
-              get.onsuccess = async () => {
-                const blob = get.result?.bitmap as Blob | undefined;
-                db.close();
-                if (!blob) {
-                  resolve(0);
-                  return;
-                }
-                const image = await createImageBitmap(blob);
-                const sample = document.createElement("canvas");
-                sample.width = 64;
-                sample.height = 48;
-                const context = sample.getContext("2d")!;
-                context.fillStyle = "white";
-                context.fillRect(0, 0, 64, 48);
-                context.drawImage(image, 0, 0, 64, 48);
-                image.close();
-                const pixels = context.getImageData(0, 0, 64, 48).data;
-                let count = 0;
-                for (let i = 0; i < pixels.length; i += 4)
-                  if (
-                    pixels[i] < 245 ||
-                    pixels[i + 1] < 245 ||
-                    pixels[i + 2] < 245
-                  )
-                    count++;
-                resolve(count);
-              };
-              get.onerror = () => {
-                resolve(0);
-                db.close();
-              };
-            };
-            request.onerror = () => resolve(0);
-          }),
-      ),
-    )
-    .toBe(inkBeforeReload);
   await page.reload();
-  await expect(
-    page.getByRole("button", { name: "Guesser Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
-  const restored = page.getByTestId("drawing-canvas");
-  await expect.poll(() => restored.getAttribute("data-ready")).toBe("true");
-  await expect.poll(() => inkCount(restored)).toBe(inkBeforeReload);
+  await expect.poll(() => canvas.getAttribute("data-ready")).toBe("true");
+  await expect(page.getByText("No predictions yet")).toBeVisible();
+  await expect.poll(() => inkCount(canvas)).toBe(0);
+  await expect(page.getByRole("button", { name: "No prompt" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("link", { name: "Back to home" }).click();
+  await page.getByRole("link", { name: /Start drawing/ }).click();
+  const freshCanvas = page.getByTestId("drawing-canvas");
+  await expect.poll(() => freshCanvas.getAttribute("data-ready")).toBe("true");
+  await expect(page.getByText("No predictions yet")).toBeVisible();
+  await expect.poll(() => inkCount(freshCanvas)).toBe(0);
+  await expect(page.getByRole("button", { name: "No prompt" })).toHaveAttribute("aria-pressed", "true");
 });
-
 test("repeat predictions retain order; exact 50% does not solve, above 50% does", async ({
   page,
 }) => {
@@ -270,10 +201,10 @@ test("repeat predictions retain order; exact 50% does not solve, above 50% does"
   await expect(
     page.getByText("Guessed it! Your drawing is still open."),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Clear drawing" }).click();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
   await expect(page.getByText("No predictions yet")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Clear drawing" }),
+    page.getByRole("button", { name: "Clear", exact: true }),
   ).toBeDisabled();
 });
 
@@ -300,7 +231,7 @@ test("heatmap continues with Guesser off without adding predictions", async ({
   await expect(page.getByText("No predictions yet")).toBeVisible();
 });
 
-test("mobile keeps the drawing tools ahead of AI and history without horizontal overflow", async ({
+test("mobile keeps mode before canvas, toolbar under canvas, and AI/history below without overflow", async ({
   page,
 }) => {
   await mockFreeDraw(page);
@@ -315,7 +246,9 @@ test("mobile keeps the drawing tools ahead of AI and history without horizontal 
       documentWidth: document.documentElement.scrollWidth,
       viewportWidth: window.innerWidth,
       canvasWidth: canvas.getBoundingClientRect().width,
-      toolsTop: document.querySelector(".fd-tools")!.getBoundingClientRect()
+      modeTop: document.querySelector(".fd-mode-panel")!.getBoundingClientRect().top,
+      canvasTop: canvas.getBoundingClientRect().top,
+      toolsTop: document.querySelector(".room-tools")!.getBoundingClientRect()
         .top,
       aiTop: document.querySelector(".fd-ai-panel")!.getBoundingClientRect()
         .top,
@@ -329,6 +262,8 @@ test("mobile keeps the drawing tools ahead of AI and history without horizontal 
   expect(measurements.canvasWidth).toBeLessThanOrEqual(
     measurements.viewportWidth,
   );
+  expect(measurements.modeTop).toBeLessThan(measurements.canvasTop);
+  expect(measurements.canvasTop).toBeLessThan(measurements.toolsTop);
   expect(measurements.toolsTop).toBeLessThan(measurements.aiTop);
   expect(measurements.aiTop).toBeLessThan(measurements.historyTop);
 });
@@ -365,75 +300,72 @@ test("late inference from a prior prompt is discarded", async ({ page }) => {
     page.getByText("Guessed it! Your drawing is still open."),
   ).toHaveCount(0);
 });
-test("Referee retries do not hold up new guesses or duplicate unchanged predictions", async ({
-  page,
-}) => {
-  await mockFreeDraw(page, 0.7, "dog");
-  let refereeCalls = 0;
+test("Guesser result appears during a held stroke before the separate delayed Referee response", async ({ page }) => {
+  await mockFreeDraw(page, 0.9, "cat");
+  let refereeCompleted = false;
   let guesserCalls = 0;
+  let refereeCalls = 0;
+  let combinedRequests = 0;
   await page.route("**/api/free-draw/infer", async (route) => {
     const observation = JSON.parse(
       route.request().headers()["x-free-draw-observation"] ?? "{}",
-    );
-    const outcomes: Record<string, unknown> = {};
-    if (observation.roles.includes("guesser")) {
-      guesserCalls++;
-      outcomes.guesser = {
-        status: "answer",
-        answer: "dog",
-        confidence: 0.7,
-        heatmap,
-      };
-    }
+    ) as { runId: string; revision: number; requestId: string; roles: string[] };
+    if (observation.roles.length !== 1) combinedRequests++;
+    if (observation.roles.includes("guesser")) guesserCalls++;
+    if (observation.roles.includes("referee")) refereeCalls++;
     if (observation.roles.includes("referee")) {
-      refereeCalls++;
-      outcomes.referee = { status: "unavailable", reason: "test-outage" };
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      refereeCompleted = true;
     }
+    const outcomes: Record<string, unknown> = {};
+    if (observation.roles.includes("guesser"))
+      outcomes.guesser = { status: "answer", answer: "cat", confidence: 0.9, heatmap };
+    if (observation.roles.includes("referee"))
+      outcomes.referee = { status: "evidence", scores: [0.65, 0] };
     await route.fulfill({
       json: { ...observation, sessionId: "free-draw-e2e", outcomes },
     });
   });
   await page.goto("/free-draw/");
-  await drawStroke(page);
-  await expect.poll(() => refereeCalls).toBeGreaterThanOrEqual(2);
-  const before = guesserCalls;
-  await page.getByRole("button", { name: "Fill", exact: true }).click();
-  const box = await page.getByTestId("drawing-canvas").boundingBox();
+  await page.getByRole("button", { name: "Choose a prompt" }).click();
+  const prompt = page.getByRole("combobox", { name: "Choose a prompt" });
+  await prompt.fill("cat");
+  await prompt.press("ArrowDown");
+  await prompt.press("Enter");
+  const canvas = page.getByTestId("drawing-canvas");
+  await expect.poll(() => canvas.getAttribute("data-ready")).toBe("true");
+  const box = await canvas.boundingBox();
   if (!box) throw new Error("Canvas unavailable");
-  await page.mouse.click(box.x + box.width * 0.9, box.y + box.height * 0.85);
-  await expect
-    .poll(() => guesserCalls, { timeout: 4500 })
-    .toBeGreaterThan(before);
-  const settled = guesserCalls;
-  await expect
-    .poll(() => refereeCalls, { timeout: 12000 })
-    .toBeGreaterThanOrEqual(3);
-  expect(guesserCalls).toBe(settled);
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.4);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.68, box.y + box.height * 0.54, { steps: 8 });
+  await expect(page.getByRole("listitem").filter({ hasText: "Correct" })).toBeVisible({ timeout: 8000 });
+  expect(refereeCompleted).toBe(false);
+  expect(guesserCalls).toBeGreaterThan(0);
+  await expect.poll(() => refereeCalls).toBeGreaterThan(0);
+  await expect(page.getByTestId("referee-warning")).toContainText("65% confidence", { timeout: 4000 });
+  expect(refereeCompleted).toBe(true);
+  expect(combinedRequests).toBe(0);
+  await page.mouse.up();
 });
-for (const viewport of [
-  { width: 1366, height: 768 },
-  { width: 1440, height: 900 },
-]) {
-  test(`desktop ${viewport.width}x${viewport.height} keeps live history visible during AI outage`, async ({
-    page,
-  }) => {
-    await page.setViewportSize(viewport);
-    await page.route("**/api/free-draw/**", (route) =>
-      route.fulfill({ status: 503, body: "Unavailable" }),
-    );
-    await page.goto("/free-draw/");
-    await expect(
-      page.getByText(
-        "AI is unavailable. You can keep drawing while we reconnect.",
-      ),
-    ).toBeVisible();
-    const history = await page.locator(".fd-history-viewport").boundingBox();
-    if (!history) throw new Error("History unavailable");
-    expect(history.height).toBeGreaterThan(60);
-    expect(history.y + history.height).toBeLessThanOrEqual(viewport.height);
-    await drawStroke(page);
-    await expect(
-      page.getByRole("button", { name: "Undo", exact: true }),
-    ).toBeEnabled();
-  });
-}
+
+test("history stays tall and readable beyond the viewport and expands on demand", async ({ page }) => {
+  await mockFreeDraw(page, 0.9, "dog");
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.goto("/free-draw/");
+  await drawStroke(page);
+  await expect(page.getByRole("listitem").filter({ hasText: "Submitted" })).toBeVisible({ timeout: 8000 });
+  const history = page.locator(".fd-history-viewport");
+  const initial = await history.boundingBox();
+  if (!initial) throw new Error("History unavailable");
+  expect(initial.height).toBeGreaterThanOrEqual(480);
+  await expect(page.locator(".fd-history-row")).toHaveCSS("font-size", "14px");
+  await expect(page.locator(".fd-history-row")).toHaveCSS("height", "72px");
+  const initialHeight = initial.height;
+  await page.getByRole("button", { name: "Expand history" }).click();
+  await expect(page.getByRole("button", { name: "Collapse history" })).toHaveAttribute("aria-expanded", "true");
+  const expanded = await history.boundingBox();
+  if (!expanded) throw new Error("Expanded history unavailable");
+  expect(expanded.height).toBeGreaterThan(initialHeight);
+  expect(expanded.y + expanded.height).toBeGreaterThan(768);
+});

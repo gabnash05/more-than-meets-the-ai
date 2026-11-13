@@ -33,7 +33,7 @@ Any visual strategy is allowed; written answer clues are prohibited, while incid
 
 `/free-draw/` is the private solo drawing workspace. Enter through **Free Draw** below the homepage room-code controls; no player profile or room is required. It has no rounds, countdown or score. Switch between open drawing and a searchable model-class prompt, and independently toggle the Guesser, advisory Referee and existing attention overlay. Every prediction remains visible with confidence and threshold status for the current visit.
 
-The workspace uses the configured inference service, not demo predictions. Drawing remains available during outages. Its browser-local draft restores after refresh with Guesser paused. See [Free Draw behavior, API and validation](docs/FREE-DRAW.md).
+The workspace uses the configured inference service, not demo predictions. Drawing remains available during outages. Every visit starts fresh; drawings and controls are not saved. See [Free Draw behavior, API and validation](docs/FREE-DRAW.md).
 
 ## Canvas frontend
 

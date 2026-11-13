@@ -8,9 +8,10 @@ import {
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
-import { CRAYON_COLORS, type CrayonColor } from "@/contracts/player";
 import DrawingCanvas from "@/features/canvas/DrawingCanvas";
+import { DrawingToolbar } from "@/features/canvas/DrawingToolbar";
 import { HeatmapOverlay } from "@/features/canvas/HeatmapOverlay";
+import { RefereeWarningBadge } from "@/features/canvas/RefereeWarningBadge";
 import { useFreeDraw } from "./useFreeDraw";
 import type {
   FeatureStatus,
@@ -19,8 +20,7 @@ import type {
 } from "./types";
 import "./free-draw.css";
 
-const colors = Object.keys(CRAYON_COLORS) as CrayonColor[];
-const rowHeight = 62;
+const rowHeight = 72;
 const overscan = 3;
 type FreeDrawView = Omit<FreeDrawController, "canvasRef">;
 
@@ -156,6 +156,7 @@ function History({ controller }: { controller: FreeDrawView }) {
   const pinned = useRef(true);
   const [scrollTop, setScrollTop] = useState(0);
   const [visibleRows, setVisibleRows] = useState(8);
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
@@ -185,6 +186,14 @@ function History({ controller }: { controller: FreeDrawView }) {
         <button
           type="button"
           className="fd-text-button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Collapse history" : "Expand history"}
+        </button>
+        <button
+          type="button"
+          className="fd-text-button"
           onClick={() => {
             controller.clearHistory();
             pinned.current = true;
@@ -210,6 +219,7 @@ function History({ controller }: { controller: FreeDrawView }) {
       <div
         className="fd-history-viewport"
         ref={viewport}
+        style={{ height: expanded ? "85vh" : "65vh" }}
         tabIndex={0}
         role="list"
         aria-label={`Prediction history, ${predictions.length} entries`}
@@ -296,8 +306,6 @@ function FeatureStatusLine({
 function Workspace() {
   const { canvasRef, ...controller } = useFreeDraw();
   const [canvasError, setCanvasError] = useState("");
-  const set = (change: Partial<typeof controller.settings>) =>
-    controller.setSettings({ ...controller.settings, ...change });
   const drawingDisabled = controller.loading || controller.canvasStatus.busy;
   return (
     <main className="fd-screen">
@@ -322,30 +330,9 @@ function Workspace() {
               <p className="fd-eyebrow">Free Draw</p>
               <h1>Make your mark.</h1>
             </div>
-            <div className="fd-mode" role="group" aria-label="Drawing mode">
-              <button
-                type="button"
-                disabled={controller.loading}
-                aria-pressed={controller.mode === "free"}
-                onClick={() => controller.setMode("free")}
-              >
-                No prompt
-              </button>
-              <button
-                type="button"
-                disabled={controller.loading}
-                aria-pressed={controller.mode === "prompt"}
-                onClick={() => controller.setMode("prompt")}
-              >
-                Choose a prompt
-              </button>
-            </div>
           </div>
-          {controller.mode === "prompt" && (
-            <PromptPicker controller={controller} />
-          )}
           <div className="fd-board-wrap">
-            <div className="fd-board" aria-label="Drawing surface">
+            <div className={`fd-board${controller.warning ? " room-board-warning" : ""}`} aria-label="Drawing surface">
               <DrawingCanvas
                 ref={canvasRef}
                 settings={controller.settings}
@@ -363,11 +350,7 @@ function Workspace() {
                 />
               )}
               {controller.warning && (
-                <p className="fd-warning" role="status">
-                  Referee advisory · possible writing (
-                  {Math.round(controller.warning.confidence * 100)}%). Keep
-                  drawing if you like.
-                </p>
+                <RefereeWarningBadge confidence={controller.warning.confidence} />
               )}
               {controller.solved && (
                 <p className="fd-solved" role="status">
@@ -376,7 +359,7 @@ function Workspace() {
               )}
               {controller.loading && (
                 <p className="fd-canvas-loading" role="status">
-                  Restoring your drawing…
+                  Preparing your canvas…
                 </p>
               )}
               {canvasError && (
@@ -392,90 +375,26 @@ function Workspace() {
               Where the AI looked — attention, not its reasoning.
             </div>
           </div>
-          <fieldset className="fd-tools" disabled={drawingDisabled}>
-            <legend>Drawing tools</legend>
-            <div className="fd-tool-row" role="group" aria-label="Tools">
-              {(["brush", "eraser", "fill"] as const).map((tool) => (
-                <button
-                  type="button"
-                  key={tool}
-                  aria-pressed={controller.settings.tool === tool}
-                  onClick={() => set({ tool })}
-                >
-                  {tool === "brush"
-                    ? "Brush"
-                    : tool === "eraser"
-                      ? "Eraser"
-                      : "Fill"}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => canvasRef.current?.undo()}
-                disabled={!controller.canvasStatus.canUndo}
-              >
-                Undo
-              </button>
-              <button
-                type="button"
-                onClick={() => canvasRef.current?.redo()}
-                disabled={!controller.canvasStatus.canRedo}
-              >
-                Redo
-              </button>
-              <button
-                type="button"
-                onClick={controller.clearCanvas}
-                disabled={!controller.canvasStatus.hasInk}
-              >
-                Clear drawing
-              </button>
-            </div>
-            <div className="fd-tool-row fd-palette" aria-label="Brush colors">
-              <button
-                type="button"
-                aria-label="Black crayon"
-                aria-pressed={controller.settings.color === "#181321"}
-                style={{ background: "#181321" }}
-                onClick={() => set({ color: "#181321" })}
-              />
-              <button
-                type="button"
-                aria-label="White crayon"
-                aria-pressed={controller.settings.color === "#ffffff"}
-                style={{ background: "#fff" }}
-                onClick={() => set({ color: "#ffffff" })}
-              />
-              {colors.map((color) => (
-                <button
-                  type="button"
-                  key={color}
-                  title={color}
-                  aria-label={`${color} crayon`}
-                  aria-pressed={
-                    controller.settings.color === CRAYON_COLORS[color]
-                  }
-                  style={{ background: CRAYON_COLORS[color] }}
-                  onClick={() => set({ color: CRAYON_COLORS[color] })}
-                />
-              ))}
-              <label>
-                Size{" "}
-                <input
-                  type="range"
-                  min="2"
-                  max="48"
-                  value={controller.settings.size}
-                  onChange={(event) =>
-                    set({ size: Number(event.target.value) })
-                  }
-                />
-                <output>{controller.settings.size}px</output>
-              </label>
-            </div>
-          </fieldset>
+          <DrawingToolbar
+            settings={controller.settings}
+            onSettingsChange={controller.setSettings}
+            status={controller.canvasStatus}
+            disabled={controller.loading}
+            onUndo={() => canvasRef.current?.undo()}
+            onRedo={() => canvasRef.current?.redo()}
+            onClear={controller.clearCanvas}
+          />
         </section>
         <aside className="fd-sidebar">
+          <section className="fd-panel fd-mode-panel" aria-labelledby="fd-mode-title">
+            <p className="fd-eyebrow">Start with a blank page or a target</p>
+            <h2 id="fd-mode-title">Drawing mode</h2>
+            <div className="fd-mode" role="group" aria-label="Drawing mode">
+              <button type="button" disabled={controller.loading} aria-pressed={controller.mode === "free"} onClick={() => controller.setMode("free")}>No prompt</button>
+              <button type="button" disabled={controller.loading} aria-pressed={controller.mode === "prompt"} onClick={() => controller.setMode("prompt")}>Choose a prompt</button>
+            </div>
+            {controller.mode === "prompt" && <PromptPicker controller={controller} />}
+          </section>
           <section
             className="fd-panel fd-ai-panel"
             aria-labelledby="fd-ai-title"

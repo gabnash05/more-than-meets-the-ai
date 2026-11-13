@@ -63,6 +63,6 @@ For remote verification, set `NEXT_PUBLIC_ROOM_TRANSPORT=remote`, `NEXT_PUBLIC_R
 
 ## Free Draw
 
-Open `/free-draw/` directly or use the card beneath the homepage room-code controls. No player profile is required. Free Draw uses `NEXT_PUBLIC_ROOM_API_URL` for its real inference API independently of the multiplayer transport switch; an empty URL uses same-origin `/api/free-draw`. A static preview without an API still permits drawing and local draft recovery, with AI shown as unavailable. API URLs are compiled at build time.
+Open `/free-draw/` directly or use the card beneath the homepage room-code controls. No player profile is required. Free Draw uses `NEXT_PUBLIC_ROOM_API_URL` for its real inference API independently of the multiplayer transport switch; an empty URL uses same-origin `/api/free-draw`. A static preview without an API still permits drawing with fresh state on each visit, with AI shown as unavailable. API URLs are compiled at build time.
 
 See [Free Draw behavior, recovery and validation](../../docs/FREE-DRAW.md). Run its focused Chrome checks with `npx playwright test e2e/free-draw.spec.ts` after a production build. The AI test responses are fixtures, not model-accuracy evidence.

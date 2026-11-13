@@ -138,9 +138,8 @@ export interface PrivateRoomState {
   target?: string;
   promptOptions?: { id: string; label: string }[];
   /**
-   * The Guesser's latest answer, delivered only to the drawer. Anyone else seeing
-   * it — including a solved player — could pass the word to the room, so the
-   * server never sends it to them.
+   * Deprecated compatibility field. Multiplayer sessions do not populate this
+   * during a live round; Guesser answers are revealed through the round result.
    */
   aiGuess?: {
     answer: string;

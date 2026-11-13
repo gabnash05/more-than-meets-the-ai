@@ -16,7 +16,6 @@ import type {
 } from "../../../../../packages/game-contracts/src/free-draw";
 import type { GuessHeatmapV1 } from "../../../../../packages/game-contracts/src/ai-inference";
 import { createUuid } from "@/lib/uuid";
-import { loadFreeDraw, nextFreeDrawSaveVersion, saveFreeDraw } from "./storage";
 import {
   normalizeFreeDrawLabel,
   planRoles,
@@ -31,7 +30,8 @@ import type {
   FreeDrawPrediction,
 } from "./types";
 
-const MIN_INTERVAL = 3000;
+type Role = "guesser" | "referee";
+const MIN_INTERVAL = 500;
 const emptyStatus: CanvasStatus = {
   canUndo: false,
   canRedo: false,
@@ -99,50 +99,93 @@ export function useFreeDraw(): FreeDrawController {
   const [capabilities, setCapabilities] =
     useState<FreeDrawCapabilities>(initialCaps);
   const [error, setError] = useState("");
-  const [saveError, setSaveError] = useState("");
   const [loading, setLoading] = useState(true);
   const [labels, setLabels] = useState<string[]>([]);
-  const [revision, setRevision] = useState(0);
-  const [saveTick, setSaveTick] = useState(0);
   const sessionRef = useRef<FreeDrawSession | undefined>(undefined);
   const runRef = useRef(createUuid());
   const revisionRef = useRef(0);
-  const requestRef = useRef<AbortController | undefined>(undefined);
-  const inFlight = useRef(false);
-  const lastDispatch = useRef(0);
+  const requests = useRef<Partial<Record<Role, AbortController>>>({});
+  const lastDispatch = useRef<Partial<Record<Role, number>>>({});
+  const activeStroke = useRef(false);
+  const mounted = useRef(false);
+  const capturedFrame = useRef<
+    { key: string; promise: Promise<Blob> } | undefined
+  >(undefined);
+  const cancelRequests = useCallback((role?: Role) => {
+    if (role) requests.current[role]?.abort();
+    else
+      Object.values(requests.current).forEach((controller) =>
+        controller?.abort(),
+      );
+  }, []);
   const retryAt = useRef<Record<string, number>>({});
   const successRevision = useRef<
     Partial<Record<"guesser" | "referee", number>>
   >({});
   const guessLoggedRevision = useRef<number | undefined>(undefined);
   const retryDelay = useRef<Record<string, number>>({
-    guesser: 3000,
-    referee: 3000,
+    guesser: 1000,
+    referee: 1000,
   });
   const epoch = useRef({ guesser: 0, referee: 0, heatmap: 0 });
   const warningTimer = useRef<number | undefined>(undefined);
-  const saveVersion = useRef(0);
   const canvasStatusRef = useRef(emptyStatus);
 
-  const invalidate = useCallback((resetSuccess = true) => {
-    epoch.current = {
-      guesser: epoch.current.guesser + 1,
-      referee: epoch.current.referee + 1,
-      heatmap: epoch.current.heatmap + 1,
-    };
-    if (resetSuccess) {
-      successRevision.current = {};
-      guessLoggedRevision.current = undefined;
-    }
-    if (warningTimer.current !== undefined)
-      window.clearTimeout(warningTimer.current);
-    warningTimer.current = undefined;
-    setWarning(undefined);
-    requestRef.current?.abort();
-  }, []);
+  const invalidate = useCallback(
+    (resetSuccess = true) => {
+      epoch.current = {
+        guesser: epoch.current.guesser + 1,
+        referee: epoch.current.referee + 1,
+        heatmap: epoch.current.heatmap + 1,
+      };
+      if (resetSuccess) {
+        successRevision.current = {};
+        guessLoggedRevision.current = undefined;
+        retryAt.current = {};
+        retryDelay.current = { guesser: 1000, referee: 1000 };
+        capturedFrame.current = undefined;
+      }
+      if (warningTimer.current !== undefined)
+        window.clearTimeout(warningTimer.current);
+      warningTimer.current = undefined;
+      setWarning(undefined);
+      cancelRequests();
+    },
+    [cancelRequests],
+  );
   useEffect(() => {
     let live = true;
+    mounted.current = true;
     const root = apiRoot();
+    let disposed = false;
+    const disposeSession = () => {
+      if (disposed) return;
+      disposed = true;
+      cancelRequests();
+      const session = sessionRef.current;
+      if (session)
+        void fetch(`${root}/api/free-draw/sessions/current`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${session.token}` },
+          keepalive: true,
+        }).catch(() => {});
+      sessionRef.current = undefined;
+    };
+    const removeLegacyDb = () => {
+      if (!globalThis.indexedDB) return;
+      try {
+        indexedDB.deleteDatabase("mmtai-free-draw");
+      } catch {
+        /* best-effort legacy cleanup */
+      }
+    };
+    removeLegacyDb();
+    const onPageHide = () => disposeSession();
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) window.location.reload();
+    };
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
     const fetchCaps = async (signal?: AbortSignal): Promise<boolean> => {
       try {
         for (let attempt = 0; attempt < 2; attempt++) {
@@ -230,97 +273,30 @@ export function useFreeDraw(): FreeDrawController {
       void poll();
     };
     document.addEventListener("visibilitychange", visible);
-    void (async () => {
-      try {
-        const saved = await loadFreeDraw();
-        if (!live) return;
-        if (saved) {
-          setSettingsState(saved.metadata.settings);
-          setModeState(saved.metadata.mode);
-          setPromptState(saved.metadata.prompt);
-          setToggles({ ...saved.metadata.toggles, guesser: false });
-          await new Promise<void>((resolve) => {
-            const id = window.setInterval(() => {
-              if (canvasRef.current && !canvasStatusRef.current.busy) {
-                window.clearInterval(id);
-                resolve();
-              }
-            }, 50);
-            window.setTimeout(() => {
-              window.clearInterval(id);
-              resolve();
-            }, 5000);
-          });
-          await canvasRef.current?.restoreBitmap(saved.bitmap);
-        }
-      } catch (e) {
-        if (live)
-          setSaveError(
-            e instanceof Error ? e.message : "Could not restore saved drawing.",
-          );
-      } finally {
-        if (live) setLoading(false);
-      }
-      void poll();
-    })();
+    void poll();
     return () => {
       live = false;
+      mounted.current = false;
       window.clearTimeout(pollTimer);
       document.removeEventListener("visibilitychange", visible);
       pollController?.abort();
-      requestRef.current?.abort();
-      const session = sessionRef.current;
-      if (session)
-        void boundedFetch(`${root}/api/free-draw/sessions/current`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${session.token}` },
-        }).catch(() => {});
+      cancelRequests();
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
+      disposeSession();
     };
-  }, []);
+  }, [cancelRequests]);
 
-  const persist = useCallback(() => {
-    if (loading) return;
-    const run = async () => {
-      const version = nextFreeDrawSaveVersion();
-      saveVersion.current = version;
-      try {
-        const bitmap = await canvasRef.current?.capturePNG();
-        if (!bitmap) return;
-        await saveFreeDraw(
-          { bitmap, metadata: { settings, mode, prompt, toggles } },
-          version,
-        );
-        if (version === saveVersion.current) setSaveError("");
-      } catch (e) {
-        if (version === saveVersion.current)
-          setSaveError(
-            e instanceof Error ? e.message : "Could not save drawing.",
-          );
-      }
-    };
-    const id = window.setTimeout(() => void run(), 350);
-    return () => window.clearTimeout(id);
-  }, [loading, settings, mode, prompt, toggles]);
-  useEffect(() => {
-    const cancel = persist();
-    return cancel;
-  }, [persist, canvasStatus.hasInk, saveTick]);
   const onOperation = useCallback((operation: CanvasOperation) => {
     revisionRef.current++;
-    successRevision.current = {};
-    setRevision((value) => value + 1);
-    if (
-      operation.type === "stroke.end" ||
-      operation.type === "fill" ||
-      operation.type === "canvas.clear" ||
-      operation.type === "history.undo" ||
-      operation.type === "history.redo"
-    )
-      setSaveTick((v) => v + 1);
+    if (operation.type === "stroke.start") activeStroke.current = true;
+    if (operation.type === "stroke.end" || operation.type === "canvas.clear")
+      activeStroke.current = false;
   }, []);
   const onStatusChange = useCallback((status: CanvasStatus) => {
     canvasStatusRef.current = status;
     setCanvasStatus(status);
+    if (!status.busy) setLoading(false);
   }, []);
   const setSettings = useCallback((value: DrawingSettings) => {
     setSettingsState(value);
@@ -365,7 +341,7 @@ export function useFreeDraw(): FreeDrawController {
       if (feature === "referee") {
         epoch.current.referee++;
         delete successRevision.current.referee;
-        requestRef.current?.abort();
+        cancelRequests("referee");
         if (toggles.referee) {
           if (warningTimer.current !== undefined)
             window.clearTimeout(warningTimer.current);
@@ -375,12 +351,12 @@ export function useFreeDraw(): FreeDrawController {
       } else {
         epoch.current.guesser++;
         epoch.current.heatmap++;
-        requestRef.current?.abort();
+        cancelRequests("guesser");
         successRevision.current.guesser = undefined;
       }
       setToggles((prev) => ({ ...prev, [feature]: !prev[feature] }));
     },
-    [toggles.referee],
+    [toggles.referee, cancelRequests],
   );
   const clearHistory = useCallback(() => setHistory([]), []);
   const restartGuesser = useCallback(() => {
@@ -410,80 +386,57 @@ export function useFreeDraw(): FreeDrawController {
   }, [labels, prompt, setPrompt]);
 
   useEffect(() => {
-    if (
-      !shouldAnalyze({
-        loading,
-        hidden: document.hidden,
-        busy: canvasStatus.busy,
-        hasInk: canvasStatus.hasInk,
-        inFlight: inFlight.current,
-      })
-    )
-      return;
-    const activeRoles =
-      (toggles.guesser &&
-        (mode === "free" || Boolean(prompt)) &&
-        !(mode === "prompt" && solved)) ||
-      toggles.referee ||
-      toggles.heatmap;
-    if (!activeRoles) return;
-    const now = Date.now();
-    const caps = sessionRef.current?.capabilities ?? initialCaps;
-    const retryWait: number[] = [];
-    if (
-      ((toggles.guesser && !(mode === "prompt" && solved)) ||
-        toggles.heatmap) &&
-      caps.guesser.available &&
-      successRevision.current.guesser !== revisionRef.current
-    )
-      retryWait.push(Math.max(0, (retryAt.current.guesser ?? 0) - now));
-    if (
-      toggles.referee &&
-      caps.referee.available &&
-      successRevision.current.referee !== revisionRef.current
-    )
-      retryWait.push(Math.max(0, (retryAt.current.referee ?? 0) - now));
-    const wait = Math.max(
-      0,
-      Math.max(MIN_INTERVAL, caps.minIntervalMs) - (now - lastDispatch.current),
-      retryWait.length ? Math.min(...retryWait) : 0,
-    );
-    const timer = window.setTimeout(async () => {
-      if (document.hidden || inFlight.current) return;
-      const caps = sessionRef.current?.capabilities ?? initialCaps;
-      const roles = planRoles({
-        toggles,
-        mode,
-        prompt,
-        solved,
-        capabilities: caps,
-        successfulRevision: successRevision.current,
-        revision: revisionRef.current,
-        retryAt: retryAt.current,
-        now: Date.now(),
-      });
-      if (!roles.length) return;
-      const canvas = canvasRef.current;
-      const session = sessionRef.current;
-      if (!canvas || !session) return;
-      inFlight.current = true;
-      lastDispatch.current = Date.now();
-      const obs: FreeDrawObservation = {
+    const capture = (key: string) => {
+      if (capturedFrame.current?.key === key)
+        return capturedFrame.current.promise;
+      const promise = canvasRef.current!.capturePNG();
+      capturedFrame.current = { key, promise };
+      return promise;
+    };
+    const clearWarning = () => {
+      if (warningTimer.current !== undefined)
+        window.clearTimeout(warningTimer.current);
+      warningTimer.current = undefined;
+      setWarning(undefined);
+    };
+    const fail = (role: Role, busy: boolean) => {
+      const delay = busy
+        ? Math.min(2000, Math.max(250, (retryDelay.current[role] ?? 1000) / 4))
+        : (retryDelay.current[role] ?? 1000);
+      retryAt.current[role] = Date.now() + delay;
+      retryDelay.current[role] = Math.min(
+        busy ? 8000 : 10000,
+        Math.max(1000, delay * 2),
+      );
+      setAvailability((previous) => ({
+        ...previous,
+        [role]: busy ? "waiting" : "unavailable",
+      }));
+      if (role === "referee") clearWarning();
+    };
+    const infer = async (role: Role, session: FreeDrawSession) => {
+      const controller = new AbortController();
+      requests.current[role] = controller;
+      const roleEpoch = epoch.current[role];
+      const observation: FreeDrawObservation = {
         runId: runRef.current,
         revision: revisionRef.current,
         requestId: createUuid(),
-        roles,
+        roles: [role],
       };
-      const epochs = { ...epoch.current };
-      const abort = new AbortController();
-      requestRef.current = abort;
-      for (const role of roles)
-        setAvailability((v) => ({ ...v, [role]: "working" }));
+      const current = () =>
+        mounted.current &&
+        !controller.signal.aborted &&
+        epoch.current[role] === roleEpoch &&
+        runRef.current === observation.runId &&
+        sessionRef.current === session;
+      setAvailability((previous) => ({ ...previous, [role]: "working" }));
       try {
-        const blob = await canvas.capturePNG();
-        if (abort.signal.aborted || document.hidden) return;
-        if (blob.size > 4 * 1024 * 1024)
-          throw new Error("Drawing exceeds the 4 MiB inference limit.");
+        const blob = await capture(
+          `${observation.runId}:${observation.revision}`,
+        );
+        if (!current() || document.hidden) return;
+        lastDispatch.current[role] = Date.now();
         const response = await boundedFetch(
           `${apiRoot()}/api/free-draw/infer`,
           {
@@ -491,159 +444,144 @@ export function useFreeDraw(): FreeDrawController {
             headers: {
               Authorization: `Bearer ${session.token}`,
               "Content-Type": "image/png",
-              "x-free-draw-observation": JSON.stringify(obs),
+              "x-free-draw-observation": JSON.stringify(observation),
             },
             body: blob,
           },
-          abort.signal,
+          controller.signal,
         );
+        if (!current()) return;
         if (response.status === 401 || response.status === 404) {
           sessionRef.current = undefined;
-          throw new Error(
-            "AI is unavailable. You can keep drawing while we reconnect.",
-          );
+          throw new Error("session-expired");
         }
-        if (response.status === 429)
-          throw new Error("AI is busy. Retrying shortly.");
-        if (!response.ok)
-          throw new Error(
-            "AI is unavailable. You can keep drawing while we reconnect.",
-          );
+        if (response.status === 429) {
+          fail(role, true);
+          return;
+        }
+        if (!response.ok) throw new Error("provider-unavailable");
         const result = (await response.json()) as FreeDrawResult;
+        if (!current()) return;
         if (
           result.sessionId !== session.sessionId ||
-          result.runId !== obs.runId ||
-          result.revision !== obs.revision ||
-          result.requestId !== obs.requestId
+          result.runId !== observation.runId ||
+          result.revision !== observation.revision ||
+          result.requestId !== observation.requestId ||
+          result.roles.length !== 1 ||
+          result.roles[0] !== role
         )
+          throw new Error("invalid-result-binding");
+        const outcome = result.outcomes[role];
+        if (!outcome || outcome.status === "unavailable") {
+          fail(role, false);
           return;
-        for (const role of roles) {
-          if (epochs[role] !== epoch.current[role]) continue;
-          const outcome = result.outcomes[role];
-          if (!outcome || outcome.status === "unavailable") {
-            const delay = retryDelay.current[role];
-            retryAt.current[role] = Date.now() + delay;
-            retryDelay.current[role] = Math.min(30000, delay * 2);
-            setAvailability((v) => ({ ...v, [role]: "unavailable" }));
-            if (role === "referee") {
-              if (warningTimer.current !== undefined)
-                window.clearTimeout(warningTimer.current);
-              warningTimer.current = undefined;
-              setWarning(undefined);
+        }
+        successRevision.current[role] = observation.revision;
+        retryAt.current[role] = 0;
+        retryDelay.current[role] = 1000;
+        setError("");
+        setAvailability((previous) => ({ ...previous, [role]: "ready" }));
+        if (role === "guesser") {
+          if (outcome.status === "answer") {
+            if (toggles.heatmap) {
+              setHeatmap(outcome.heatmap);
+              setHeatmapGuess(
+                outcome.heatmap
+                  ? { answer: outcome.answer, confidence: outcome.confidence }
+                  : undefined,
+              );
+              setHeatmapKey(observation.runId);
             }
-            continue;
-          }
-          retryDelay.current[role] = 3000;
-          retryAt.current[role] = 0;
-          setError("");
-          setAvailability((v) => ({
-            ...v,
-            [role]:
-              role === "guesser" && !toggles.guesser && !toggles.heatmap
-                ? "off"
-                : "ready",
-          }));
-          successRevision.current[role] = obs.revision;
-          if (role === "guesser") {
-            if (outcome.status === "answer") {
-              if (toggles.heatmap) {
-                setHeatmap(outcome.heatmap);
-                setHeatmapGuess(
-                  outcome.heatmap
-                    ? { answer: outcome.answer, confidence: outcome.confidence }
-                    : undefined,
-                );
-                setHeatmapKey(runRef.current);
-              }
-              if (
-                toggles.guesser &&
-                (mode === "free" || Boolean(prompt)) &&
-                !(mode === "prompt" && solved) &&
-                guessLoggedRevision.current !== obs.revision
-              ) {
-                const item = predictionFromAnswer({
-                  id: obs.requestId,
-                  answer: outcome.answer,
-                  confidence: outcome.confidence,
-                  mode,
-                  prompt,
-                });
-                guessLoggedRevision.current = obs.revision;
-                setHistory((old) => [...old, item]);
-                if (item.correct) setSolved(true);
-              }
-            } else if (outcome.status === "pass") {
-              /* pass has no history entry */
+            if (
+              toggles.guesser &&
+              (mode === "free" || Boolean(prompt)) &&
+              !solved &&
+              guessLoggedRevision.current !== observation.revision
+            ) {
+              const prediction = predictionFromAnswer({
+                id: observation.requestId,
+                answer: outcome.answer,
+                confidence: outcome.confidence,
+                mode,
+                prompt,
+              });
+              guessLoggedRevision.current = observation.revision;
+              setHistory((previous) => [...previous, prediction]);
+              if (prediction.correct) setSolved(true);
             }
-          } else if (
-            outcome.status === "evidence" &&
-            outcome.scores[0] >= 0.3
-          ) {
-            if (warningTimer.current !== undefined)
-              window.clearTimeout(warningTimer.current);
-            setWarning({ confidence: outcome.scores[0] });
-            warningTimer.current = window.setTimeout(() => {
-              warningTimer.current = undefined;
-              setWarning(undefined);
-            }, 3000);
+          } else if (outcome.status === "pass") {
+            setHeatmap(undefined);
+            setHeatmapGuess(undefined);
           }
-          if (
-            role === "referee" &&
-            (outcome.status !== "evidence" || outcome.scores[0] < 0.3)
-          ) {
-            if (warningTimer.current !== undefined)
-              window.clearTimeout(warningTimer.current);
+        } else if (outcome.status === "evidence" && outcome.scores[0] >= 0.3) {
+          clearWarning();
+          setWarning({ confidence: outcome.scores[0] });
+          warningTimer.current = window.setTimeout(() => {
             warningTimer.current = undefined;
             setWarning(undefined);
-          }
-        }
-      } catch (e) {
-        if (!(e instanceof DOMException && e.name === "AbortError")) {
-          setError(
-            e instanceof Error && e.message === "AI is busy. Retrying shortly."
-              ? e.message
-              : "AI is unavailable. You can keep drawing while we reconnect.",
-          );
-          for (const role of roles) {
-            const delay = retryDelay.current[role];
-            retryAt.current[role] = Date.now() + delay;
-            retryDelay.current[role] = Math.min(30000, delay * 2);
-            setAvailability((v) => ({ ...v, [role]: "unavailable" }));
-          }
-          if (roles.includes("referee")) {
-            if (warningTimer.current !== undefined)
-              window.clearTimeout(warningTimer.current);
-            warningTimer.current = undefined;
-            setWarning(undefined);
-          }
-        }
+          }, 3000);
+        } else clearWarning();
+      } catch (error) {
+        if (
+          current() &&
+          !(error instanceof DOMException && error.name === "AbortError")
+        )
+          fail(role, false);
       } finally {
-        inFlight.current = false;
-        requestRef.current = undefined;
-        setRevision((v) => v + 1);
+        if (requests.current[role] === controller)
+          delete requests.current[role];
       }
-    }, wait);
-    return () => window.clearTimeout(timer);
-  }, [
-    loading,
-    revision,
-    canvasStatus.busy,
-    canvasStatus.hasInk,
-    toggles,
-    mode,
-    solved,
-    prompt,
-    availability,
-  ]);
+    };
+    const tick = () => {
+      if (
+        !mounted.current ||
+        !shouldAnalyze({
+          loading,
+          hidden: document.hidden,
+          busy: canvasStatusRef.current.busy,
+          hasInk: canvasStatusRef.current.hasInk || activeStroke.current,
+          inFlight: false,
+        })
+      )
+        return;
+      const session = sessionRef.current;
+      if (!session || !canvasRef.current) return;
+      const now = Date.now();
+      const roles = planRoles({
+        toggles,
+        mode,
+        prompt,
+        solved,
+        capabilities: session.capabilities,
+        successfulRevision: successRevision.current,
+        revision: revisionRef.current,
+        retryAt: retryAt.current,
+        now,
+      });
+      for (const role of roles) {
+        const cadence =
+          role === "guesser"
+            ? Math.max(500, session.capabilities.minIntervalMs)
+            : Math.max(1000, session.capabilities.refereeMinIntervalMs ?? 1000);
+        if (
+          !requests.current[role] &&
+          now >= (lastDispatch.current[role] ?? 0) + cadence
+        )
+          void infer(role, session);
+      }
+    };
+    // A short tick coalesces pointer samples without rerendering React for each point.
+    const timer = window.setInterval(tick, 100);
+    return () => window.clearInterval(timer);
+  }, [loading, toggles, mode, prompt, solved, capabilities]);
 
   useEffect(() => {
     const hidden = () => {
-      if (document.hidden) requestRef.current?.abort();
-      else setRevision((v) => v + 1);
+      if (document.hidden) cancelRequests();
     };
     document.addEventListener("visibilitychange", hidden);
     return () => document.removeEventListener("visibilitychange", hidden);
-  }, []);
+  }, [cancelRequests]);
   const shownAvailability: Record<FreeDrawFeature, FeatureStatus> = {
     guesser: !toggles.guesser
       ? "off"
@@ -695,7 +633,7 @@ export function useFreeDraw(): FreeDrawController {
     warning,
     availability: shownAvailability,
     error,
-    saveError,
+    saveError: "",
     loading,
     clearHistory,
     restartGuesser,

@@ -72,7 +72,7 @@ Current `human-v1` points depend on how quickly an individual human solves, meas
 An AI-related positive score component when a human solves before the AI's accepted correct answer. Default guesser credit is personal; the drawer's separate bonus is smaller and capped. Optional team mode retains one team bonus. Required AI-service failure neutralizes default-turn AI bonuses and reductions while retaining human-only scoring.
 
 ## AI guess
-An answer proposed by the AI. Actual answer text remains hidden from unsolved humans until reveal/replay. It is never a human solve or ordinary drawer-score contribution.
+An answer proposed by the AI. Actual answer text remains hidden from every multiplayer viewer, including the drawer, until reveal/replay. It is never a human solve or ordinary drawer-score contribution.
 
 ## AI progress
 The AI card pulses red for a wrong prediction and green for a correct one. The committed recap shows each accepted guess and its model confidence.
@@ -174,4 +174,4 @@ Host Start enters a shared three-second countdown before the first private word 
 A valid prediction is the model answer and confidence from a permitted observation. Only confidence strictly greater than 0.5 makes it a submitted answer eligible to solve or score. Low-confidence predictions remain recorded for revealed history, use the same call budget/cooldown and do not trigger an answer pulse. Missing confidence does not qualify. Legacy recorded guesses retain their historical meaning.
 
 ## Completed-round AI history
-The authorized snapshot exposes committed rounds with the revealed target, drawer, AI benchmark and chronological prediction list. Predictions include active elapsed time and submission status when recorded by the current implementation. Active targets/predictions and interrupted generations are excluded. Final results let players expand each completed round; this is a game retrospective, not a controlled model evaluation.
+The authorized snapshot exposes committed rounds with the revealed target, drawer, AI benchmark and chronological prediction list. Predictions include active elapsed time and submission status when recorded by the current implementation. Active targets/predictions and interrupted generations are excluded. Final results let players select each completed round and read its full prediction history; this is a game retrospective, not a controlled model evaluation.
