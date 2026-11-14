@@ -66,7 +66,7 @@ Visible solve/AI status without disclosing the hidden answer. Default individual
 A human's first correct accepted guess for a drawing turn. In individual mode it creates that player's personal result; it never solves the turn for everyone else.
 
 ## Speed points
-Current `human-v1` points depend on how quickly an individual human solves, measured from the start of drawing with paused time excluded. Human AI modifiers stay zero. Before/after-AI weighting is future design context; optional Team scoring is deferred.
+Current `human-v1` points depend on how quickly an individual human solves, measured on the original drawing clock. Human AI modifiers stay zero. Before/after-AI weighting is future design context; optional Team scoring is deferred.
 
 ## Beat-the-AI bonus
 An AI-related positive score component when a human solves before the AI's accepted correct answer. Default guesser credit is personal; the drawer's separate bonus is smaller and capped. Optional team mode retains one team bonus. Required AI-service failure neutralizes default-turn AI bonuses and reductions while retaining human-only scoring.
@@ -152,8 +152,8 @@ An explicitly selected optional-mode arrangement such as 2v2 or 3v2v4. It is nev
 ## Team solve
 The first teammate correct guess in optional team mode, closing that team's challenge and creating one team result. This concept must not replace per-player solves in individual mode.
 
-## Reconnect grace
-A 30-second chance for a disconnected drawer, or all remaining unsolved human guessers, to return while the affected drawing clock is paused. Accepted individual solves remain personal. On expiry close the affected turn/challenge with human outcomes retained. Host recovery also lasts 30 seconds; explicit host departure transfers authority immediately.
+## Reconnecting
+An existing player can recover their seat, accepted drawing and match results using the same session. Individual turns keep their original deadlines. If the recap ends before two players are connected, the next turn waits for an existing player to return. Host controls remain reserved for 30 seconds after a disconnect. Explicit host departure transfers authority immediately.
 
 ## Team forfeit
 An optional team-mode outcome when an active challenge has no recovered eligible human guesser before grace expires. It does not apply to all individual players when one person disconnects.

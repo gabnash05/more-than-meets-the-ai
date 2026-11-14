@@ -93,10 +93,10 @@ function Choice({
     </label>
   );
 }
-const ChatRowView = memo(function ChatRowView({ name, text, correct }: Omit<ChatRow, "id">) {
+const ChatRowView = memo(function ChatRowView({ name, text, correct, system }: Omit<ChatRow, "id">) {
   return (
-    <p className={correct ? "room-message-correct" : undefined}>
-      <strong>{name}: </strong>
+    <p className={system ? "room-message-system" : correct ? "room-message-correct" : undefined}>
+      {!system && <strong>{name}: </strong>}
       {correct ? <><span aria-hidden="true">✓ </span>Correct!</> : text}
     </p>
   );
@@ -111,10 +111,10 @@ function ChatMessages({ snapshot, meId }: { snapshot: RoomSession["snapshot"]; m
   // their own message. Someone reading history is otherwise left where they are.
   useEffect(() => {
     const element = list.current;
-    if (element && shouldFollow({ pinned: pinned.current, latestAuthorId: latest?.playerId, viewerId: meId })) {
+    if (element && shouldFollow({ pinned: pinned.current, latestAuthorId: latest?.kind === "system" ? undefined : latest?.playerId, viewerId: meId })) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [latest?.id, latest?.playerId, meId]);
+  }, [latest?.id, latest?.kind, latest?.playerId, meId]);
 
   return (
     <div
@@ -127,7 +127,7 @@ function ChatMessages({ snapshot, meId }: { snapshot: RoomSession["snapshot"]; m
       }}
     >
       {rows.length
-        ? rows.map(row => <ChatRowView key={row.id} name={row.name} text={row.text} correct={row.correct} />)
+        ? rows.map(row => <ChatRowView key={row.id} name={row.name} text={row.text} correct={row.correct} system={row.system} />)
         : <p>Say hello to the room!</p>}
     </div>
   );
@@ -529,7 +529,9 @@ export default function RoomScreen() {
             </strong>
             <small>
               {p.id === snap.hostId ? "Host · " : ""}
-              {!p.connected
+              {p.left
+                ? "Left"
+                : !p.connected
                 ? "Disconnected"
                 : drawing && p.solved
                   ? "Solved"
@@ -663,11 +665,11 @@ export default function RoomScreen() {
           {error}
         </p>
       )}
-      {!!snap.hostDisconnectedUntil && <p className="room-error" role="status">Host reconnecting. Hosting is reserved briefly before transfer.</p>}
+      {snap.settings.mode === "team" && !!snap.hostDisconnectedUntil && <p className="room-error" role="status">Host reconnecting. Hosting is reserved briefly before transfer.</p>}
       {drawing && teamDone && <p className="room-error" role="status">Your team has finished. Waiting for the other teams.</p>}
-      {paused && <p className="room-error" role="status">Turn paused while {game?.pause?.reason === "drawer-disconnected" ? "the drawer reconnects" : "guessers reconnect"}.</p>}
+      {snap.settings.mode === "team" && paused && <p className="room-error" role="status">Turn paused while {game?.pause?.reason === "drawer-disconnected" ? "the drawer reconnects" : "guessers reconnect"}.</p>}
       {game?.saving === "blocked" && <p className="room-error" role="status">Saving is delayed. Waiting for the room service.</p>}
-      {drawing && game && !snap.players.find(p => p.id === game.drawerId)?.connected && <p className="room-error" role="status">The drawer disconnected. Their drawing remains visible.</p>}
+      {snap.settings.mode === "team" && drawing && game && !snap.players.find(p => p.id === game.drawerId)?.connected && <p className="room-error" role="status">The drawer disconnected. Their drawing remains visible.</p>}
       {(connection !== "connected" || (drawing && !caughtUp)) && (
         <p className="room-error" role="status">
           {connection === "restoring" || (drawing && !caughtUp)
@@ -837,7 +839,7 @@ export default function RoomScreen() {
         <div className="room-layout">
           <p className="room-phase-announcement" role="status">{snap.phase === "starting" ? "Match starting" : choosing ? "Word selection" : drawing ? closing ? "Round complete. Preparing results" : role === "drawer" ? "Your role: drawer" : "Your role: guesser" : result ? "Round results" : snap.phase === "finished" ? "Match complete" : "Round interrupted"}</p>
           <aside className="room-teams">
-            <section className="room-panel">
+            <section className="room-panel" aria-label="Player roster">
               <h2>
                 {snap.settings.mode === "individual"
                   ? "Everyone vs AI"

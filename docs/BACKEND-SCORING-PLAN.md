@@ -20,7 +20,7 @@ No live AI inference provider is connected. Guesser AI adjustments and drawer AI
 
 Configured rounds mean total prompt positions. Drawers choose privately from three options before drawing begins. Defaults are a 15-second choice window, 60-second drawing clock and 8-second recap. Authoritative event order resolves accepted guesses; duplicate requests cannot create another solve. Equal final totals produce joint winners.
 
-A missing drawer or all remaining unsolved guessers pauses the affected clock for up to 30 seconds. On expiry retain accepted human solves and close that turn/challenge; no missing person is counted as solved. A restart voids the unfinished generation and its provisional score while retaining committed prior results and the saved interrupted sketch. Required records commit before another prompt begins. The host can reopen the lobby from an interrupted or committed waiting state, preserving already committed records.
+In Individual play, the original drawing clock continues when the drawer or eligible guessers disconnect. Accepted solves count once and eligible players with no solve receive zero. Guesser jobs suspend when every unsolved eligible human is offline. A restart voids the unfinished generation and its provisional score while retaining committed prior results and the saved interrupted sketch. Required records commit before another prompt begins. The host can reopen the lobby from an interrupted or committed waiting state, preserving already committed records.
 
 Remote Team selection/settings/starts are disabled in this milestone. The preserved shared-target/private-canvas Team design has its [own follow-up plan](TEAM-GAMEPLAY-NEXT-PLAN.md); real inference and any later human AI adjustments have a [separate integration plan](AI-INTEGRATION-NEXT-PLAN.md).
 
@@ -106,7 +106,7 @@ Clients send guesses and drawing actions; they cannot submit authoritative score
 - A required AI-service failure neutralizes all AI-derived guesser bonuses **and reductions**, plus drawer AI bonuses, for that default turn. Preserve ordinary human and drawer recognition points. Keep AI adjustments provisional until finalization to make this consistent for all players.
 - A normally ended race is not an outage: all humans solved, AI solved, timeout, void or a valid cancellation must not fabricate an unavailable attempt.
 - Preserve an already accepted personal solve across disconnects. Other humans continue; do not apply a team-wide penalty or reopen a solved player on reconnect.
-- Client-readiness misses, no-active-guesser grace, unresolved disconnected players and late joiners need explicit individual-mode eligibility/closure policies before score implementation. Old team-only bonus-removal/forfeit rules do not supply these decisions.
+- The scoring roster freezes at drawing start. Eligible disconnected players retain the opportunity to solve on reconnect before the original deadline. New players can join after the host reopens the lobby.
 - A game restart/unverifiable turn voids that turn's provisional outcomes and retries the same drawer/position with a fresh target/generation. Preserve prior committed personal results; reject old-generation jobs.
 - Commit required records and personal results before advancing. A PostgreSQL saving hold keeps results provisional. Referee flags remain advisory and never directly deduct scores.
 

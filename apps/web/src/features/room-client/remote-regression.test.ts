@@ -653,6 +653,34 @@ describe("remote room recovery", () => {
     await deleteDrawingEnvelope(acceptedId);
     client.dispose();
   });
+  it("resyncs a completed turn after an expired live drawing ACK", async () => {
+    const { client, socket } = setup();
+    const events: RoomEvent[] = [];
+    client.subscribe(event => events.push(event));
+    await client.create(profile);
+    const snapshot = client.getSession()!.snapshot;
+    snapshot.phase = "drawing";
+    snapshot.game = { canvasId: "finished-turn", generation: 9, drawerId: "p", hint: "", time: "", scores: {}, sync: { sequence: 1, durableSequence: 0 } };
+    socket.receive("room:event", { type: "snapshot", snapshot });
+    const acceptedId = crypto.randomUUID();
+    await saveDrawingEnvelope({ requestId: acceptedId, playerId: "p", order: 0, generation: 9, acceptedSequence: 1, payload: { roomCode: "ABC123", canvasId: "finished-turn", generation: 9, streamId: "stream", operations: [] } as unknown as DrawingBatch });
+    const pending = client.submitDrawing({ roomCode: "ABC123", canvasId: "finished-turn", generation: 9, streamId: "stream", batchId: "pending", operations: [] } as unknown as DrawingBatch);
+    await vi.waitFor(() => expect(socket.requests).toHaveLength(1));
+    snapshot.phase = "result";
+    socket.receive("room:event", { type: "snapshot", snapshot: { ...snapshot, revision: snapshot.revision + 1 } });
+    socket.requests[0].ack(null, { ok: false, code: "expired" });
+    await expect(pending).rejects.toMatchObject({ code: "invalid-drawing" });
+    await vi.waitFor(() => expect(socket.requests).toHaveLength(2));
+    expect((socket.requests[1].envelope.payload as { command?: string })?.command).toBeUndefined();
+    socket.requests[1].ack(null, { ok: true });
+    socket.receive("room:event", { type: "drawing", canvasId: "finished-turn", generation: 9, sequence: 1, reset: true, caughtUp: true, operations: [] });
+    await vi.waitFor(() => expect(events).toContainEqual({ type: "connection", status: "connected" }));
+    const retained = await loadDrawingEnvelopes();
+    expect(retained.map(item => item.requestId)).toEqual([acceptedId]);
+    expect(client.getSession()!.snapshot.game!.sync?.durableSequence).toBe(0);
+    await deleteDrawingEnvelope(acceptedId);
+    client.dispose();
+  });
   it("stays restoring after a rejected reconnect tail until the fresh canonical replay catches up", async () => {
     const { client, socket } = setup();
     const events: RoomEvent[] = [];

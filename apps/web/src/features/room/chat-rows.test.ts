@@ -16,8 +16,8 @@ describe("chatRows", () => {
       players,
     );
     expect(rows).toEqual([
-      { id: "m1", name: "Ada", text: "hello", correct: false },
-      { id: "m2", name: "Grace", text: "hi", correct: false },
+      { id: "m1", name: "Ada", text: "hello", correct: false, system: false },
+      { id: "m2", name: "Grace", text: "hi", correct: false, system: false },
     ]);
   });
 
@@ -27,5 +27,11 @@ describe("chatRows", () => {
 
   it("marks correct messages", () => {
     expect(chatRows([{ id: "m1", playerId: "p1", text: "Correct!", at: 1, kind: "correct" }], players)[0].correct).toBe(true);
+  });
+
+  it("renders system notices without a player prefix", () => {
+    expect(chatRows([{ id: "m1", playerId: "p1", text: "Ada disconnected.", at: 1, kind: "system" }], players)[0]).toEqual({
+      id: "m1", name: "", text: "Ada disconnected.", correct: false, system: true,
+    });
   });
 });
