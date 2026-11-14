@@ -517,6 +517,60 @@ test("individual guesses remain independent and AI coverage is honest", async ({
   await Promise.all(contexts.map((context) => context.close()));
 });
 
+test("individual recap waits for an eligible player and resumes on reconnect", async ({ browser }) => {
+  const hostContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const guestContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const host = await hostContext.newPage();
+  const guest = await guestContext.newPage();
+  await host.goto("/");
+  await host.getByLabel("Your name").fill("Host");
+  await host.getByRole("button", { name: /Create a room/ }).click();
+  await expect(host).toHaveURL(/room\/\?code=/);
+  const code = new URL(host.url()).searchParams.get("code")!;
+  await guest.goto(`/?code=${code}`);
+  await guest.getByLabel("Your name").fill("Guest");
+  await guest.getByRole("button", { name: "Join room →" }).click();
+  await expect(guest).toHaveURL(/room\/\?code=/);
+  const start = host.getByRole("button", { name: /Start match/ }).first();
+  await expect(start).toBeEnabled();
+  await host.getByRole("combobox", { name: "Prompt rounds" }).click();
+  await host.getByRole("option", { name: "2 rounds", exact: true }).click();
+  await expect(host.getByRole("combobox", { name: "Prompt rounds" })).toHaveText("2 rounds");
+  await start.click();
+  const pages = [host, guest];
+  const choosers = pages.map(page => page.getByRole("heading", { name: "Choose a word" }));
+  await expect.poll(async () => (await Promise.all(choosers.map(heading => heading.count()))).reduce((a, b) => a + b, 0)).toBe(1);
+  const drawer = await choosers[0].isVisible() ? host : guest;
+  const guesser = drawer === host ? guest : host;
+  const word = (await drawer.locator(".room-result-overlay button").first().textContent())!.trim();
+  await drawer.locator(".room-result-overlay button").first().click();
+  await expect(drawer.getByLabel("Drawing canvas")).toHaveAttribute("data-readonly", "false");
+  for (const page of pages) {
+    const board = await page.locator(".room-board").boundingBox();
+    const roster = await page.getByRole("region", { name: "Player roster" }).boundingBox();
+    if (!board || !roster) throw new Error("The board and player roster must be rendered");
+    const separated = board.x + board.width <= roster.x || roster.x + roster.width <= board.x ||
+      board.y + board.height <= roster.y || roster.y + roster.height <= board.y;
+    expect(separated).toBe(true);
+  }
+  await guesser.getByLabel("Your guess").fill(word);
+  await guesser.getByLabel("Your guess").press("Enter");
+  await expect(host.getByLabel("Round recap")).toBeVisible();
+  await guest.goto("about:blank");
+  const status = host.locator(".room-person").filter({ hasText: "Guest" }).getByText("Disconnected");
+  await expect(status).toBeVisible();
+  const notice = host.locator(".room-message-system").filter({ hasText: "Guest disconnected." });
+  await expect(notice).toHaveText("Guest disconnected.");
+  await expect(host.getByLabel("Round recap")).toContainText("Waiting for another player to reconnect.");
+  await expect(host.getByRole("button", { name: "Return to lobby" })).toBeVisible();
+  await guest.goto(`/room/?code=${code}`);
+  const nextDrawer = drawer === host ? guest : host;
+  await expect(nextDrawer.getByRole("heading", { name: "Choose a word" })).toBeVisible();
+  await expect(host.locator(".room-message-system").filter({ hasText: "Guest reconnected." })).toHaveText("Guest reconnected.");
+  await expect(host.getByLabel("Round recap")).toHaveCount(0);
+  await Promise.all([hostContext.close(), guestContext.close()]);
+});
+
 test("simultaneous last-seat joins admit only one guest", async ({
   browser,
 }) => {
@@ -571,6 +625,7 @@ test("host can leave an active match and transfer hosting", async ({
     await guest.goto(`/?code=${code}`);
     await guest.getByLabel("Your name").fill(`Guest ${index + 1}`);
     await guest.getByRole("button", { name: "Join room →" }).click();
+    await expect(guest).toHaveURL(/room\/\?code=/);
   }
   await expect(host.locator(".room-person")).toHaveCount(3);
   await host
@@ -599,8 +654,9 @@ test("host can leave an active match and transfer hosting", async ({
     guests[0]
       .locator(".room-person")
       .filter({ hasText: "Host" })
-      .filter({ hasText: "Disconnected" }),
+      .filter({ hasText: "Left" }),
   ).toBeVisible();
+  await expect(guests[0].locator(".room-message-system").filter({ hasText: "Host left." })).toBeVisible();
   await expect
     .poll(async () =>
       (
@@ -654,6 +710,7 @@ test("a disconnected player restores the same seat and drawing", async ({
     : guest;
   const viewer = drawer === host ? guest : host;
   const viewerContext = drawer === host ? guestContext : hostContext;
+  const drawerContext = drawer === host ? hostContext : guestContext;
   await drawer.locator(".room-result-overlay button").first().click();
   await expect(drawer.getByLabel("Drawing canvas")).toHaveAttribute(
     "data-readonly",
@@ -674,12 +731,27 @@ test("a disconnected player restores the same seat and drawing", async ({
   await expect(
     viewer.getByText(/Connection interrupted|Restoring your room/),
   ).toBeVisible();
+  await expect(drawer.locator(".room-person").filter({ hasText: "Disconnected" })).toBeVisible();
+  await expect(drawer.getByLabel("Drawing canvas")).toHaveAttribute("data-readonly", "false");
   await viewerContext.setOffline(false);
   const retry = viewer.getByRole("button", { name: "Retry" });
   if (await retry.isVisible()) await retry.click();
   await expect.poll(() => pixels(viewer)).toEqual(before);
   await expect(viewer.locator(".room-person")).toHaveCount(2);
   await expect(drawer.locator(".room-person")).toHaveCount(2);
+  const timeValue = async (page: Page) => {
+    const text = await page.locator(".room-time strong").textContent();
+    const [minutes, seconds] = (text ?? "0:0").split(":").map(Number);
+    return minutes * 60 + seconds;
+  };
+  const viewerTimeBefore = await timeValue(viewer);
+  await drawerContext.setOffline(true);
+  await expect(viewer.locator(".room-person").filter({ hasText: "Disconnected" })).toBeVisible();
+  await expect(viewer.getByLabel("Your guess")).toBeEnabled();
+  await expect.poll(() => timeValue(viewer), { timeout: 5000 }).toBeLessThan(viewerTimeBefore);
+  await drawerContext.setOffline(false);
+  await expect.poll(() => drawer.getByLabel("Drawing canvas").getAttribute("data-readonly")).toBe("false");
+  await expect.poll(() => pixels(drawer)).toEqual(before);
   await hostContext.close();
   await guestContext.close();
 });

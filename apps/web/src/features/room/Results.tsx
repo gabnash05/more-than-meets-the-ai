@@ -87,7 +87,7 @@ export function RoundRecap({
         <p className="room-recap-ai">AI benchmark: {aiLabel}</p>
       )}
       <div className="room-recap-next">
-        {nextDrawer &&
+        {!snapshot.waitingForPlayers && nextDrawer &&
           snapshot.game?.round !== snapshot.settings.rounds &&
           !(
             snapshot.startBlockers?.length &&
@@ -95,7 +95,9 @@ export function RoundRecap({
             countdown <= 0
           ) && <Avatar avatar={nextDrawer.profile.avatar} />}
         <p>
-          {snapshot.game?.round === snapshot.settings.rounds ? (
+          {snapshot.waitingForPlayers ? (
+            <>Waiting for another player to reconnect.</>
+          ) : snapshot.game?.round === snapshot.settings.rounds ? (
             <>
               Final standings
               {countdown != null && countdown > 0 ? (

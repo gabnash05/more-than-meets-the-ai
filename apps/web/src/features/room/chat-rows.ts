@@ -5,6 +5,7 @@ export interface ChatRow {
   name: string;
   text: string;
   correct: boolean;
+  system: boolean;
 }
 
 /**
@@ -22,8 +23,9 @@ export function chatRows(
   for (const player of players) names.set(player.id, player.profile.name);
   return chat.map(message => ({
     id: message.id,
-    name: names.get(message.playerId) ?? "Room",
+    name: message.kind === "system" ? "" : names.get(message.playerId) ?? "Room",
     text: message.text,
     correct: message.kind === "correct",
+    system: message.kind === "system",
   }));
 }

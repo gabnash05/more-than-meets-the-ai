@@ -15,6 +15,7 @@ export interface RoomPlayer {
   id: string;
   profile: PlayerProfile;
   connected: boolean;
+  left?: boolean;
   teamId?: string;
   joinedAt: number;
   solved?: boolean;
@@ -128,6 +129,7 @@ export interface RoomSnapshot {
   winners?: string[];
   chat: ChatMessage[];
   startBlockers?: string[];
+  waitingForPlayers?: boolean;
   hostDisconnectedUntil?: number;
   canReturnToLobby?: boolean;
   game?: RoomGame;

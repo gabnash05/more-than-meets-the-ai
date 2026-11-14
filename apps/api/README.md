@@ -19,6 +19,8 @@ Server timing values are configured in milliseconds, not through room settings: 
 
 Individual is the supported remote mode in this milestone. New Team settings/starts are rejected; existing Team code/types/records and deferred tests are retained for the later Team plan. Host starts require two connected humans. Each committed round has an eight-second recap before progression/final standings.
 
+Individual turns keep their original deadlines through a disconnect or departure. A disconnected host retains control for the configured grace period. After a non-final recap, the room waits for two connected players before starting the next turn. The host can return to the lobby to invite a replacement.
+
 ## Prompt catalogue and match history
 
 New matches use an API-owned catalogue of 348 unique words: the existing category labels plus the original prompts. There is no runtime dependency on the model directory. The room's private JSON `selectedPrompts` records accepted manual/automatic choices, including interrupted targets. New choices exclude every recorded target; merely offered alternatives may recur. Refresh, restart and retry retain the history; a new match resets it.

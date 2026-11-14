@@ -350,7 +350,7 @@ export class RoomEngine {
   private creatingCodes = new Set<string>();
   private inferenceTimer?: ReturnType<typeof setInterval>;
   private inferenceCursor: Partial<Record<Role, string>> = {};
-  private activeInference = new Map<string, { role: Role; code: string; controller: AbortController; guessing: boolean }>();
+  private activeInference = new Map<string, { role: Role; code: string; controller: AbortController; guessing: boolean; invalidated: boolean; previousFrame?: { sequence?: number; hash?: string } }>();
   // Keyed by room code and tagged with the drawing it belongs to, so a map or a
   // prediction can never outlive its turn even if a reset path forgets to clear it.
   private aiReadouts = new Map<string, {
@@ -438,10 +438,42 @@ export class RoomEngine {
     for (const active of this.activeInference.values()) {
       if (active.code === code) {
         active.guessing = false;
+        active.invalidated = true;
         active.controller.abort("invalidated");
       }
     }
     return warningCleared;
+  }
+
+  private hasConnectedUnsolved(room: State, group: Group): boolean {
+    return group.eligible.some(id => !group.solves.some(s => s.playerId === id) &&
+      room.players.some(p => p.id === id && !p.left && this.connected(room, p)));
+  }
+
+  private suspendGuesserIfNeeded(room: State): void {
+    const game = room.game;
+    const group = game?.groups[0];
+    if (room.settings.mode !== "individual" || room.phase !== "drawing" || !game || !group || this.hasConnectedUnsolved(room, group)) return;
+    const active = this.activeInference.get(this.inferenceKey(room.code, "guesser"));
+    if (active) {
+      // Restore only the interrupted frame's dedupe markers; keep the call budget
+      // and the cadence from completed attempts across presence changes.
+      if (active.guessing && active.previousFrame && game.guesserProgress) {
+        game.guesserProgress.sequence = active.previousFrame.sequence;
+        game.guesserProgress.hash = active.previousFrame.hash;
+      }
+      active.guessing = false;
+      active.invalidated = true;
+      active.controller.abort("invalidated");
+      this.activeInference.delete(this.inferenceKey(room.code, "guesser"));
+    }
+    // Invalidate trusted reservations too, even if a human reconnects before the result arrives.
+    for (const job of Object.values(game.aiJobs ?? {})) job.completed = true;
+  }
+
+  private presenceNotice(room: State, player: Player, action: "disconnected" | "reconnected" | "left"): void {
+    room.chat.push({ id: randomUUID(), playerId: player.id, text: `${player.profile.name} ${action}.`, at: this.now(), kind: "system" });
+    room.chat = room.chat.slice(-100);
   }
 
   private liveObservation(code: string, job: Pick<Job, "turnId" | "canvasId" | "generation">) {
@@ -500,7 +532,7 @@ export class RoomEngine {
       if (nextCursor) this.inferenceCursor[role] = nextCursor;
     }
     for (const [code, roles] of planned) {
-      for (const role of roles) this.activeInference.set(this.inferenceKey(code, role), { role, code, controller: new AbortController(), guessing: false });
+      for (const role of roles) this.activeInference.set(this.inferenceKey(code, role), { role, code, controller: new AbortController(), guessing: false, invalidated: false });
       void this.observeGroup(code, roles);
     }
   }
@@ -513,6 +545,7 @@ export class RoomEngine {
     if (!room.aiMatch?.[role] || !game || !group || !group.sequence || room.phase !== "drawing" ||
         room.settings.mode !== "individual" || group.closed || group.pause || now >= group.deadlineAt) return false;
     const at = this.drawMs - (group.deadlineAt - now);
+    if (role === "guesser" && !this.hasConnectedUnsolved(room, group)) return false;
     if (role === "referee") return at >= 1000 && (game.refereeAt === undefined || at >= game.refereeAt + 1000);
     const progress = game.guesserProgress;
     if (game.aiRound?.status === "unavailable") return false;
@@ -531,10 +564,11 @@ export class RoomEngine {
 
   private async observeGroup(code: string, roles: Role[]): Promise<void> {
     const inference = this.options.inference!;
+    const reservations = new Map(roles.map(role => [role, this.activeInference.get(this.inferenceKey(code, role))!]));
     const reserved = await this.serial(code, async () => {
       const room = this.rooms.get(code);
       if (!room) return;
-      const due = roles.filter(role => !this.activeInference.get(this.inferenceKey(code, role))?.controller.signal.aborted && this.observationDue(room, role));
+      const due = roles.filter(role => !reservations.get(role)!.controller.signal.aborted && this.observationDue(room, role));
       if (!due.length) return;
       const game = room.game!;
       const group = game.groups[0];
@@ -563,10 +597,10 @@ export class RoomEngine {
       return { jobs, operations };
     }).catch(() => undefined);
     if (!reserved) {
-      for (const role of roles) this.activeInference.delete(this.inferenceKey(code, role));
+      for (const role of roles) if (this.activeInference.get(this.inferenceKey(code, role)) === reservations.get(role)) this.activeInference.delete(this.inferenceKey(code, role));
       return;
     }
-    for (const role of roles) if (!reserved.jobs.some(entry => entry.role === role)) this.activeInference.delete(this.inferenceKey(code, role));
+    for (const role of roles) if (!reserved.jobs.some(entry => entry.role === role) && this.activeInference.get(this.inferenceKey(code, role)) === reservations.get(role)) this.activeInference.delete(this.inferenceKey(code, role));
     let png: Buffer | null | undefined;
     try {
       const job = reserved.jobs[0].job;
@@ -574,12 +608,11 @@ export class RoomEngine {
     } catch {
       png = undefined;
     }
-    await Promise.all(reserved.jobs.map(({ role, job }) => this.observe(code, role, { job }, png)));
+    await Promise.all(reserved.jobs.map(({ role, job }) => this.observe(code, role, { job }, png, reservations.get(role)!)));
   }
 
-  private async observe(code: string, role: Role, reserved: { job: Job }, png: Buffer | null | undefined): Promise<void> {
+  private async observe(code: string, role: Role, reserved: { job: Job }, png: Buffer | null | undefined, active: NonNullable<ReturnType<typeof this.activeInference.get>>): Promise<void> {
     const inference = this.options.inference!;
-    const active = this.activeInference.get(this.inferenceKey(code, role))!;
     const { signal } = active.controller;
     let submittedAt: number | undefined;
     let outcome: Outcome | undefined;
@@ -589,9 +622,10 @@ export class RoomEngine {
       const hash = role === "guesser" && png ? digest(png) : undefined;
       const send = await this.serial(active.code, async () => {
         const live = this.liveObservation(active.code, job);
-        if (!live || signal.aborted) return false;
+        if (!live || signal.aborted || (role === "guesser" && !this.hasConnectedUnsolved(live.room, live.group))) return false;
         if (role === "guesser") {
           const progress = live.game.guesserProgress!;
+          active.previousFrame = { sequence: progress.sequence, hash: progress.hash };
           progress.sequence = job.sequence;
           if (!hash || progress.hash === hash) return false;
           progress.hash = hash;
@@ -621,7 +655,7 @@ export class RoomEngine {
       }
       await this.serial(active.code, async () => {
         const live = this.liveObservation(active.code, job);
-        if (!live || signal.reason === "invalidated" || this.stopping || !outcome) return;
+        if (!live || active.invalidated || this.stopping || !outcome || (role === "guesser" && !this.hasConnectedUnsolved(live.room, live.group))) return;
         if (this.now() >= job.deadlineAt || signal.reason === "timeout") outcome = { status: "unavailable", reason: "request-timeout" };
         const { game, group } = live;
         active.guessing = false;
@@ -692,7 +726,7 @@ export class RoomEngine {
         }
       });
     } catch {
-      if (!signal.aborted && !this.stopping) {
+      if (!signal.aborted && !active.invalidated && !this.stopping) {
         const job = reserved.job;
         await this.serial(active.code, async () => {
           const live = this.liveObservation(active.code, job);
@@ -712,10 +746,11 @@ export class RoomEngine {
           if (live) this.publish(live.room);
         });
       }
-      this.activeInference.delete(this.inferenceKey(code, role));
+      this.explanationJobs.delete(reserved.job.jobId);
+      if (this.activeInference.get(this.inferenceKey(code, role)) === active) this.activeInference.delete(this.inferenceKey(code, role));
       console.info(JSON.stringify({
         event: "inference", role, revision: reserved.job.artifactRevision,
-        outcome: signal.reason === "invalidated" ? "cancelled" : (outcome?.status ?? (submittedAt === undefined ? "skipped" : "failed")),
+        outcome: active.invalidated ? "cancelled" : (outcome?.status ?? (submittedAt === undefined ? "skipped" : "failed")),
         elapsedMs: submittedAt === undefined ? null : this.now() - submittedAt,
       }));
     }
@@ -727,7 +762,7 @@ export class RoomEngine {
       const room = this.get(code);
       const game = room.game;
       const group = game?.groups[0];
-      requireThat(room.settings.aiGuesserEnabled !== false && room.settings.mode === "individual" && room.phase === "drawing" && game && group && !group.closed && !group.pause && this.now() < group.deadlineAt && game.aiRound?.status !== "solved" && game.aiRound?.status !== "unavailable", "unavailable", "AI observation is unavailable.");
+      requireThat(room.settings.aiGuesserEnabled !== false && room.settings.mode === "individual" && room.phase === "drawing" && game && group && !group.closed && !group.pause && this.now() < group.deadlineAt && game.aiRound?.status !== "solved" && game.aiRound?.status !== "unavailable" && this.hasConnectedUnsolved(room, group), "unavailable", "AI observation is unavailable.");
       const observation: GuesserObservation = { jobId: randomUUID(), turnId: game.turnId, canvasId: group.canvasId, generation: game.generation, sequence: group.sequence, hint: this.hint(group, game.target!), deadlineAt: group.deadlineAt };
       game.aiJobs ??= {};
       game.aiJobs[observation.jobId] = { observation, completed: false };
@@ -742,7 +777,7 @@ export class RoomEngine {
       const game = room.game;
       const group = game?.groups[0];
       const job = game?.aiJobs?.[observation.jobId];
-      if (!game || !group || !job || job.completed || result.jobId !== observation.jobId || JSON.stringify(job.observation) !== JSON.stringify(observation) || room.phase !== "drawing" || group.closed || group.pause || game.generation !== observation.generation || game.turnId !== observation.turnId || this.now() >= observation.deadlineAt || this.now() >= group.deadlineAt || game.aiRound?.status === "solved" || game.aiRound?.status === "unavailable") return false;
+      if (!game || !group || !job || job.completed || result.jobId !== observation.jobId || JSON.stringify(job.observation) !== JSON.stringify(observation) || room.phase !== "drawing" || group.closed || group.pause || game.generation !== observation.generation || game.turnId !== observation.turnId || this.now() >= observation.deadlineAt || this.now() >= group.deadlineAt || game.aiRound?.status === "solved" || game.aiRound?.status === "unavailable" || !this.hasConnectedUnsolved(room, group)) return false;
       if (result.status === "answer" && result.confidence !== undefined && (!Number.isFinite(result.confidence) || result.confidence < 0 || result.confidence > 1)) return false;
       job.completed = true;
       if (result.status === "unavailable") {
@@ -921,6 +956,7 @@ export class RoomEngine {
         id: p.id,
         profile: clone(p.profile),
         connected: this.connected(room, p),
+        left: p.left || undefined,
         teamId: p.teamId,
         joinedAt: p.joinedAt,
         solved: this.group(room, p)?.solves.some((s) => s.playerId === p.id),
@@ -931,6 +967,7 @@ export class RoomEngine {
       phase: room.phase,
       chat: clone(room.chat),
       serverTime: now,
+      waitingForPlayers: room.settings.mode === "individual" && room.phase === "result" && !!game && now >= game.deadlineAt && room.round < room.settings.rounds && !this.ready(room),
       canReturnToLobby:
         viewer.id === room.hostId &&
         (room.phase === "finished" ||
@@ -1228,6 +1265,7 @@ export class RoomEngine {
       });
       this.leases.set(key, connectionId);
       this.idleSince.delete(room.code);
+      if (!old && player.connectedAt !== undefined) this.presenceNotice(room, player, "reconnected");
       player.connectedAt = this.now();
       if (room.hostDisconnectedUntil && room.hostDisconnectedUntil <= this.now()) {
         const next = room.players.filter((p) => this.connected(room, p) && !p.left)
@@ -1372,6 +1410,9 @@ export class RoomEngine {
       this.leases.delete(key);
       if (![...this.connections.values()].some(connection => connection.code === room.code)) this.idleSince.set(room.code, this.now());
       this.closeStroke(room, conn.playerId);
+      const disconnectedPlayer = room.players.find(p => p.id === conn.playerId);
+      if (disconnectedPlayer && !disconnectedPlayer.left) this.presenceNotice(room, disconnectedPlayer, "disconnected");
+      this.suspendGuesserIfNeeded(room);
       if (room.hostId === conn.playerId)
         room.hostDisconnectedUntil = this.now() + this.graceMs;
       this.pauseGroups(room);
@@ -1386,7 +1427,7 @@ export class RoomEngine {
     });
   }
   private pauseGroups(room: State): void {
-    if (room.phase !== "drawing") return;
+    if (room.phase !== "drawing" || room.settings.mode === "individual") return;
     for (const g of room.game!.groups) {
       if (g.closed || g.pause || g.deadlineAt <= this.now()) continue;
       const drawer = room.players.find((p) => p.id === g.drawerId)!;
@@ -1414,7 +1455,7 @@ export class RoomEngine {
     }
   }
   private resumeGroups(room: State): void {
-    if (room.phase !== "drawing") return;
+    if (room.phase !== "drawing" || room.settings.mode === "individual") return;
     for (const g of room.game!.groups) {
       if (!g.pause || g.pause.until <= this.now()) continue;
       const drawer = room.players.find((p) => p.id === g.drawerId);
@@ -1664,7 +1705,11 @@ export class RoomEngine {
     if (room.phase === "drawing" && room.game!.groups.every((g) => g.closed))
       deadlines.push(this.now() + 1000);
     if (room.phase === "starting" && room.startDeadlineAt !== undefined) deadlines.push(room.startDeadlineAt);
-    if (room.phase === "choosing" || room.phase === "result")
+    if (
+      room.phase === "choosing" ||
+      (room.phase === "result" &&
+        (room.game!.deadlineAt > this.now() || room.round >= room.settings.rounds || this.canStartNextTurn(room)))
+    )
       deadlines.push(room.game!.deadlineAt);
     if (room.phase === "drawing")
       for (const g of room.game!.groups)
@@ -1688,6 +1733,11 @@ export class RoomEngine {
     }, delay);
     this.timers.set(room.code, timer);
   }
+
+  private canStartNextTurn(room: State): boolean {
+    return this.ready(room) && this.hasPromptOptions(room);
+  }
+
   private scheduleRetry(room: State): void {
     if (this.stopping) return;
     const old = this.timers.get(room.code);
@@ -1774,15 +1824,15 @@ export class RoomEngine {
       }
     }
     if (room.phase === "result" && room.game!.deadlineAt <= now) {
-      if (room.round >= room.settings.rounds) room.phase = "finished";
-      else if (this.ready(room)) {
-        try {
-          this.begin(room);
-        } catch {
-          room.game!.deadlineAt = now + 1000;
-        }
-      } else room.game!.deadlineAt = now + 1000;
-      changed = true;
+      if (room.round >= room.settings.rounds) {
+        room.phase = "finished";
+        changed = true;
+      } else if (this.canStartNextTurn(room)) {
+        this.begin(room);
+        changed = true;
+      }
+      // Publish the first waiting state even when no durable transition occurs.
+      if (!changed) this.publish(room);
     }
     if (changed) {
       room.revision++;
@@ -1866,6 +1916,8 @@ export class RoomEngine {
           );
         if (name === "room:guess" || name === "room:drawing") {
           const current = this.group(room, player);
+          if (name === "room:drawing" && current?.drawerId === player.id && (current.closed || room.phase === "result" || room.phase === "finished"))
+            throw new GameError("expired", "Drawing time has expired.");
           if (name === "room:drawing" && current?.pause)
             throw new GameError("drawing-paused", "Drawing paused; the unaccepted stroke tail was discarded.");
           requireThat(
@@ -2257,6 +2309,7 @@ export class RoomEngine {
             break;
           }
           case "room:leave": {
+            this.presenceNotice(room, player, "left");
             if (room.phase === "lobby" || room.phase === "starting" || room.phase === "finished")
               room.players = room.players.filter((p) => p.id !== player.id);
             else {
@@ -2296,12 +2349,14 @@ export class RoomEngine {
         if (name === "room:guess") {
           const group = this.group(room, player);
           if (group?.closed) this.closeStroke(room, group.drawerId);
+          this.suspendGuesserIfNeeded(room);
         }
         if (name === "room:leave") {
           this.connections.delete(connectionId);
           this.leases.delete(`${room.code}:${player.id}`);
           if (![...this.connections.values()].some(connection => connection.code === room.code)) this.idleSince.set(room.code, this.now());
           this.closeStroke(room, player.id);
+          this.suspendGuesserIfNeeded(room);
           this.pauseGroups(room);
         }
         ack.revision = room.revision;

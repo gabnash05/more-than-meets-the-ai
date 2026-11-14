@@ -98,7 +98,7 @@ async function startRoom(
     } });
   };
   return {
-    engine, code, target, ink, generation, canvasId: game.canvasId,
+    engine, code, target, ink, generation, canvasId: game.canvasId, guestToken: guest.resumeToken,
     finish: async () => {
       await send(guestConnection, "room:guess", { generation, payload: { text: target } });
       return (await resume(guest.resumeToken)).snapshot.game!.result!;
@@ -459,4 +459,24 @@ test("a solved round refreshes the explanation without recording another guess",
       .filter(event => event.privateState?.role !== "drawer" && event.snapshot.game?.aiHeatmap !== undefined);
     assert.equal(othersWithMap.length, 0);
   } finally { await room.engine.shutdown(); }
+});
+
+test("in-flight Guesser result stays invalid after the last unsolved human reconnects", async () => {
+  const pending: ((outcome: Outcome) => void)[] = [];
+  const context = inferenceFixture(() => new Promise<Outcome>(resolve => pending.push(resolve)), async () => Buffer.from("pixels"));
+  try {
+    const room = await startRoom(context.engine, "reconnect", { aiGuesserEnabled: true, aiRefereeEnabled: false });
+    await room.ink();
+    context.advance(4000);
+    await waitFor(() => pending.length === 1);
+    await context.engine.disconnect("reconnect:guest");
+    await context.engine.connect(room.code, room.guestToken, "reconnect:guest-again");
+    await waitFor(() => pending.length === 2);
+    pending[0]({ status: "answer", answer: room.target, confidence: 0.99 });
+    await delay(30);
+    assert.equal((await room.guest()).snapshot.game!.aiStatus === "correct", false);
+    pending[1]({ status: "answer", answer: room.target, confidence: 0.99 });
+    await waitFor(() => context.events.some(event => event.type === "ai-guess"));
+    assert.equal(context.events.filter(event => event.type === "ai-guess").length, 2); // one pulse to each connected seat
+  } finally { for (const resolve of pending) resolve({ status: "pass" }); await context.engine.shutdown(); }
 });

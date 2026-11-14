@@ -24,11 +24,11 @@ Preserve the approved V10 Lemon Crayon UI, profile/avatar behavior, corrected in
 
 - Individual is the default; there is no synthetic human team. Defaults are six human seats and six total prompt positions. Limits are 2–8 seats and 1–20 prompts; a prompt count is not a complete drawer rotation.
 - Create opens the lobby and invitation immediately. Only the host starts, with at least two connected people and no Ready step. Everyone sees exact blockers. Remote Team selection/settings/starts are unavailable; preserve its implementation, types and deferred tests.
-- The selecting drawer privately receives three choices for 15 seconds. On expiry choose an available option. Start the 60-second drawing clock after selection; hints and pauses use authoritative elapsed time.
+- The selecting drawer privately receives three choices for 15 seconds. On expiry choose an available option, even if the drawer is offline. Start the 60-second drawing clock after selection and derive hints from elapsed time.
 - Each eligible human can solve once. A first human solve does not close the turn for remaining humans. Close when all eligible humans solve or the deadline expires, subject to disconnect handling. The drawer cannot guess a known target.
 - Commit required records and results exactly once before advancement. Show an eight-second recap, score components and upcoming drawer; rotate through the stable roster, skipping departed/offline players. Final standings identify every tied human winner and have no active drawing labels/running clock. Host return to lobby permits another game.
 - Reserve a disconnected host for 30 seconds, then transfer to the longest-connected eligible player using stable ties. Explicit departure transfers immediately; hosting never changes the drawer.
-- Pause for up to 30 seconds if the drawer or every remaining unsolved guesser disconnects. On expiry retain accepted solves and close the affected turn; missing players are not counted solved. New arrivals cannot enter active games; existing participants resume their seats. Leave retains outcomes and releases departed seats when the lobby reopens.
+- Keep the Individual clock running when players disconnect or leave. Existing players can resume their seats and guess if eligible. Leave invalidates the session, keeps the current drawing's scoring roster and removes that player from future turns. After recap, wait for two existing players before rotating to the next connected drawer. The host can reopen the lobby to admit replacements.
 - Server-projected canReturnToLobby permits escape from interrupted play or a committed result blocked by absent required players, and normal finished play. It cannot abandon an uncommitted active drawing.
 
 ## Scoring and AI preparation

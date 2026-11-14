@@ -112,6 +112,7 @@ test("independent solves, prompt secrecy and request deduplication", async () =>
     (await engine.resume(code, third.resumeToken)).snapshot.phase,
     "result",
   );
+  assert.equal((await engine.command("one", "room:drawing", { requestId: "late-drawing", generation, payload: {} })).code, "expired");
   await engine.shutdown();
 });
 test("disconnect closes a live stroke and restart exposes only its saved journal", async () => {
@@ -546,7 +547,7 @@ test("drawer rotation follows the original order after a departure", async () =>
   const engine = new RoomEngine({
     store: new MemoryStore(),
     eventSink: () => {},
-    config: { graceMs: 10, recapMs: 20 },
+    config: { graceMs: 10, drawMs: 40, recapMs: 60 },
   });
   const a = await engine.create(profile);
   const code = a.snapshot.code;
@@ -577,11 +578,11 @@ test("drawer rotation follows the original order after a departure", async () =>
     (await engine.command("a", "room:leave", { requestId: "leave" })).ok,
     true,
   );
-  await new Promise((resolve) => setTimeout(resolve, 22));
+  await new Promise((resolve) => setTimeout(resolve, 50));
   view = await engine.resume(code, b.resumeToken);
   assert.equal(view.snapshot.phase, "result");
   assert.equal(view.snapshot.game!.result!.nextDrawerId, b.playerId);
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await new Promise((resolve) => setTimeout(resolve, 70));
   view = await engine.resume(code, b.resumeToken);
   assert.equal(view.snapshot.phase, "choosing");
   assert.equal(view.snapshot.game!.drawerId, b.playerId);
@@ -900,48 +901,6 @@ test("synthetic AI failure differs from normal cancellation of a pending job", a
 });
 
 
-test("paused hints and clock resume before grace; late reconnect retains solves and closes", async () => {
-  let now = 1000;
-  const engine = new RoomEngine({ store: new MemoryStore(), eventSink: () => {}, clock: () => now, config: { drawMs: 60000, graceMs: 30000 } });
-  const host = await engine.create(profile);
-  const code = host.snapshot.code;
-  const first = await engine.join(code, { ...profile, name: "First" });
-  const second = await engine.join(code, { ...profile, name: "Second" });
-  await engine.connect(code, host.resumeToken, "drawer");
-  await engine.connect(code, first.resumeToken, "first");
-  await engine.connect(code, second.resumeToken, "second");
-  let view = await engine.resume(code, host.resumeToken);
-  await engine.command("drawer", "room:start", { requestId: "start", expectedRevision: view.snapshot.revision });
-  view = await engine.resume(code, host.resumeToken);
-  const word = view.privateState!.promptOptions![0].id;
-  const generation = view.snapshot.game!.generation;
-  await engine.command("drawer", "room:choose-prompt", { requestId: "choose", generation, payload: { id: word } });
-  const initialHint = (await engine.resume(code, first.resumeToken)).snapshot.game!.hint;
-  now += 20000;
-  const laterHint = (await engine.resume(code, first.resumeToken)).snapshot.game!.hint;
-  assert.notEqual(initialHint, laterHint);
-  await engine.command("first", "room:guess", { requestId: "solve", generation, payload: { text: word } });
-  await engine.disconnect("second");
-  view = await engine.resume(code, host.resumeToken);
-  const remaining = view.snapshot.game!.pause!.remainingMs;
-  now += 10000;
-  assert.equal((await engine.resume(code, host.resumeToken)).snapshot.game!.hint, laterHint);
-  await engine.connect(code, second.resumeToken, "second-again");
-  view = await engine.resume(code, host.resumeToken);
-  assert.equal(view.snapshot.game!.pause, undefined);
-  assert.equal(view.snapshot.game!.deadlineAt, now + remaining);
-  await engine.disconnect("second-again");
-  now += 30001;
-  await engine.connect(code, second.resumeToken, "second-late");
-  assert.ok((await engine.resume(code, host.resumeToken)).snapshot.game!.pause);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  view = await engine.resume(code, host.resumeToken);
-  assert.equal(view.snapshot.phase, "result");
-  assert.ok(view.snapshot.game!.result!.components[first.playerId].guesserBase > 0);
-  assert.equal(view.snapshot.game!.result!.components[second.playerId].guesserBase, 0);
-  await engine.shutdown();
-});
-
 test("archive backpressure preserves a contiguous durable prefix and recovers", async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -1054,7 +1013,7 @@ test("disconnect after drawing deadline does not create a new grace period", asy
 });
 
 
-test("guesser disconnect closes accepted stroke and rejects paused tail definitively", async () => {
+test("guesser disconnect leaves the drawer stroke active", async () => {
   const store = new MemoryStore();
   const events: unknown[] = [];
   const engine = new RoomEngine({ store, eventSink: (_connection, event) => events.push(event) });
@@ -1074,13 +1033,13 @@ test("guesser disconnect closes accepted stroke and rejects paused tail definiti
   assert.equal((await engine.command("drawer", "room:drawing", { requestId: "start-stroke", generation, payload: batch("old", 1, start) })).ok, true);
   await engine.disconnect("guesser");
   const tail = { type: "stroke.append", opId: "tail", actionId: "stroke", at: 2, clientSeq: 2, points: [{ x: 2, y: 3, time: 2 }] };
-  assert.equal((await engine.command("drawer", "room:drawing", { requestId: "tail", generation, payload: batch("old", 2, tail) })).code, "drawing-paused");
-  assert.ok(events.some((event) => { const e = event as { type?: string; operations?: { type: string }[] }; return e.type === "drawing" && e.operations?.some((op) => op.type === "stroke.end"); }));
+  assert.equal((await engine.command("drawer", "room:drawing", { requestId: "tail", generation, payload: batch("old", 2, tail) })).ok, true);
+  assert.ok(!events.some((event) => { const e = event as { type?: string; operations?: { type: string }[] }; return e.type === "drawing" && e.operations?.some((op) => op.type === "stroke.end"); }));
   await engine.connect(code, other.resumeToken, "guesser-again");
-  const next = { ...start, opId: "new-op", actionId: "new-stroke", clientSeq: 1 };
-  assert.equal((await engine.command("drawer", "room:drawing", { requestId: "new-stroke", generation, payload: batch("new", 1, next) })).ok, true);
+  const next = { type: "stroke.end", opId: "end-op", actionId: "stroke", at: 3, clientSeq: 3, point: { x: 2, y: 3, time: 3 } };
+  assert.equal((await engine.command("drawer", "room:drawing", { requestId: "new-stroke", generation, payload: batch("old", 3, next) })).ok, true);
   for (let n = 0; n < 100 && store.drawings.length < 3; n++) await new Promise((resolve) => setTimeout(resolve, 5));
-  assert.deepEqual(store.drawings.flatMap((row) => row.operations).map((op) => (op as { type: string }).type), ["stroke.start", "stroke.end", "stroke.start"]);
+  assert.deepEqual(store.drawings.flatMap((row) => row.operations).map((op) => (op as { type: string }).type), ["stroke.start", "stroke.append", "stroke.end"]);
   await engine.shutdown();
 });
 
@@ -1304,7 +1263,7 @@ test("last solve closes an accepted held stroke before committing the result", a
     assert.equal((await engine.command("drawer", "room:drawing", { requestId: "held-start", generation, payload: batch(1, start) })).ok, true);
     assert.equal((await engine.command("guesser", "room:guess", { requestId: "solve", generation, payload: { text: word } })).ok, true);
     const tail = { type: "stroke.append", opId: "held-tail", actionId: "held-action", at: 2, clientSeq: 2, points: [{ x: 2, y: 2, time: 2 }] };
-    assert.equal((await engine.command("drawer", "room:drawing", { requestId: "held-tail", generation, payload: batch(2, tail) })).code, "forbidden");
+    assert.equal((await engine.command("drawer", "room:drawing", { requestId: "held-tail", generation, payload: batch(2, tail) })).code, "expired");
     for (let n = 0; n < 100 && !store.drawings.some(row => row.operations.some(op => op.type === "stroke.end")); n++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.ok(events.some(event => event.type === "drawing" && event.operations?.some(op => op.type === "stroke.end")));
     assert.deepEqual(store.drawings.flatMap(row => row.operations).map(op => op.type), ["stroke.start", "stroke.end"]);
@@ -1336,5 +1295,130 @@ test("starting countdown is shared, protects selection and returns to lobby on l
     assert.equal((await engine.command("start-host", "room:start", { requestId: "start-again", expectedRevision: ready.snapshot.revision })).ok, true);
     await new Promise(resolve => setTimeout(resolve, 80));
     assert.equal((await engine.resume(code, host.resumeToken)).snapshot.phase, "choosing");
+  } finally { await engine.shutdown(); }
+});
+
+test("individual disconnects preserve deadlines, sessions, solves, and reject late AI results", async () => {
+  let now = 1000;
+  const engine = new RoomEngine({ store: new MemoryStore(), eventSink: () => {}, clock: () => now,
+    config: { chooseMs: 10000, drawMs: 10000, recapMs: 1000, graceMs: 30000 } });
+  try {
+    const host = await engine.create(profile);
+    const code = host.snapshot.code;
+    const other = await engine.join(code, { ...profile, name: "Other" });
+    const third = await engine.join(code, { ...profile, name: "Third" });
+    await engine.connect(code, host.resumeToken, "cont-host");
+    await engine.connect(code, other.resumeToken, "cont-other");
+    await engine.connect(code, third.resumeToken, "cont-third");
+    const lobby = await engine.resume(code, host.resumeToken);
+    assert.deepEqual(lobby.snapshot.chat, []);
+    assert.equal((await engine.command("cont-host", "room:start", { requestId: "cont-start", expectedRevision: lobby.snapshot.revision })).ok, true);
+    const choice = await engine.resume(code, host.resumeToken);
+    const generation = choice.snapshot.game!.generation;
+    const target = choice.privateState!.promptOptions![0].id;
+    await engine.command("cont-host", "room:choose-prompt", { requestId: "cont-choose", generation, payload: { id: target } });
+    const initial = await engine.resume(code, other.resumeToken);
+    const deadline = initial.snapshot.game!.deadlineAt;
+    const observation = await engine.reserveGuesserObservation(code);
+    assert.equal((await engine.command("cont-other", "room:guess", { requestId: "cont-solve", generation, payload: { text: target } })).ok, true);
+    await engine.disconnect("cont-third");
+    now += 7000;
+    const withOfflineGuesser = await engine.resume(code, other.resumeToken);
+    assert.equal(withOfflineGuesser.snapshot.game!.deadlineAt, deadline);
+    assert.notEqual(withOfflineGuesser.snapshot.game!.hint, initial.snapshot.game!.hint);
+    await engine.connect(code, third.resumeToken, "cont-third-again");
+    assert.equal(await engine.acceptGuesserResult(code, observation, { jobId: observation.jobId, status: "answer", answer: target, confidence: 1 }), false);
+    await engine.disconnect("cont-host");
+    const rejoined = await engine.connect(code, host.resumeToken, "cont-host-again");
+    assert.equal(rejoined.privateState!.role, "drawer");
+    assert.equal(rejoined.snapshot.game!.deadlineAt, deadline);
+    await engine.connect(code, host.resumeToken, "cont-host-replacement");
+    await engine.disconnect("cont-host-again");
+    assert.equal((await engine.command("cont-third-again", "room:leave", { requestId: "cont-leave" })).ok, true);
+    await assert.rejects(() => engine.resume(code, third.resumeToken));
+    await engine.disconnect("cont-third-again");
+    const afterLeave = await engine.resume(code, host.resumeToken);
+    assert.deepEqual(afterLeave.snapshot.chat.filter(message => message.kind === "system").map(message => message.text), [
+      "Third disconnected.", "Third reconnected.", "Player disconnected.", "Player reconnected.", "Third left.",
+    ]);
+    assert.equal(afterLeave.snapshot.players.find(player => player.id === third.playerId)?.left, true);
+    assert.equal(afterLeave.snapshot.game!.deadlineAt, deadline);
+    now = deadline!;
+    assert.equal((await engine.command("cont-other", "room:guess", { requestId: "cont-late", generation, payload: { text: target } })).code, "expired");
+    await engine.connect(code, other.resumeToken, "cont-other-replacement");
+    for (let attempt = 0; attempt < 25; attempt++) {
+      if ((await engine.resume(code, host.resumeToken)).snapshot.phase === "result") break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    const result = (await engine.resume(code, host.resumeToken)).snapshot.game!.result!;
+    assert.ok(result.components![other.playerId].guesserBase > 0);
+    assert.equal(result.components![third.playerId].guesserBase, 0);
+  } finally { await engine.shutdown(); }
+});
+
+test("an offline chooser keeps the original deadline and an offline seat can guess on return", async () => {
+  let now = 1000;
+  const engine = new RoomEngine({ store: new MemoryStore(), eventSink: () => {}, clock: () => now,
+    config: { chooseMs: 15000, drawMs: 60000 } });
+  try {
+    const host = await engine.create(profile);
+    const code = host.snapshot.code;
+    const first = await engine.join(code, { ...profile, name: "First" });
+    const second = await engine.join(code, { ...profile, name: "Second" });
+    await engine.connect(code, host.resumeToken, "auto-host");
+    await engine.connect(code, first.resumeToken, "auto-first");
+    const lobby = await engine.resume(code, host.resumeToken);
+    await engine.command("auto-host", "room:start", { requestId: "auto-start", expectedRevision: lobby.snapshot.revision });
+    const choosing = await engine.resume(code, host.resumeToken);
+    await engine.disconnect("auto-host");
+    const beforeExpiry = await engine.resume(code, first.resumeToken);
+    assert.equal(beforeExpiry.snapshot.phase, "choosing");
+    assert.equal(beforeExpiry.snapshot.game!.deadlineAt, choosing.snapshot.game!.deadlineAt);
+    now = choosing.snapshot.game!.deadlineAt!;
+    await engine.connect(code, first.resumeToken, "auto-first-replacement");
+    for (let attempt = 0; attempt < 25; attempt++) {
+      if ((await engine.resume(code, first.resumeToken)).snapshot.phase === "drawing") break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    const drawing = await engine.resume(code, first.resumeToken);
+    assert.equal(drawing.snapshot.phase, "drawing");
+    assert.equal(drawing.snapshot.game!.deadlineAt, now + 60000);
+    assert.equal(drawing.privateState!.target, undefined);
+    const rejoined = await engine.connect(code, second.resumeToken, "auto-second");
+    assert.equal(rejoined.privateState!.role, "guesser");
+    const expected = choosing.privateState!.promptOptions![0].id;
+    assert.equal((await engine.command("auto-second", "room:guess", {
+      requestId: "auto-solve", generation: drawing.snapshot.game!.generation, payload: { text: expected },
+    })).ok, true);
+    assert.equal((await engine.resume(code, second.resumeToken)).snapshot.players.find(player => player.id === second.playerId)?.solved, true);
+  } finally { await engine.shutdown(); }
+});
+
+test("recap waits for existing humans and resumes when one reconnects", async () => {
+  const engine = new RoomEngine({ store: new MemoryStore(), eventSink: () => {}, config: { recapMs: 30, drawMs: 5000 } });
+  try {
+    const host = await engine.create(profile);
+    const code = host.snapshot.code;
+    const guest = await engine.join(code, { ...profile, name: "Guest" });
+    await engine.connect(code, host.resumeToken, "wait-host");
+    await engine.connect(code, guest.resumeToken, "wait-guest");
+    let state = await engine.resume(code, host.resumeToken);
+    await engine.command("wait-host", "room:start", { requestId: "wait-start", expectedRevision: state.snapshot.revision });
+    state = await engine.resume(code, host.resumeToken);
+    const generation = state.snapshot.game!.generation;
+    const target = state.privateState!.promptOptions![0].id;
+    await engine.command("wait-host", "room:choose-prompt", { requestId: "wait-choose", generation, payload: { id: target } });
+    await engine.command("wait-guest", "room:guess", { requestId: "wait-solve", generation, payload: { text: target } });
+    await engine.disconnect("wait-guest");
+    await new Promise(resolve => setTimeout(resolve, 60));
+    state = await engine.resume(code, host.resumeToken);
+    assert.equal(state.snapshot.phase, "result");
+    assert.equal(state.snapshot.waitingForPlayers, true);
+    assert.equal(state.snapshot.canReturnToLobby, true);
+    await engine.connect(code, guest.resumeToken, "wait-guest-back");
+    await new Promise(resolve => setTimeout(resolve, 30));
+    state = await engine.resume(code, guest.resumeToken);
+    assert.equal(state.snapshot.phase, "choosing");
+    assert.equal(state.snapshot.game!.drawerId, guest.playerId);
   } finally { await engine.shutdown(); }
 });

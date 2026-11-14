@@ -185,6 +185,7 @@
 
 .room-phase-announcement { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); clip-path:inset(50%); }
 .room-chat .room-feedback { margin:8px 0; font-size:12px; }
+.room-messages .room-message-system { padding:7px 9px; border:1px solid #c7c4cf; border-radius:9px; background:#f4f3f7; color:#504b58; font-size:12px; font-weight:800; text-align:center; }
 .room-ai-history { margin:16px 0; padding:12px; border:2px solid #181321; border-radius:12px; }
 .room-ai-history details { margin-top:10px; }
 .room-ai-history summary { cursor:pointer; font-weight:800; }
